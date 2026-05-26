@@ -1,0 +1,13 @@
+[project]
+name = "openclaw-memgpt-sidecar"
+version = "0.1.0"
+description = "MemGPT memory sidecar for OpenClaw — FastAPI wrapper around pymemgpt fork"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pymemgpt",
+]
+
+[tool.uv.sources]
+pymemgpt = { path = "../../memgpt-service", editable = true }

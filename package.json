@@ -1,0 +1,23 @@
+{
+  "name": "openclaw-memgpt",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MemGPT memory backend for OpenClaw — three-tier memory architecture via pymemgpt sidecar",
+  "license": "Apache-2.0",
+  "main": "./src/index.ts",
+  "openclaw": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.3.28"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
+  }
+}

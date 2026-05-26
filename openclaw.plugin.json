@@ -1,0 +1,51 @@
+{
+  "id": "openclaw-memgpt",
+  "name": "Memory (MemGPT)",
+  "description": "MemGPT three-tier memory architecture for OpenClaw — core, archival, and recall memory via a Python FastAPI sidecar wrapping the pymemgpt fork.",
+  "version": "0.1.0",
+  "kind": "memory",
+  "contracts": {
+    "tools": [
+      "core_memory_append",
+      "core_memory_replace",
+      "archival_memory_insert",
+      "archival_memory_search",
+      "conversation_search",
+      "conversation_search_date",
+      "send_message"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["namespace"],
+    "properties": {
+      "namespace": {
+        "type": "string",
+        "description": "Memory namespace — maps to agent_config.name in the sidecar. Shared across agents when two plugin instances use the same value."
+      },
+      "model": {
+        "type": "string",
+        "description": "LLM model passed to the sidecar on agent creation (create branch only)."
+      },
+      "persona": {
+        "type": "string",
+        "description": "Persona string written into core memory on agent creation."
+      },
+      "human": {
+        "type": "string",
+        "description": "Human string written into core memory on agent creation."
+      },
+      "sidecarUrl": {
+        "type": "string",
+        "description": "Override the sidecar base URL (OPENCLAW_MEMGPT_SIDECAR_URL). When absent the plugin spawns and manages the sidecar process."
+      },
+      "observability": {
+        "type": "string",
+        "enum": ["off", "default", "verbose"],
+        "default": "default",
+        "description": "Observability event detail level."
+      }
+    }
+  }
+}
