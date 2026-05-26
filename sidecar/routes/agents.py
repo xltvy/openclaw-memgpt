@@ -2,6 +2,7 @@
 /agents routes — §2.3 lifecycle endpoints.
 
 6a.1: POST /agents  (composite bootstrap — §2.3)
+6a.2: GET  /agents/{id}/system_prompt_section  (§2.4)
 """
 
 from __future__ import annotations
@@ -23,6 +24,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 # ── Request / Response models ─────────────────────────────────────────────
+
+class SystemPromptSectionResponse(BaseModel):
+    section: str = Field(..., description="Full rendered system-prompt memory section (verbatim construct_system_with_memory output)")
+    static: str = Field(..., description="Base system prompt — does not change across turns; safe to cache")
+    dynamic: str = Field(..., description="Memory metadata + persona/human blocks — changes on every core-memory edit")
+
 
 class CreateAgentRequest(BaseModel):
     name: str = Field(..., description="Memory namespace / agent_id — maps to agent_config.name")
@@ -152,3 +159,47 @@ def create_agent(body: CreateAgentRequest) -> CreateAgentResponse:
         len(pm.all_messages),
     )
     return CreateAgentResponse(agent_id=namespace)
+
+
+# ── GET /agents/{id}/system_prompt_section — §2.4 ────────────────────────────
+
+@router.get("/{agent_id}/system_prompt_section", response_model=SystemPromptSectionResponse,
+            summary="Render the per-turn memory section of the system prompt")
+def get_system_prompt_section(agent_id: str) -> SystemPromptSectionResponse:
+    """
+    §2.4 — calls construct_system_with_memory(agent.system, agent.memory, ts,
+    pm.archival_memory, pm.recall_memory) and returns the rendered string.
+
+    Renders from agent.memory directly; never reads self._messages[0] (dead slot —
+    see §2.1 boundary rule).
+
+    Response splits static (base system prompt, safe to cache per-agent) from dynamic
+    (memory timestamp + counts + persona/human blocks, changes on every core-memory edit)
+    so the TS before_prompt_build hook can skip re-fetching the static portion.
+    """
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    from memgpt.agent import construct_system_with_memory
+    from memgpt.utils import get_local_time
+
+    pm = agent.persistence_manager
+    ts = get_local_time()
+
+    section = construct_system_with_memory(
+        agent.system,
+        agent.memory,
+        ts,
+        archival_memory=pm.archival_memory,
+        recall_memory=pm.recall_memory,
+    )
+
+    # Split at the static/dynamic boundary.
+    # construct_system_with_memory produces: agent.system + "\n" + "\n" + "\n" + dynamic
+    # (the "\n".join([system, "\n", ...]) inserts a blank-line separator between them).
+    # The static part is exactly agent.system; everything after is dynamic.
+    static = agent.system
+    dynamic = section[len(static):]
+
+    return SystemPromptSectionResponse(section=section, static=static, dynamic=dynamic)
