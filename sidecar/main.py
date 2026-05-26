@@ -26,6 +26,9 @@ from bootstrap import ensure_memgpt_config, load_embedder
 # ── 4. Registry (uses Any for Agent; no further memgpt import cascade) ─────
 from registry import registry
 
+# ── 5. Route modules (safe to import after bootstrap has run) ──────────────
+from routes.agents import router as agents_router
+
 # ── Logging ───────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -72,6 +75,9 @@ app = FastAPI(
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
+
+app.include_router(agents_router)
+
 
 @app.get("/healthz", summary="Liveness probe")
 def healthz():
