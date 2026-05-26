@@ -148,3 +148,9 @@ sidecar/.venv/
 sidecar/__pycache__/
 sidecar/*.pyc
 sidecar/.python-version
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
