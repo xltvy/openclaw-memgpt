@@ -10,6 +10,7 @@
       POST /agents/{id}/archival:search   (§2.5)
 6a.5: POST /agents/{id}/recall:search       (§2.6)
       POST /agents/{id}/recall:search_date  (§2.6)
+6a.6: POST /agents/{id}/messages:append    (§2.7)
 """
 
 from __future__ import annotations
@@ -103,6 +104,17 @@ class SystemPromptSectionResponse(BaseModel):
     section: str = Field(..., description="Full rendered system-prompt memory section (verbatim construct_system_with_memory output)")
     static: str = Field(..., description="Base system prompt — does not change across turns; safe to cache")
     dynamic: str = Field(..., description="Memory metadata + persona/human blocks — changes on every core-memory edit")
+
+
+class MessagesAppendRequest(BaseModel):
+    # pymemgpt-shaped message dicts (normalised TS-side at the boundary, §3.7/§2.10).
+    # The persistence manager adds get_local_time() timestamps — the sidecar is the
+    # sole source of truth for time metadata (§2.7).
+    messages: List[dict] = Field(..., description="pymemgpt-shaped message dicts: {role, content, name?}")
+
+
+class MessagesAppendResponse(BaseModel):
+    appended: int = Field(..., description="Number of messages written to the recall corpus")
 
 
 class CreateAgentRequest(BaseModel):
@@ -558,3 +570,29 @@ def recall_search_date(agent_id: str, body: RecallSearchDateRequest) -> RecallSe
         page=body.page,
         num_pages=num_pages,
     )
+
+
+# ── POST /agents/{id}/messages:append — §2.7 ─────────────────────────────────
+
+@router.post("/{agent_id}/messages:append", response_model=MessagesAppendResponse,
+             summary="Append messages to the recall corpus (persistence manager layer)")
+def messages_append(agent_id: str, body: MessagesAppendRequest) -> MessagesAppendResponse:
+    """
+    §2.7 — Layer-cut exception to §2.1.
+
+    Calls persistence_manager.append_to_messages, NOT Agent.append_to_messages.
+    Agent.append_to_messages grows agent._messages (the active conversation buffer),
+    which is OpenClaw's responsibility in Shape B.  The persistence manager call
+    timestamps each message via get_local_time() and extends pm.all_messages (the
+    recall corpus) without touching agent._messages.
+
+    LocalStateManager.append_to_messages also extends pm.messages (the pm's shadow
+    copy of the active buffer), but this is a pm-internal list separate from
+    agent._messages — it does not affect the agent's active turn context.
+    """
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    agent.persistence_manager.append_to_messages(body.messages)
+    return MessagesAppendResponse(appended=len(body.messages))
