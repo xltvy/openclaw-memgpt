@@ -8,13 +8,17 @@
       GET  /agents/{id}/core_memory           (§2.4)
 6a.4: POST /agents/{id}/archival:insert  (§2.5)
       POST /agents/{id}/archival:search   (§2.5)
+6a.5: POST /agents/{id}/recall:search       (§2.6)
+      POST /agents/{id}/recall:search_date  (§2.6)
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
+import re
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -49,6 +53,28 @@ class CoreMemoryReplaceRequest(BaseModel):
 class CoreMemoryResponse(BaseModel):
     persona: str
     human: str
+
+
+class RecallSearchRequest(BaseModel):
+    query: str = Field(..., description="Substring search query")
+    page: int = Field(0, ge=0, description="Page number (0-indexed)")
+
+
+class RecallSearchDateRequest(BaseModel):
+    # Parameter names confirmed against gpt_functions.FUNCTIONS_CHAINING (S0.2/§2.6):
+    # "recall_memory_search_date" / "conversation_search_date" schemas both use
+    # start_date / end_date in 'YYYY-MM-DD' format.
+    start_date: str = Field(..., description="Start of date range, format 'YYYY-MM-DD'")
+    end_date: str = Field(..., description="End of date range, format 'YYYY-MM-DD'")
+    page: int = Field(0, ge=0, description="Page number (0-indexed)")
+
+
+class RecallSearchResponse(BaseModel):
+    formatted: str = Field(..., description="Verbatim LLM-facing result string from Agent.recall_memory_search*")
+    results: List[str] = Field(..., description="Per-result strings from the formatted JSON array; structured, for verbose observability")
+    total: int = Field(..., description="Grand total of matches (DummyRecallMemory returns len(all_matches), not len(paged_slice) — unlike archival)")
+    page: int
+    num_pages: int
 
 
 class ArchivalInsertRequest(BaseModel):
@@ -418,6 +444,99 @@ def archival_search(agent_id: str, body: ArchivalSearchRequest) -> ArchivalSearc
     num_pages = max(math.ceil(total / _ARCHIVAL_PAGE_SIZE) - 1, 0)
 
     return ArchivalSearchResponse(
+        formatted=formatted,
+        results=results,
+        total=total,
+        page=body.page,
+        num_pages=num_pages,
+    )
+
+
+# ── Recall endpoints — §2.6 ──────────────────────────────────────────────────
+#
+# recall_memory.insert is NOT exposed — DummyRecallMemory.insert raises;
+# the persistence manager is the sole writer (via messages:append, §2.7).
+#
+# Single-call discipline: unlike archival (where EmbeddingArchivalMemory.cache is
+# readable post-call), DummyRecallMemory has no cache.  Both formatted and
+# structured fields are derived from the Agent-method return value alone —
+# the formatted string is parsed.
+#
+# DummyRecallMemory.text_search / date_search return len(all_matches) as total
+# (grand total, not page-slice count) — unlike EmbeddingArchivalMemory which
+# returns len(paged_slice).  Recall total and num_pages are therefore meaningful
+# (§2.6 archival/recall paging asymmetry).
+
+_RECALL_NO_RESULTS = "No results found."
+# Format produced by Agent.recall_memory_search*:
+#   "Showing N of M results (page p/P): [\"...\", ...]"
+#   re group 1=M (total), group 2=P (num_pages), group 3=JSON array
+_RECALL_PREF_RE = re.compile(
+    r"Showing \d+ of (\d+) results \(page \d+/(\d+)\): (\[.+)",
+    re.DOTALL,
+)
+
+
+def _parse_recall_formatted(formatted: str) -> tuple[list[str], int, int]:
+    """Parse (results, total, num_pages) from the Agent recall method's return value.
+
+    The Agent method returns a single formatted string; the structured fields are
+    embedded in it.  For "No results found." the fields are all empty/zero.
+    DummyRecallMemory returns the grand total (len(all_matches)), so total and
+    num_pages are real, unlike archival (§2.6).
+    """
+    if formatted == _RECALL_NO_RESULTS:
+        return [], 0, 0
+    m = _RECALL_PREF_RE.match(formatted)
+    if m is None:
+        logger.warning("Could not parse recall formatted string: %r", formatted[:120])
+        return [], 0, 0
+    total = int(m.group(1))
+    num_pages = int(m.group(2))
+    results: list[str] = json.loads(m.group(3))
+    return results, total, num_pages
+
+
+@router.post("/{agent_id}/recall:search", response_model=RecallSearchResponse,
+             summary="Substring search over the recall conversation log")
+def recall_search(agent_id: str, body: RecallSearchRequest) -> RecallSearchResponse:
+    """
+    §2.6 — Agent.recall_memory_search(query, page) → DummyRecallMemory.text_search.
+    Single call; structured fields parsed from the formatted return value.
+    Misses return "No results found." natively (no empty-index catch needed).
+    """
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    formatted = agent.recall_memory_search(body.query, page=body.page)
+    results, total, num_pages = _parse_recall_formatted(formatted)
+    return RecallSearchResponse(
+        formatted=formatted,
+        results=results,
+        total=total,
+        page=body.page,
+        num_pages=num_pages,
+    )
+
+
+@router.post("/{agent_id}/recall:search_date", response_model=RecallSearchResponse,
+             summary="Date-range search over the recall conversation log")
+def recall_search_date(agent_id: str, body: RecallSearchDateRequest) -> RecallSearchResponse:
+    """
+    §2.6 — Agent.recall_memory_search_date(start_date, end_date, page)
+           → DummyRecallMemory.date_search.
+    Parameter names (start_date, end_date) confirmed against gpt_functions schema
+    (conversation_search_date / recall_memory_search_date, both require these names).
+    Single call; structured fields parsed from the formatted return value.
+    """
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    formatted = agent.recall_memory_search_date(body.start_date, body.end_date, page=body.page)
+    results, total, num_pages = _parse_recall_formatted(formatted)
+    return RecallSearchResponse(
         formatted=formatted,
         results=results,
         total=total,
