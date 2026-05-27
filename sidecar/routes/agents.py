@@ -3,6 +3,9 @@
 
 6a.1: POST /agents  (composite bootstrap — §2.3)
 6a.2: GET  /agents/{id}/system_prompt_section  (§2.4)
+6a.3: POST /agents/{id}/core_memory:append  (§2.4)
+      POST /agents/{id}/core_memory:replace  (§2.4)
+      GET  /agents/{id}/core_memory           (§2.4)
 """
 
 from __future__ import annotations
@@ -24,6 +27,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 # ── Request / Response models ─────────────────────────────────────────────
+
+class OkResponse(BaseModel):
+    ok: bool = True
+
+
+class CoreMemoryAppendRequest(BaseModel):
+    name: str = Field(..., description="Memory section: 'persona' or 'human'")
+    content: str = Field(..., description="Text to append")
+
+
+class CoreMemoryReplaceRequest(BaseModel):
+    name: str = Field(..., description="Memory section: 'persona' or 'human'")
+    old_content: str = Field(..., description="Exact substring to replace")
+    new_content: str = Field(..., description="Replacement text")
+
+
+class CoreMemoryResponse(BaseModel):
+    persona: str
+    human: str
+
 
 class SystemPromptSectionResponse(BaseModel):
     section: str = Field(..., description="Full rendered system-prompt memory section (verbatim construct_system_with_memory output)")
@@ -203,3 +226,75 @@ def get_system_prompt_section(agent_id: str) -> SystemPromptSectionResponse:
     dynamic = section[len(static):]
 
     return SystemPromptSectionResponse(section=section, static=static, dynamic=dynamic)
+
+
+# ── Core memory endpoints — §2.4 ─────────────────────────────────────────────
+#
+# All three call the Agent.* method layer (§2.1).  rebuild_memory() fires
+# inside edit_memory_append/replace → update_memory() in-process commit; disk
+# at :save.  Overflow and old_content-not-found raise ValueError in
+# CoreMemory; KeyError means an unknown field name.  Both surface as 409 with
+# the pymemgpt message UNMODIFIED (§2.9 verbatim round-trip rule).
+
+def _core_memory_409(exc: Exception) -> HTTPException:
+    """Map a pymemgpt CoreMemory ValueError/KeyError to the §2.9 error envelope."""
+    msg = str(exc) if str(exc) else repr(exc)
+    return HTTPException(
+        status_code=409,
+        detail={"error": "core_memory_overflow", "message": msg},
+    )
+
+
+@router.post("/{agent_id}/core_memory:append", response_model=OkResponse,
+             summary="Append text to a core-memory section")
+def core_memory_append(agent_id: str, body: CoreMemoryAppendRequest) -> OkResponse:
+    """
+    §2.4 — Agent.edit_memory_append(name, content).
+    Triggers rebuild_memory() → update_memory() (in-process commit; flushed at :save).
+    Overflow → 409 with verbatim pymemgpt error string (§2.9).
+    """
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    try:
+        agent.edit_memory_append(body.name, body.content)
+    except (ValueError, KeyError) as exc:
+        raise _core_memory_409(exc)
+
+    return OkResponse()
+
+
+@router.post("/{agent_id}/core_memory:replace", response_model=OkResponse,
+             summary="Replace a substring in a core-memory section")
+def core_memory_replace(agent_id: str, body: CoreMemoryReplaceRequest) -> OkResponse:
+    """
+    §2.4 — Agent.edit_memory_replace(name, old_content, new_content).
+    old_content-not-found → 409 with verbatim pymemgpt error string (§2.9).
+    Overflow after replacement → 409 similarly.
+    """
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    try:
+        agent.edit_memory_replace(body.name, body.old_content, body.new_content)
+    except (ValueError, KeyError) as exc:
+        raise _core_memory_409(exc)
+
+    return OkResponse()
+
+
+@router.get("/{agent_id}/core_memory", response_model=CoreMemoryResponse,
+            summary="Read current core-memory contents (observability / validation)")
+def get_core_memory(agent_id: str) -> CoreMemoryResponse:
+    """
+    §2.4 — CoreMemory.to_dict(); off the hot path.
+    Returns raw persona/human strings for observability and validation use.
+    """
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    d = agent.memory.to_dict()
+    return CoreMemoryResponse(persona=d["persona"], human=d["human"])
