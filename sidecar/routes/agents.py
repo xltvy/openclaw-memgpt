@@ -6,13 +6,16 @@
 6a.3: POST /agents/{id}/core_memory:append  (§2.4)
       POST /agents/{id}/core_memory:replace  (§2.4)
       GET  /agents/{id}/core_memory           (§2.4)
+6a.4: POST /agents/{id}/archival:insert  (§2.5)
+      POST /agents/{id}/archival:search   (§2.5)
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import os
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -46,6 +49,28 @@ class CoreMemoryReplaceRequest(BaseModel):
 class CoreMemoryResponse(BaseModel):
     persona: str
     human: str
+
+
+class ArchivalInsertRequest(BaseModel):
+    content: str = Field(..., description="Text to embed and insert into archival memory")
+
+
+class ArchivalInsertResponse(BaseModel):
+    ok: bool = True
+    passages: int = Field(..., description="Number of chunks created; for verbose observability")
+
+
+class ArchivalSearchRequest(BaseModel):
+    query: str = Field(..., description="Semantic search query")
+    page: int = Field(0, ge=0, description="Page number (0-indexed)")
+
+
+class ArchivalSearchResponse(BaseModel):
+    formatted: str = Field(..., description="Verbatim LLM-facing result string from Agent.archival_memory_search")
+    results: List[str] = Field(..., description="Passage texts; structured, for verbose observability")
+    total: int
+    page: int
+    num_pages: int
 
 
 class SystemPromptSectionResponse(BaseModel):
@@ -307,3 +332,85 @@ def get_core_memory(agent_id: str) -> CoreMemoryResponse:
 
     d = agent.memory.to_dict()
     return CoreMemoryResponse(persona=d["persona"], human=d["human"])
+
+
+# ── Archival endpoints — §2.5 ─────────────────────────────────────────────────
+#
+# Backend is EmbeddingArchivalMemory on every path (§2.5 — DummyArchivalMemory not used).
+# insert: in-memory only; disk write deferred to :save (§2.3).
+# search: AttributeError on EmptyIndex is caught here (sidecar adapter, not a fork touchpoint).
+# Note the per-instance, never-invalidated search cache in EmbeddingArchivalMemory (§2.5):
+# a cached result for a query persists across subsequent inserts until cache miss or restart.
+
+_ARCHIVAL_NO_RESULTS = "No results found."
+_ARCHIVAL_PAGE_SIZE = 5  # Agent.archival_memory_search default count
+
+
+@router.post("/{agent_id}/archival:insert", response_model=ArchivalInsertResponse,
+             summary="Embed and insert content into archival memory")
+def archival_insert(agent_id: str, body: ArchivalInsertRequest) -> ArchivalInsertResponse:
+    """
+    §2.5 — Agent.archival_memory_insert(content) → EmbeddingArchivalMemory.insert.
+    Chunked via SimpleNodeParser; storage.insert_many is in-memory only (disk at :save).
+    Passage count (chunk count) is derived from len(archival_memory) delta — the only
+    way to get it without modifying the fork, since EmbeddingArchivalMemory.insert
+    returns True, not the passage count.
+    """
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    pm = agent.persistence_manager
+    before = len(pm.archival_memory)
+    agent.archival_memory_insert(body.content)
+    passages = len(pm.archival_memory) - before
+
+    logger.debug("archival:insert agent=%s passages=%d", agent_id, passages)
+    return ArchivalInsertResponse(ok=True, passages=passages)
+
+
+@router.post("/{agent_id}/archival:search", response_model=ArchivalSearchResponse,
+             summary="Semantic search over archival memory")
+def archival_search(agent_id: str, body: ArchivalSearchRequest) -> ArchivalSearchResponse:
+    """
+    §2.5 — Agent.archival_memory_search(query, page) → EmbeddingArchivalMemory.search.
+    The Agent method handles the page ↔ (count, start) translation and result formatting;
+    the handler calls the storage layer first to get structured observability fields, which
+    also seeds the EmbeddingArchivalMemory cache for the same query — so the subsequent
+    Agent-method call is a cache hit (no second embedding computation).
+
+    EmptyIndex raises AttributeError on .search; caught here as a sidecar adapter (§2.5),
+    not a fork touchpoint, returning the verbatim "No results found." interface string.
+    """
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    pm = agent.persistence_manager
+
+    try:
+        # 1. Storage-layer call: seeds EmbeddingArchivalMemory.cache for this query_string
+        #    so the Agent-method call below is a cache hit (same query → no re-embed).
+        results_raw, total = pm.archival_memory.search(
+            body.query, count=_ARCHIVAL_PAGE_SIZE, start=body.page * _ARCHIVAL_PAGE_SIZE
+        )
+        # 2. Agent method for the verbatim LLM-facing formatted string (§2.1 layer cut)
+        formatted = agent.archival_memory_search(body.query, page=body.page)
+    except AttributeError:
+        # EmptyIndex.search raises AttributeError — return the standard "no results" string
+        return ArchivalSearchResponse(
+            formatted=_ARCHIVAL_NO_RESULTS,
+            results=[],
+            total=0,
+            page=body.page,
+            num_pages=0,
+        )
+
+    num_pages = max(math.ceil(total / _ARCHIVAL_PAGE_SIZE) - 1, 0)
+    return ArchivalSearchResponse(
+        formatted=formatted,
+        results=[d["content"] for d in results_raw],
+        total=total,
+        page=body.page,
+        num_pages=num_pages,
+    )
