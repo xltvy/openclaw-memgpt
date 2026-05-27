@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -33,12 +33,12 @@ class OkResponse(BaseModel):
 
 
 class CoreMemoryAppendRequest(BaseModel):
-    name: str = Field(..., description="Memory section: 'persona' or 'human'")
+    name: Literal["persona", "human"] = Field(..., description="Memory section: 'persona' or 'human'")
     content: str = Field(..., description="Text to append")
 
 
 class CoreMemoryReplaceRequest(BaseModel):
-    name: str = Field(..., description="Memory section: 'persona' or 'human'")
+    name: Literal["persona", "human"] = Field(..., description="Memory section: 'persona' or 'human'")
     old_content: str = Field(..., description="Exact substring to replace")
     new_content: str = Field(..., description="Replacement text")
 
