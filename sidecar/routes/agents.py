@@ -498,8 +498,17 @@ def _parse_recall_formatted(formatted: str) -> tuple[list[str], int, int]:
         return [], 0, 0
     total = int(m.group(1))
     num_pages = int(m.group(2))
-    # Step 2 — array from after ': ' (m.end() is right after ':', +1 skips the space)
-    results: list[str] = json.loads(formatted[m.end() + 1:])
+    # Step 2 — array from after ': '. json.dumps in the Agent method makes this valid
+    # JSON (verified against adversarial content, 6a.5); the guard is defensive insurance
+    # so a future non-JSON array degrades to counts-only rather than 500-ing the endpoint.
+    try:
+        results: list[str] = json.loads(formatted[m.end() + 1:])
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning(
+            "recall array parse failed (counts preserved): %s — array=%r",
+            exc, formatted[m.end() + 1:][:200],
+        )
+        results = []
     return results, total, num_pages
 
 

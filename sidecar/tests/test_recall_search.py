@@ -19,6 +19,7 @@ DummyRecallMemory._message_logs (they share the same list object).
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 
@@ -310,3 +311,53 @@ class TestAdversarialContent:
             "results empty — _parse_recall_formatted discarded results, "
             "possibly due to regex/json confusion from delimiter-heavy content"
         )
+
+
+# ── _parse_recall_formatted unit tests ───────────────────────────────────────
+
+
+class TestParseRecallFormattedDegradation:
+    """
+    Unit-level tests for _parse_recall_formatted's graceful-degradation path.
+
+    These call _parse_recall_formatted directly (bypassing the endpoint) to
+    prove the try/except guard returns ([], total, num_pages) with counts intact
+    and raises no exception when the array portion is malformed.
+
+    The happy-path correctness is already covered by TestRecallSearch and
+    TestAdversarialContent; these tests focus exclusively on the error branch.
+    """
+
+    @staticmethod
+    def _fn():
+        import sys, os
+        sidecar_dir = os.path.dirname(os.path.dirname(__file__))
+        if sidecar_dir not in sys.path:
+            sys.path.insert(0, sidecar_dir)
+        from routes.agents import _parse_recall_formatted
+        return _parse_recall_formatted
+
+    def test_malformed_array_returns_empty_results_counts_intact(self):
+        """
+        A valid prefix followed by a non-JSON array degrades to ([], total, num_pages)
+        — counts from the prefix are preserved; no exception is raised.
+        """
+        parse = self._fn()
+        # Valid prefix, deliberately broken array (not valid JSON)
+        malformed = "Showing 3 of 7 results (page 0/1): NOT_VALID_JSON[[[{{{>"
+        results, total, num_pages = parse(malformed)  # must not raise
+
+        assert results == [], f"expected empty results on parse failure, got {results!r}"
+        assert total == 7,    f"total must be preserved from prefix, got {total}"
+        assert num_pages == 1, f"num_pages must be preserved from prefix, got {num_pages}"
+
+    def test_no_exception_raised_on_malformed_array(self):
+        """Explicit no-raise check — the endpoint must not 500 on a bad array."""
+        parse = self._fn()
+        malformed = "Showing 1 of 2 results (page 0/0): {not: json}"
+        try:
+            parse(malformed)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise AssertionError(
+                f"_parse_recall_formatted raised {type(exc).__name__} instead of degrading: {exc}"
+            ) from exc
