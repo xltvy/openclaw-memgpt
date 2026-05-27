@@ -236,13 +236,22 @@ def get_system_prompt_section(agent_id: str) -> SystemPromptSectionResponse:
 # CoreMemory; KeyError means an unknown field name.  Both surface as 409 with
 # the pymemgpt message UNMODIFIED (§2.9 verbatim round-trip rule).
 
-def _core_memory_409(exc: Exception) -> HTTPException:
-    """Map a pymemgpt CoreMemory ValueError/KeyError to the §2.9 error envelope."""
+def _core_memory_409(exc: ValueError) -> HTTPException:
+    """Map a pymemgpt CoreMemory edit ValueError to the §2.9 error envelope.
+
+    Both failure modes raise ValueError from CoreMemory.edit*, differing only
+    in message text (memgpt/memory.py:75,85 overflow; 114,120 not-found). The
+    verbatim message is preserved (§2.9); the machine-readable `error` code is
+    derived for observability / experiment-event classification (§6).
+    """
     msg = str(exc) if str(exc) else repr(exc)
-    return HTTPException(
-        status_code=409,
-        detail={"error": "core_memory_overflow", "message": msg},
-    )
+    if "not found" in msg:
+        code = "core_memory_content_not_found"
+    elif "Exceeds" in msg and "character limit" in msg:
+        code = "core_memory_overflow"
+    else:
+        code = "core_memory_edit_failed"   # fallback for any other CoreMemory ValueError
+    return HTTPException(status_code=409, detail={"error": code, "message": msg})
 
 
 @router.post("/{agent_id}/core_memory:append", response_model=OkResponse,
@@ -259,7 +268,7 @@ def core_memory_append(agent_id: str, body: CoreMemoryAppendRequest) -> OkRespon
 
     try:
         agent.edit_memory_append(body.name, body.content)
-    except (ValueError, KeyError) as exc:
+    except ValueError as exc:
         raise _core_memory_409(exc)
 
     return OkResponse()
@@ -279,7 +288,7 @@ def core_memory_replace(agent_id: str, body: CoreMemoryReplaceRequest) -> OkResp
 
     try:
         agent.edit_memory_replace(body.name, body.old_content, body.new_content)
-    except (ValueError, KeyError) as exc:
+    except ValueError as exc:
         raise _core_memory_409(exc)
 
     return OkResponse()
