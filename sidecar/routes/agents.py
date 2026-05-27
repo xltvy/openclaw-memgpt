@@ -468,32 +468,38 @@ def archival_search(agent_id: str, body: ArchivalSearchRequest) -> ArchivalSearc
 # (§2.6 archival/recall paging asymmetry).
 
 _RECALL_NO_RESULTS = "No results found."
-# Format produced by Agent.recall_memory_search*:
-#   "Showing N of M results (page p/P): [\"...\", ...]"
-#   re group 1=M (total), group 2=P (num_pages), group 3=JSON array
-_RECALL_PREF_RE = re.compile(
-    r"Showing \d+ of (\d+) results \(page \d+/(\d+)\): (\[.+)",
-    re.DOTALL,
-)
+# Anchored to the start of the string; captures only the numeric prefix —
+# M (group 1) and P (group 2) — stopping at the ':' before the JSON array.
+# No re.DOTALL, no array group: counts are extracted independently of content.
+_RECALL_PREF_RE = re.compile(r"Showing \d+ of (\d+) results \(page \d+/(\d+)\):")
 
 
 def _parse_recall_formatted(formatted: str) -> tuple[list[str], int, int]:
     """Parse (results, total, num_pages) from the Agent recall method's return value.
 
-    The Agent method returns a single formatted string; the structured fields are
-    embedded in it.  For "No results found." the fields are all empty/zero.
+    Two-step parse — prefix and array are separated:
+      Step 1: anchored prefix regex extracts M (total) and P (num_pages) from the
+              fixed 'Showing N of M results (page p/P):' head. No re.DOTALL; no
+              array content in the pattern. Counts are always correct regardless of
+              what the message/passage content contains.
+      Step 2: json.loads on formatted[m.end() + 1:] parses the JSON array that
+              follows the ': ' separator. Array parsing is entirely independent of
+              the count extraction.
+
     DummyRecallMemory returns the grand total (len(all_matches)), so total and
-    num_pages are real, unlike archival (§2.6).
+    num_pages are real (§2.6 archival/recall asymmetry).
     """
     if formatted == _RECALL_NO_RESULTS:
         return [], 0, 0
+    # Step 1 — prefix only; anchored by re.match
     m = _RECALL_PREF_RE.match(formatted)
     if m is None:
         logger.warning("Could not parse recall formatted string: %r", formatted[:120])
         return [], 0, 0
     total = int(m.group(1))
     num_pages = int(m.group(2))
-    results: list[str] = json.loads(m.group(3))
+    # Step 2 — array from after ': ' (m.end() is right after ':', +1 skips the space)
+    results: list[str] = json.loads(formatted[m.end() + 1:])
     return results, total, num_pages
 
 
