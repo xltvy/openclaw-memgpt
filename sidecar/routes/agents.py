@@ -374,13 +374,19 @@ def archival_insert(agent_id: str, body: ArchivalInsertRequest) -> ArchivalInser
 def archival_search(agent_id: str, body: ArchivalSearchRequest) -> ArchivalSearchResponse:
     """
     §2.5 — Agent.archival_memory_search(query, page) → EmbeddingArchivalMemory.search.
-    The Agent method handles the page ↔ (count, start) translation and result formatting;
-    the handler calls the storage layer first to get structured observability fields, which
-    also seeds the EmbeddingArchivalMemory cache for the same query — so the subsequent
-    Agent-method call is a cache hit (no second embedding computation).
 
-    EmptyIndex raises AttributeError on .search; caught here as a sidecar adapter (§2.5),
-    not a fork touchpoint, returning the verbatim "No results found." interface string.
+    Single search call via the Agent method, which owns the page↔(count,start) translation
+    and result formatting.  As a side-effect, EmbeddingArchivalMemory.cache[query] is
+    populated with all matched Passage objects (List[Passage], each with .text).  The
+    handler reads from that cache to derive structured observability fields — no second
+    embedding computation, no duplicate search call.
+
+    EmbeddingArchivalMemory.search returns len(paged_results) as "total" (not grand total);
+    the structured fields match that contract so formatted/results/total are consistent
+    by construction (same call).
+
+    EmptyIndex raises AttributeError on .search; caught here (§2.5 adapter, not a fork
+    touchpoint), returning the verbatim "No results found." interface string.
     """
     agent = registry.get(agent_id)
     if agent is None:
@@ -389,12 +395,8 @@ def archival_search(agent_id: str, body: ArchivalSearchRequest) -> ArchivalSearc
     pm = agent.persistence_manager
 
     try:
-        # 1. Storage-layer call: seeds EmbeddingArchivalMemory.cache for this query_string
-        #    so the Agent-method call below is a cache hit (same query → no re-embed).
-        results_raw, total = pm.archival_memory.search(
-            body.query, count=_ARCHIVAL_PAGE_SIZE, start=body.page * _ARCHIVAL_PAGE_SIZE
-        )
-        # 2. Agent method for the verbatim LLM-facing formatted string (§2.1 layer cut)
+        # Single Agent-method call: page↔(count,start) translation and formatting live here.
+        # Populates pm.archival_memory.cache[query] as a side-effect.
         formatted = agent.archival_memory_search(body.query, page=body.page)
     except AttributeError:
         # EmptyIndex.search raises AttributeError — return the standard "no results" string
@@ -406,10 +408,18 @@ def archival_search(agent_id: str, body: ArchivalSearchRequest) -> ArchivalSearc
             num_pages=0,
         )
 
+    # Derive structured fields from the cache populated by the call above.
+    # Slice to the same page window used internally by EmbeddingArchivalMemory.search.
+    all_nodes = pm.archival_memory.cache.get(body.query, [])
+    start = body.page * _ARCHIVAL_PAGE_SIZE
+    page_nodes = all_nodes[start : start + _ARCHIVAL_PAGE_SIZE]
+    results = [node.text for node in page_nodes]
+    total = len(results)  # EmbeddingArchivalMemory.search returns len(paged_slice) as total
     num_pages = max(math.ceil(total / _ARCHIVAL_PAGE_SIZE) - 1, 0)
+
     return ArchivalSearchResponse(
         formatted=formatted,
-        results=[d["content"] for d in results_raw],
+        results=results,
         total=total,
         page=body.page,
         num_pages=num_pages,
