@@ -143,3 +143,92 @@ class TestMultiPageConsistency:
         assert n == expected_last,     f"partial last page: expected {expected_last} results, got {n}"
         assert len(r["results"]) == n, "slice count != formatted N on last partial page"
         assert r["total"] == m,        "total != formatted M on last partial page"
+
+
+# ── adversarial content (completeness) ───────────────────────────────────────
+
+#: Content whose characters could corrupt a naïve parse of the formatted string:
+#: double-quotes, square brackets, and the literal "results (page 1)".
+_ADVERSARIAL = 'buy "Adidas", not [Nike] — see results (page 1) of the catalog'
+
+
+@pytest.fixture(scope="module")
+def adversarial_archival_agent(client):
+    """
+    Create one agent and insert one passage with the adversarial content.
+    Module-scoped so the (slow) embedding only happens once.
+    """
+    import uuid
+
+    name = f"adv-arch-{uuid.uuid4().hex[:8]}"
+    r = client.post("/agents", json={"name": name, "model": "gpt-4"})
+    assert r.status_code == 201, r.text
+    agent_id = r.json()["agent_id"]
+
+    r = client.post(
+        f"/agents/{agent_id}/archival:insert",
+        json={"content": _ADVERSARIAL},
+    )
+    assert r.status_code == 200, r.text
+
+    return agent_id
+
+
+class TestAdversarialContent:
+    """
+    Lighter completeness check: prove archival:search survives delimiter-heavy
+    content.
+
+    EmbeddingArchivalMemory stores and retrieves passage text verbatim; the
+    formatted string is produced by the Agent method (json.dumps escaping).
+    The handler reads results from pm.archival_memory.cache — a list of Passage
+    objects whose .text is the original unescaped string.
+
+    No parse-corruption check is needed for archival (the handler does not
+    regex-parse the formatted string for structured fields); these tests confirm
+    the round-trip at the storage/cache level.
+    """
+
+    def _search(self, client, agent_id: str, query: str, page: int = 0) -> dict:
+        r = client.post(
+            f"/agents/{agent_id}/archival:search",
+            json={"query": query, "page": page},
+        )
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def test_adversarial_passage_surfaces(self, client, adversarial_archival_agent):
+        """archival:search returns at least one result for the inserted passage."""
+        r = self._search(client, adversarial_archival_agent, "Adidas Nike catalog")
+        assert r["formatted"] != "No results found.", (
+            "adversarial archival passage not found"
+        )
+        assert len(r["results"]) >= 1
+
+    def test_adversarial_content_round_trips(self, client, adversarial_archival_agent):
+        """
+        The full adversarial string is present verbatim in results.
+
+        results come from pm.archival_memory.cache[start:end], where each entry
+        is a Passage whose .text is the original unescaped string.  Double-quotes
+        and square brackets in the content are stored and returned without
+        transformation.
+        """
+        r = self._search(client, adversarial_archival_agent, "Adidas Nike catalog")
+        assert any(_ADVERSARIAL in entry for entry in r["results"]), (
+            f"adversarial content not found verbatim in archival results: {r['results']!r}"
+        )
+
+    def test_formatted_is_not_empty_on_hit(self, client, adversarial_archival_agent):
+        """
+        The formatted string from the Agent method is a non-empty, parseable
+        'Showing N of M results ...' string — not a bare JSON blob or empty.
+
+        This confirms the Agent method's json.dumps round-trip does not break
+        the formatted header when content contains double-quotes.
+        """
+        r = self._search(client, adversarial_archival_agent, "Adidas Nike catalog")
+        m = re.search(r"Showing (\d+) of (\d+) results", r["formatted"])
+        assert m is not None, (
+            f"formatted string not in expected shape: {r['formatted']!r}"
+        )

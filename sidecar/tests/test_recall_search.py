@@ -191,3 +191,122 @@ class TestRecallSearchDate:
         # Boot messages and seeded messages all have today's timestamp
         assert r["formatted"] != "No results found.", "today's range missed all messages"
         assert r["total"] > 0
+
+
+# ── adversarial content tests ────────────────────────────────────────────────
+
+#: Content whose characters would corrupt a naïve parse:
+#: double-quotes (JSON string delimiters), square brackets (JSON array
+#: delimiters), and the literal substring "results (page 1)" that could
+#: confuse a prefix regex not anchored at the start of the string.
+_ADVERSARIAL = 'buy "Adidas", not [Nike] — see results (page 1) of the catalog'
+_ADVERSARIAL_TOKEN = "Adidas"  # shorter, still unique; absent from other messages
+
+
+@pytest.fixture(scope="module")
+def adversarial_agent(client):
+    """
+    Create one agent and seed exactly one message with the adversarial content
+    string.  Module-scoped so the seed only happens once.
+    """
+    from memgpt.utils import get_local_time
+
+    import uuid, sys, os
+    name = f"adv-{uuid.uuid4().hex[:8]}"
+    r = client.post("/agents", json={"name": name, "model": "gpt-4"})
+    assert r.status_code == 201, r.text
+    agent_id = r.json()["agent_id"]
+
+    sidecar_dir = os.path.dirname(os.path.dirname(__file__))
+    if sidecar_dir not in sys.path:
+        sys.path.insert(0, sidecar_dir)
+    from registry import registry
+    agent = registry.get(agent_id)
+    pm = agent.persistence_manager
+
+    pm.all_messages.append({
+        "timestamp": get_local_time(),
+        "message": {
+            "role": "user",
+            "content": _ADVERSARIAL,
+        },
+    })
+
+    return agent_id
+
+
+class TestAdversarialContent:
+    """
+    Prove that _parse_recall_formatted survives delimiter-heavy content.
+
+    The Agent method serialises the results array with json.dumps, so:
+    - double-quotes inside content become \\"-escaped;
+    - square brackets inside content are escaped as literal characters in a
+      JSON string (no escaping needed, but they are not array delimiters);
+    - the substring "results (page 1)" inside content does NOT confuse M/P
+      extraction because _RECALL_PREF_RE uses re.match (anchored to the
+      start of the string) and the prefix terminates at the first ":".
+
+    These properties mean json.loads MUST succeed.  This test class confirms
+    that empirically: if json.loads raises JSONDecodeError the handler will
+    500, and the test will catch it via assert r.status_code == 200.
+    """
+
+    def _search(self, client, agent_id: str, query: str) -> dict:
+        r = client.post(
+            f"/agents/{agent_id}/recall:search",
+            json={"query": query, "page": 0},
+        )
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def test_adversarial_message_surfaces(self, client, adversarial_agent):
+        """The seeded adversarial message is found by recall:search."""
+        r = self._search(client, adversarial_agent, _ADVERSARIAL_TOKEN)
+        assert r["formatted"] != "No results found.", (
+            "adversarial message not found in recall"
+        )
+        assert r["total"] >= 1, "total should be ≥1 after seeding one adversarial message"
+
+    def test_json_loads_succeeds(self, client, adversarial_agent):
+        """
+        json.loads on the results array must not raise — confirms the Agent
+        method's json.dumps escaping prevents parse corruption.
+
+        A JSONDecodeError in _parse_recall_formatted would produce a 500 or an
+        empty results list with a warning log; a 200 with non-empty results
+        is the definitive proof.
+        """
+        r = self._search(client, adversarial_agent, _ADVERSARIAL_TOKEN)
+        assert len(r["results"]) >= 1, (
+            "results list empty — json.loads likely raised JSONDecodeError "
+            "inside _parse_recall_formatted (double-quote escaping failed)"
+        )
+
+    def test_adversarial_content_round_trips(self, client, adversarial_agent):
+        """The full adversarial string is present, verbatim, in results."""
+        r = self._search(client, adversarial_agent, _ADVERSARIAL_TOKEN)
+        assert any(_ADVERSARIAL in entry for entry in r["results"]), (
+            f"adversarial content not found verbatim in results: {r['results']!r}"
+        )
+
+    def test_prefix_regex_not_confused_by_page_in_content(self, client, adversarial_agent):
+        """
+        The substring 'results (page 1)' inside the message content must not
+        corrupt M/P extraction.
+
+        _RECALL_PREF_RE uses re.match (anchored at ^) so only the true header
+        prefix is matched; the identical substring inside the JSON array cannot
+        match.  If extraction were confused, total/num_pages would be wrong or
+        _parse_recall_formatted would return ([], 0, 0) and results would be [].
+        """
+        r = self._search(client, adversarial_agent, _ADVERSARIAL_TOKEN)
+        # total must be ≥ 1 (not corrupted to 0 by the in-content substring)
+        assert r["total"] >= 1, (
+            f"total={r['total']} — prefix regex likely confused by 'results (page 1)' in content"
+        )
+        # results must be non-empty (parse did not silently discard results)
+        assert len(r["results"]) >= 1, (
+            "results empty — _parse_recall_formatted discarded results, "
+            "possibly due to regex/json confusion from delimiter-heavy content"
+        )
