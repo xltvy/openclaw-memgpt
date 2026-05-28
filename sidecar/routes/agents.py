@@ -12,6 +12,8 @@
       POST /agents/{id}/recall:search_date  (§2.6)
 6a.6: POST /agents/{id}/messages:append    (§2.7)
 6a.7: POST /agents/{id}:summarize          (§2.8)
+6a.8: POST /agents/{id}:save               (§2.3)
+      POST /agents/{id}:load               (§2.3)
 """
 
 from __future__ import annotations
@@ -125,6 +127,15 @@ class SummarizeResponse(BaseModel):
     hidden_message_count: int = Field(..., description="total_message_count - len(messages[cutoff:]); messages hidden from the LLM's view")
     total_message_count: int = Field(..., description="Passed through from the request; all-time message count")
     packaged_message: dict = Field(..., description='{"role": "user", "content": "<package_summarize_message JSON>"}')
+
+
+class SaveResponse(BaseModel):
+    saved: bool = True
+
+
+class LoadResponse(BaseModel):
+    agent_id: str
+    loaded_from: str = "cold_start"
 
 
 class MessagesAppendRequest(BaseModel):
@@ -680,3 +691,73 @@ def summarize(agent_id: str, body: SummarizeRequest) -> SummarizeResponse:
         total_message_count=body.total_message_count,
         packaged_message=packaged_message,
     )
+
+
+# ── POST /agents/{id}:save — §2.3 ─────────────────────────────────────────────
+
+@router.post("/{agent_id}:save", response_model=SaveResponse,
+             summary="Flush all three memory tiers to disk (archival → nodes.pkl; recall + messages → pickle)")
+def save_agent(agent_id: str) -> SaveResponse:
+    """
+    §2.3 — Agent.save() → LocalStateManager.save().
+
+    Writes two files under MEMGPT_DIR/agents/{name}/:
+      - agent_state/{timestamp}.json          (agent config snapshot)
+      - persistence_manager/{timestamp}.persistence.pickle
+        (recall_memory, messages, all_messages; archival.save() called first → nodes.pkl)
+
+    Mutations commit in-process within the turn; `:save` is the disk-durability boundary.
+    The pickle's `messages` key holds the 4-entry preset boot stub — active-buffer durability
+    is OpenClaw's session-store concern (§2.1, §2.7). Agent stays resident after save.
+    """
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    agent.save()
+    logger.debug("agent:save flushed agent=%s", agent_id)
+    return SaveResponse(saved=True)
+
+
+# ── POST /agents/{id}:load — §2.3 ─────────────────────────────────────────────
+
+@router.post("/{agent_id}:load", response_model=LoadResponse,
+             summary="Cold-start rehydration from disk (not on normal session boundaries)")
+def load_agent(agent_id: str) -> LoadResponse:
+    """
+    §2.3 — Cold-start only.  The sidecar holds agents resident across sessions (§2.10),
+    so `:load` is NOT called on normal session boundaries — only when the agent is absent
+    from the registry (process restart or explicit eviction by the experiment harness).
+
+    Calls Agent.load_agent(DummyInterface(), agent_config), which:
+      1. Reads the latest .json state file from agent_state/ (sorted by mtime)
+      2. Calls LocalStateManager.load(pickle_path, agent_config)
+         — F2 repair: re-points recall_memory._message_logs = all_messages (§2.11)
+      3. Reconstructs Agent with persistence_manager_init=False
+
+    409 if agent is already resident (wrong arm — evict first).
+    404 if no config on disk (agent never created) or no saved state (never :saved).
+    """
+    if agent_id in registry:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Agent '{agent_id}' is already resident; :load is cold-start-only (§2.10)",
+        )
+
+    from memgpt.config import AgentConfig
+    from memgpt.agent import Agent
+    from memgpt.autogen.interface import DummyInterface
+
+    try:
+        cfg = AgentConfig.load(agent_id)
+    except AssertionError:
+        raise HTTPException(status_code=404, detail=f"No config on disk for agent '{agent_id}'")
+
+    try:
+        agent = Agent.load_agent(DummyInterface(), cfg)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    registry.put(agent_id, agent)
+    logger.info("Agent cold-start loaded: namespace=%s", agent_id)
+    return LoadResponse(agent_id=agent_id, loaded_from="cold_start")
