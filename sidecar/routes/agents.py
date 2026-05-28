@@ -11,6 +11,7 @@
 6a.5: POST /agents/{id}/recall:search       (§2.6)
       POST /agents/{id}/recall:search_date  (§2.6)
 6a.6: POST /agents/{id}/messages:append    (§2.7)
+6a.7: POST /agents/{id}:summarize          (§2.8)
 """
 
 from __future__ import annotations
@@ -104,6 +105,26 @@ class SystemPromptSectionResponse(BaseModel):
     section: str = Field(..., description="Full rendered system-prompt memory section (verbatim construct_system_with_memory output)")
     static: str = Field(..., description="Base system prompt — does not change across turns; safe to cache")
     dynamic: str = Field(..., description="Memory metadata + persona/human blocks — changes on every core-memory edit")
+
+
+class SummarizeRequest(BaseModel):
+    # Full active buffer, pymemgpt-v0-shaped (normalised TS-side, §3.7).
+    # messages[0] must be the system message (required by select_cutoff).
+    messages: List[dict] = Field(..., description="Full active buffer; messages[0] must be the system message")
+    # Running total the host (OpenClaw) tracks — equals messages_total in native MemGPT.
+    # Required because the sidecar cannot derive it from buffer length after prior summarisations.
+    total_message_count: int = Field(..., description="Running all-time message count tracked by the host")
+    # Informational only; the operative cutoff threshold is MESSAGE_SUMMARY_TRUNC_TOKEN_FRAC.
+    token_budget: int = Field(8000, description="Informational token budget; operative threshold is MemGPT's MESSAGE_SUMMARY_WARNING_TOKENS")
+
+
+class SummarizeResponse(BaseModel):
+    cutoff: int = Field(..., description="Index into messages where the summarised prefix ends; messages[1:cutoff] was summarised")
+    summary: str = Field(..., description="LLM-generated first-person summary of messages[1:cutoff]")
+    summary_length: int = Field(..., description="Number of messages summarised (len(messages[1:cutoff])); appears in the packaged preamble")
+    hidden_message_count: int = Field(..., description="total_message_count - len(messages[cutoff:]); messages hidden from the LLM's view")
+    total_message_count: int = Field(..., description="Passed through from the request; all-time message count")
+    packaged_message: dict = Field(..., description='{"role": "user", "content": "<package_summarize_message JSON>"}')
 
 
 class MessagesAppendRequest(BaseModel):
@@ -596,3 +617,66 @@ def messages_append(agent_id: str, body: MessagesAppendRequest) -> MessagesAppen
 
     agent.persistence_manager.append_to_messages(body.messages)
     return MessagesAppendResponse(appended=len(body.messages))
+
+
+# ── POST /agents/{id}:summarize — §2.8 ───────────────────────────────────────
+
+@router.post("/{agent_id}:summarize", response_model=SummarizeResponse,
+             summary="Cutoff selection + summarisation + packaging (no buffer mutation)")
+def summarize(agent_id: str, body: SummarizeRequest) -> SummarizeResponse:
+    """
+    §2.8 — Mirrors the body of Agent.summarize_messages_inplace minus the three
+    host-side operations (trim_messages, prepend_to_messages, messages_total update).
+    Those are "the two named operations" owned by OpenClaw in Shape B.
+
+    Orchestration:
+      1. select_cutoff(messages, agent.model)          — F1 callable (e2c8c93 lineage)
+      2. summarize_messages(agent.model, messages[1:cutoff])
+      3. package_summarize_message(summary, summary_message_count, hidden_message_count, total)
+
+    agent.model is read from the resident agent's config (read-only, §5.5 "one model for
+    both").  The endpoint touches no buffer state — agent._messages, pm.messages,
+    pm.all_messages are all unchanged (messages is a request parameter, not a buffer
+    reference).
+
+    LLMError from select_cutoff (buffer too small to compress) is surfaced as 422.
+    """
+    from memgpt.agent import select_cutoff
+    from memgpt.errors import LLMError
+    from memgpt.memory import summarize_messages
+    from memgpt.system import package_summarize_message
+
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    messages = body.messages
+
+    try:
+        cutoff = select_cutoff(messages, agent.model)
+    except LLMError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    message_sequence_to_summarize = messages[1:cutoff]
+    summary = summarize_messages(agent.model, message_sequence_to_summarize)
+
+    summary_message_count = len(message_sequence_to_summarize)
+    remaining_message_count = len(messages[cutoff:])
+    hidden_message_count = body.total_message_count - remaining_message_count
+
+    packaged_json = package_summarize_message(
+        summary,
+        summary_message_count,
+        hidden_message_count,
+        body.total_message_count,
+    )
+    packaged_message = {"role": "user", "content": packaged_json}
+
+    return SummarizeResponse(
+        cutoff=cutoff,
+        summary=summary,
+        summary_length=summary_message_count,
+        hidden_message_count=hidden_message_count,
+        total_message_count=body.total_message_count,
+        packaged_message=packaged_message,
+    )
