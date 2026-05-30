@@ -7,7 +7,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "strict": false,
     "noImplicitAny": false,
     "types": ["node"],
@@ -21,7 +21,8 @@
   },
   "include": [
     "openclaw-plugin-sdk.d.ts",
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "tests/**/*.ts"
   ],
   "exclude": [
     "node_modules",

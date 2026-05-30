@@ -1,15 +1,52 @@
+/**
+ * openclaw-memgpt — MemGPT three-tier memory architecture for OpenClaw
+ * via a pymemgpt FastAPI sidecar (Shape B; API_DESIGN.md §1, §3.8).
+ *
+ * 6c.0 — scaffold: parse config + construct the shared sidecar client.
+ * Tools / hooks / lifecycle services are deferred to 6c.1–6c.8 (see CLAUDE.md
+ * "Next" block and §3.9).
+ */
+
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
-export default definePluginEntry({
+import { parseConfig } from "./config.ts";
+import type { PluginConfig } from "./config.ts";
+import { SidecarClientImpl } from "./client/sidecarClient.ts";
+
+/** Sidecar default — matches sidecar/settings.py (OPENCLAW_MEMGPT_PORT default 8765). */
+const DEFAULT_SIDECAR_URL = "http://127.0.0.1:8765";
+
+/**
+ * 6c.0 stub. The real resolver — env override, spawn-via-uv, port allocation —
+ * lands in 6d with the lifecycle layer (§6.1). Keeping the injection point in
+ * place now so the client surface doesn't change when lifecycle wires in.
+ */
+function stubResolveBaseUrl(config: PluginConfig): () => Promise<string> {
+  return async () =>
+    config.sidecarUrl ??
+    process.env.OPENCLAW_MEMGPT_SIDECAR_URL ??
+    DEFAULT_SIDECAR_URL;
+}
+
+const memgptPlugin = definePluginEntry({
   id: "openclaw-memgpt",
   name: "Memory (MemGPT)",
   description:
     "MemGPT three-tier memory architecture for OpenClaw — core, archival, and recall memory via a pymemgpt sidecar.",
 
   register(api: OpenClawPluginApi): void {
-    // Phase 6 implementation wired here.
-    // Stubs for 6a sidecar, 6b shim, 6c plugin, 6d packaging follow in build order.
-    api.logger.info("[openclaw-memgpt] plugin registered (skeleton)");
+    const config = parseConfig(api);
+    const client = new SidecarClientImpl(config, stubResolveBaseUrl(config));
+
+    // Touch the client so the variable isn't reported unused while 6c.1–6c.8
+    // wire it into tools / hooks / lifecycle. Removed when those land.
+    void client;
+
+    api.logger.info(
+      `openclaw-memgpt: scaffold registered (namespace: ${config.namespace}, observability: ${config.observability})`,
+    );
   },
 });
+
+export default memgptPlugin;
