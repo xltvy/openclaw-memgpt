@@ -14,7 +14,7 @@ import { parseConfig } from "./config.ts";
 import type { PluginConfig } from "./config.ts";
 import { SidecarClientImpl } from "./client/sidecarClient.ts";
 
-/** Sidecar default — matches sidecar/settings.py (OPENCLAW_MEMGMT_PORT default 8765). */
+/** Sidecar default — matches sidecar/settings.py (OPENCLAW_MEMGPT_PORT default 8765). */
 const DEFAULT_SIDECAR_URL = "http://127.0.0.1:8765";
 
 /**
