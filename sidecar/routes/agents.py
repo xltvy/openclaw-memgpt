@@ -14,6 +14,7 @@
 6a.7: POST /agents/{id}:summarize          (§2.8)
 6a.8: POST /agents/{id}:save               (§2.3)
       POST /agents/{id}:load               (§2.3)
+TaskB POST /agents/{id}:ensure             (§3.5 composite — resident | load | create)
 """
 
 from __future__ import annotations
@@ -158,6 +159,28 @@ class CreateAgentRequest(BaseModel):
 
 class CreateAgentResponse(BaseModel):
     agent_id: str
+
+
+class EnsureAgentRequest(BaseModel):
+    """
+    Body for POST /agents/{id}:ensure (§3.5).
+
+    Namespace comes from the URL path; the body carries only what the create
+    branch needs. All fields optional — load and resident branches ignore them;
+    create branch falls back to the same defaults as POST /agents.
+    """
+    model: Optional[str] = Field("gpt-4", description="LLM model id — create branch only")
+    persona: Optional[str] = Field(None, description="Persona block — create branch only")
+    human: Optional[str] = Field(None, description="Human block — create branch only")
+
+
+class EnsureAgentResponse(BaseModel):
+    agent_id: str
+    via: Literal["resident", "load", "create"] = Field(
+        ...,
+        description="Which branch resolved the request: 'resident' = already in registry (no-op); "
+                    "'load' = unpickled from disk via :load (F2 repair fires); 'create' = new agent",
+    )
 
 
 # ── Default persona / human text ─────────────────────────────────────────
@@ -761,3 +784,57 @@ def load_agent(agent_id: str) -> LoadResponse:
     registry.put(agent_id, agent)
     logger.info("Agent cold-start loaded: namespace=%s", agent_id)
     return LoadResponse(agent_id=agent_id, loaded_from="cold_start")
+
+
+# ── POST /agents/{id}:ensure — §3.5 composite (Task B) ────────────────────────
+
+@router.post("/{agent_id}:ensure", response_model=EnsureAgentResponse,
+             summary="Resolve namespace to a ready agent — resident | load | create")
+def ensure_agent(agent_id: str, body: Optional[EnsureAgentRequest] = None) -> EnsureAgentResponse:
+    """
+    §3.5 composite — single call the plugin's ensureAgent() consumes.
+
+    Resolves the namespace in order:
+      1. Resident — agent_id is in the registry → no-op, via="resident".
+      2. On-disk  — config.json exists under MEMGPT_DIR/agents/{agent_id}/ →
+                    delegates to load_agent(agent_id); F2 repair fires inside
+                    LocalStateManager.load (§2.11), via="load".
+      3. Create   — neither resident nor on disk → delegates to
+                    create_agent(CreateAgentRequest(...)) using body's
+                    model/persona/human (defaults when absent), via="create".
+
+    Delegates to the existing create_agent / load_agent route functions rather
+    than duplicating their logic. The single-process model means the residency
+    and disk checks made here remain valid through the immediate inner call —
+    no TOCTOU window for the registry, and the disk file can only have been
+    created by another in-process call we'd have raced against (impossible
+    under FastAPI's per-request synchronous handler dispatch on this thread).
+
+    The plugin chooses nothing — the sidecar owns the residency table and
+    disk; the plugin only sees `via` in the response (useful for the 6d
+    observability event stream).
+    """
+    # 1. Resident → no-op
+    if agent_id in registry:
+        logger.debug(":ensure resident agent=%s", agent_id)
+        return EnsureAgentResponse(agent_id=agent_id, via="resident")
+
+    # 2. On-disk → :load (delegate to load_agent)
+    # Use the same path shape load_agent / AgentConfig.load would resolve.
+    from memgpt.constants import MEMGPT_DIR as _DIR
+    config_path = os.path.join(_DIR, "agents", agent_id, "config.json")
+    if os.path.exists(config_path):
+        logger.debug(":ensure on-disk agent=%s, delegating to :load", agent_id)
+        load_resp = load_agent(agent_id)  # raises HTTPException on its own failures
+        return EnsureAgentResponse(agent_id=load_resp.agent_id, via="load")
+
+    # 3. Else → create (delegate to create_agent)
+    ensure_body = body or EnsureAgentRequest()
+    logger.debug(":ensure create agent=%s", agent_id)
+    create_resp = create_agent(CreateAgentRequest(
+        name=agent_id,
+        model=ensure_body.model,
+        persona=ensure_body.persona,
+        human=ensure_body.human,
+    ))
+    return EnsureAgentResponse(agent_id=create_resp.agent_id, via="create")
