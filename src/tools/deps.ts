@@ -29,15 +29,19 @@ import type { SidecarClient } from "../client/sidecarClient.ts";
 
 /**
  * Event shape the tool handlers + hooks emit. `kind` is the operation name
- * (e.g. "archival_search", "core_memory_append"). `meta` carries level-
- * appropriate detail; the level-gated emitter (6d) decides what to surface.
+ * (e.g. "archival_search", "core_memory_append", "agent_ensured",
+ * "emit_failed"). `ts` is the optional ISO-8601 timestamp the §4.2 hook
+ * pattern stamps at the call site (so concurrent events keep their actual
+ * order in the stream). `meta` carries level-appropriate detail; the
+ * level-gated emitter (6d) decides what to surface.
  *
  * Kept structurally open here — the §6.2 emitter owns the precise field set
- * per kind, and tool handlers just hand it whatever they have.
+ * per kind, and tool handlers / hooks just hand it whatever they have.
  */
 export interface MemoryEvent {
   kind: string;
   namespace: string;
+  ts?: string;
   meta?: Record<string, unknown>;
 }
 

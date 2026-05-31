@@ -2,10 +2,9 @@
  * openclaw-memgpt — MemGPT three-tier memory architecture for OpenClaw
  * via a pymemgpt FastAPI sidecar (Shape B; API_DESIGN.md §1, §3.8).
  *
- * 6c.3 wiring: parse config → construct sidecar client → build ToolDeps →
- * register the seven tools. Hooks (6c.4–6c.7) and lifecycle (6c.8 / 6d)
- * still deferred — `register()` returns after `registerTools(...)` without
- * setting up any `api.on(...)` listeners.
+ * 6c.4 wiring: parse config → construct sidecar client → build ToolDeps →
+ * register the seven tools → register the `before_prompt_build` hook.
+ * Remaining hooks (6c.5–6c.7) and lifecycle (6c.8 / 6d) still deferred.
  */
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
@@ -14,6 +13,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { parseConfig } from "./config.ts";
 import type { PluginConfig } from "./config.ts";
 import { SidecarClientImpl } from "./client/sidecarClient.ts";
+import { registerPromptSectionHook } from "./hooks/promptSection.ts";
 import { makeToolDeps } from "./tools/deps.ts";
 import { registerTools } from "./tools/index.ts";
 
@@ -44,9 +44,10 @@ const memgptPlugin = definePluginEntry({
     const deps = makeToolDeps(client, config, api);
 
     registerTools(api, deps);
+    registerPromptSectionHook(api, deps);
 
     api.logger.info(
-      `openclaw-memgpt: 7 tools registered (namespace: ${config.namespace}, observability: ${config.observability})`,
+      `openclaw-memgpt: 7 tools + before_prompt_build hook registered (namespace: ${config.namespace}, observability: ${config.observability})`,
     );
   },
 });
