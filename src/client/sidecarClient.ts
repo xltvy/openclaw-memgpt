@@ -120,19 +120,25 @@ export class SidecarClientImpl implements SidecarClient {
   }
 
   /**
-   * Init steps per §3.4:
+   * Init steps:
    *   1. resolve baseUrl (injected by lifecycle in 6d — config / env / spawned port)
    *   2. poll /healthz until the sidecar's embedder has loaded
-   *   3. :ensure the configured namespace (resident | load | create)
    *
-   * All HTTP inside doInit uses the private `_*` helpers so it bypasses
-   * `ensureReady` — calling it from inside would deadlock on the in-flight
-   * initPromise.
+   * Sidecar-readiness only — agent-readiness (the actual :ensure call) is the
+   * caller's responsibility, by deliberate choice. §3.4's example put it
+   * in doInit, but folding it here makes the public ensure() always return
+   * via:"resident" on the first call (because doInit created the agent
+   * one HTTP turn earlier), which loses the actual create/load/resident
+   * discrimination at the call site. The hook layer (6c.4 before_prompt_build)
+   * calls ensure() once at turn start — same "per-turn transparent" property
+   * §3.4 was after, without burying the via signal.
+   *
+   * doInit-time HTTP uses the private `_*` helpers (bypass ensureReady;
+   * calling it from within would deadlock on the in-flight initPromise).
    */
   protected async doInit(): Promise<void> {
     this.baseUrl = await this.resolveBaseUrl();
     await this._pollHealthz();
-    await this._ensureAgent();
   }
 
   /** Test/diagnostic — returns the cached baseUrl, or undefined if never inited. */
