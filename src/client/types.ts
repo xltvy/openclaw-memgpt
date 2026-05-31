@@ -38,9 +38,19 @@ export interface PyMemGptMessage {
 // Lifecycle (§2.3)
 // ============================================================================
 
+export type EnsureVia = "resident" | "load" | "create";
+
 export interface EnsureAgentResult {
-  namespace: string;
-  via: "resident" | "load" | "create";
+  /** Echoes the namespace from the URL path; sidecar wire field is `agent_id`. */
+  agentId: string;
+  via: EnsureVia;
+}
+
+/** Per-create-branch options passed to :ensure (path provides the namespace). */
+export interface EnsureOpts {
+  model?: string;
+  persona?: string;
+  human?: string;
 }
 
 export interface SaveResult {
@@ -143,7 +153,19 @@ export interface SummarizeResult {
 }
 
 // ============================================================================
-// Management / status (§3.5 — operational, not anchored to a pymemgpt method)
+// Health (§2.2 — liveness probe, owned by SidecarClient)
+// ============================================================================
+
+export interface HealthzResponse {
+  ok: boolean;
+  /** "ready" once the embedder model has loaded; "not_loaded" otherwise. */
+  embedder: "ready" | "not_loaded" | string;
+  /** Number of agents currently resident in the sidecar registry. */
+  agentsResident: number;
+}
+
+// ============================================================================
+// Management / status (§3.5 — operational, owned by SidecarAdminClient)
 // ============================================================================
 
 export interface SidecarStatus {
