@@ -2,9 +2,10 @@
  * openclaw-memgpt — MemGPT three-tier memory architecture for OpenClaw
  * via a pymemgpt FastAPI sidecar (Shape B; API_DESIGN.md §1, §3.8).
  *
- * 6c.0 — scaffold: parse config + construct the shared sidecar client.
- * Tools / hooks / lifecycle services are deferred to 6c.1–6c.8 (see CLAUDE.md
- * "Next" block and §3.9).
+ * 6c.3 wiring: parse config → construct sidecar client → build ToolDeps →
+ * register the seven tools. Hooks (6c.4–6c.7) and lifecycle (6c.8 / 6d)
+ * still deferred — `register()` returns after `registerTools(...)` without
+ * setting up any `api.on(...)` listeners.
  */
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
@@ -13,6 +14,8 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { parseConfig } from "./config.ts";
 import type { PluginConfig } from "./config.ts";
 import { SidecarClientImpl } from "./client/sidecarClient.ts";
+import { makeToolDeps } from "./tools/deps.ts";
+import { registerTools } from "./tools/index.ts";
 
 /** Sidecar default — matches sidecar/settings.py (OPENCLAW_MEMGPT_PORT default 8765). */
 const DEFAULT_SIDECAR_URL = "http://127.0.0.1:8765";
@@ -38,13 +41,12 @@ const memgptPlugin = definePluginEntry({
   register(api: OpenClawPluginApi): void {
     const config = parseConfig(api);
     const client = new SidecarClientImpl(config, stubResolveBaseUrl(config));
+    const deps = makeToolDeps(client, config, api);
 
-    // Touch the client so the variable isn't reported unused while 6c.1–6c.8
-    // wire it into tools / hooks / lifecycle. Removed when those land.
-    void client;
+    registerTools(api, deps);
 
     api.logger.info(
-      `openclaw-memgpt: scaffold registered (namespace: ${config.namespace}, observability: ${config.observability})`,
+      `openclaw-memgpt: 7 tools registered (namespace: ${config.namespace}, observability: ${config.observability})`,
     );
   },
 });
