@@ -2,10 +2,12 @@
  * openclaw-memgpt — MemGPT three-tier memory architecture for OpenClaw
  * via a pymemgpt FastAPI sidecar (Shape B; API_DESIGN.md §1, §3.8).
  *
- * 6c.5 wiring: parse config → construct sidecar client → build ToolDeps →
- * register the seven tools → register the `before_prompt_build` hook →
- * register the `agent_end` hook (mirror + save). Remaining hooks (6c.6 /
- * 6c.7) and lifecycle (6c.8 / 6d) still deferred.
+ * 6c.6.1 wiring: parse config → construct sidecar client → build ToolDeps →
+ * register the seven tools → register the `before_prompt_build` prompt-
+ * section hook → register the `before_prompt_build` flush-pressure hook
+ * (predicate only at 6c.6.1; summariser glue at 6c.6.2) → register the
+ * `agent_end` hook (mirror + save). 6c.7 reply_dispatch + lifecycle
+ * (6c.8 / 6d) still deferred.
  */
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
@@ -14,6 +16,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { parseConfig } from "./config.ts";
 import type { PluginConfig } from "./config.ts";
 import { SidecarClientImpl } from "./client/sidecarClient.ts";
+import { registerFlushPressureHook } from "./hooks/flushPressure.ts";
 import { registerAgentEndHook } from "./hooks/mirror.ts";
 import { registerPromptSectionHook } from "./hooks/promptSection.ts";
 import { makeToolDeps } from "./tools/deps.ts";
@@ -47,10 +50,11 @@ const memgptPlugin = definePluginEntry({
 
     registerTools(api, deps);
     registerPromptSectionHook(api, deps);
+    registerFlushPressureHook(api, deps);
     registerAgentEndHook(api, deps);
 
     api.logger.info(
-      `openclaw-memgpt: 7 tools + before_prompt_build + agent_end hooks registered (namespace: ${config.namespace}, observability: ${config.observability})`,
+      `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end hooks registered (namespace: ${config.namespace}, observability: ${config.observability})`,
     );
   },
 });

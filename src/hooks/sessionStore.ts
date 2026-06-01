@@ -1,0 +1,142 @@
+/**
+ * Session-store access helpers for the flush-pressure hook (§4.4 / 6c.6).
+ *
+ * The flush handler reads token state off OpenClaw's `SessionEntry`
+ * (populated by prior turns' `llm_output.usage`; see API_DESIGN.md §4.7 +
+ * the 6c.6.0 SDK read). Token counts aren't on the `before_prompt_build`
+ * event itself — they live on `SessionEntry.totalTokens`, gated by
+ * `SessionEntry.totalTokensFresh` (a snapshot freshness flag).
+ *
+ * These helpers exist so the 6c.6.1 hook + the 6c.6.2 summariser glue
+ * share one access surface, and so the load-store-and-pluck-entry sequence
+ * is mockable in isolation (the hook tests don't have to construct a full
+ * OpenClaw runtime shape).
+ *
+ * The local `SessionEntry` and `RuntimeSessionApi` types are minimal — only
+ * the fields the plugin currently reads. OpenClaw's own types are the source
+ * of truth; we structurally compatible-match what we need rather than depend
+ * on the upstream type names so the local plugin-sdk d.ts stub stays
+ * unchanged. Fields are added here as later 6c.6.x sub-tasks need them.
+ */
+
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+
+// ============================================================================
+// Local shapes — structurally compatible with OpenClaw's SessionEntry +
+// PluginRuntimeCore.agent.session (per 6c.6.0 SDK read).
+// ============================================================================
+
+/**
+ * The subset of `SessionEntry` (from
+ * `src/config/sessions/types.d.ts` in the installed SDK) that 6c.6 reads.
+ * Optional throughout because OpenClaw's own type marks them optional.
+ */
+export interface SessionEntry {
+  totalTokens?: number;
+  totalTokensFresh?: boolean;
+  /** Reserved for 6c.6.2 / 6c.6.3 — coordination with OpenClaw's own
+   * compaction so a double-flush is suppressed. Not read at this sub-task. */
+  memoryFlushAt?: number;
+  memoryFlushCompactionCount?: number;
+  memoryFlushContextHash?: string;
+}
+
+/**
+ * The subset of `api.runtime.agent.session` (from
+ * `src/plugins/runtime/types-core.d.ts:54-59`) needed for load access.
+ * `saveSessionStore` / `updateSessionStore` will be added when 6c.6.2
+ * wires the state mutation path.
+ */
+export interface RuntimeSessionApi {
+  resolveStorePath(
+    store?: string,
+    opts?: { agentId?: string; env?: NodeJS.ProcessEnv },
+  ): string;
+  loadSessionStore(
+    storePath: string,
+    opts?: unknown,
+  ): Record<string, SessionEntry>;
+}
+
+/** The hook's `ctx` payload — `PluginHookAgentContext` from the SDK. */
+export interface AgentContext {
+  agentId?: string;
+  sessionKey?: string;
+  trigger?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Narrow accessor — drills into `api.runtime?.agent?.session?` so call sites
+ * don't repeat the optional-chain and the cast lives in one place.
+ *
+ * Returns `null` when the runtime isn't available (sub-agent contexts; some
+ * test harnesses don't wire `api.runtime`); callers skip the operation.
+ */
+export function getRuntimeSession(
+  api: OpenClawPluginApi,
+): RuntimeSessionApi | null {
+  const runtime = (
+    api as unknown as {
+      runtime?: { agent?: { session?: RuntimeSessionApi } };
+    }
+  ).runtime;
+  return runtime?.agent?.session ?? null;
+}
+
+// ============================================================================
+// Field accessors — explicit-default wrappers around the raw SessionEntry
+// fields. OpenClaw exposes equivalent functions returning `undefined`; ours
+// return explicit sentinels so the hook's policy code stays branch-clean.
+// ============================================================================
+
+/**
+ * Total context tokens reported by the prior turn's `llm_output.usage`, or
+ * `0` if unset. Caller should generally prefer
+ * `resolveFreshSessionTotalTokens` so stale snapshots aren't acted on.
+ */
+export function resolveSessionTotalTokens(
+  entry: SessionEntry | null | undefined,
+): number {
+  return entry?.totalTokens ?? 0;
+}
+
+/**
+ * Total context tokens *if* the snapshot is fresh; `null` otherwise. The
+ * `totalTokensFresh === false` case is a deliberate-do-not-act signal from
+ * OpenClaw — the value is from a prior un-rotated context and would
+ * mis-attribute the threshold trip to a different turn.
+ */
+export function resolveFreshSessionTotalTokens(
+  entry: SessionEntry | null | undefined,
+): number | null {
+  if (!entry) return null;
+  if (entry.totalTokensFresh !== true) return null;
+  return entry.totalTokens ?? 0;
+}
+
+// ============================================================================
+// Load helper — combines storePath resolution + load + entry pluck.
+// ============================================================================
+
+/**
+ * Read the `SessionEntry` for this hook invocation, or `null` if the entry
+ * doesn't exist yet (first turn) or required ctx fields are missing.
+ *
+ * The hook layer's standard guard pattern: `const entry = loadSessionEntry(...);
+ * if (!entry) return;` — a missing entry means there's no prior turn to read
+ * token state from, so there's nothing to gate the flush against.
+ */
+export function loadSessionEntry(
+  api: OpenClawPluginApi,
+  ctx: AgentContext,
+): SessionEntry | null {
+  if (!ctx.sessionKey || !ctx.agentId) return null;
+  const session = getRuntimeSession(api);
+  if (!session) return null;
+  const storePath = session.resolveStorePath(undefined, {
+    agentId: ctx.agentId,
+  });
+  const store = session.loadSessionStore(storePath);
+  return store[ctx.sessionKey] ?? null;
+}
