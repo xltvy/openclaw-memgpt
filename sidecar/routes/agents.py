@@ -15,6 +15,7 @@
 6a.8: POST /agents/{id}:save               (§2.3)
       POST /agents/{id}:load               (§2.3)
 TaskB POST /agents/{id}:ensure             (§3.5 composite — resident | load | create)
+6c.6.2: GET  /agents/{id}/stats            (§2.2 — host-tracked total_message_count provenance)
 """
 
 from __future__ import annotations
@@ -108,6 +109,22 @@ class SystemPromptSectionResponse(BaseModel):
     section: str = Field(..., description="Full rendered system-prompt memory section (verbatim construct_system_with_memory output)")
     static: str = Field(..., description="Base system prompt — does not change across turns; safe to cache")
     dynamic: str = Field(..., description="Memory metadata + persona/human blocks — changes on every core-memory edit")
+
+
+class StatsResponse(BaseModel):
+    """
+    6c.6.2 — provenance for the host-passed `total_message_count` on
+    :summarize requests. OpenClaw's SessionEntry has no all-time message
+    counter (only `compactionCount`); the sidecar is the canonical place
+    to read it because pm.all_messages IS the running record. Returning a
+    typed object (rather than a bare int) so future stats — recall corpus
+    size, archival passage count, last-saved timestamp — can extend the
+    response without a new endpoint per metric.
+    """
+    total_message_count: int = Field(
+        ...,
+        description="len(pm.all_messages) — running all-time message count tracked by the sidecar; the host-passed total_message_count on :summarize requests",
+    )
 
 
 class SummarizeRequest(BaseModel):
@@ -344,6 +361,37 @@ def get_system_prompt_section(agent_id: str) -> SystemPromptSectionResponse:
     dynamic = section[len(static):]
 
     return SystemPromptSectionResponse(section=section, static=static, dynamic=dynamic)
+
+
+# ── 6c.6.2: GET /agents/{id}/stats — total_message_count provenance ─────────
+
+@router.get("/{agent_id}/stats", response_model=StatsResponse,
+            summary="Read sidecar-tracked stats (currently: total_message_count)")
+def get_stats(agent_id: str) -> StatsResponse:
+    """
+    6c.6.2 — provenance for the host-passed `total_message_count` on
+    :summarize requests.
+
+    OpenClaw's SessionEntry exposes `compactionCount` but no all-time
+    message counter; the flush-pressure hook (TS-side, §4.4) was therefore
+    blocked on where to source `total_message_count` for §2.8's preamble
+    template. The sidecar is the canonical source: pm.all_messages IS the
+    running record (boot sequence + every messages:append per-turn batch
+    via the 6c.5 mirror hook). Returning it as a stats endpoint rather
+    than computing it twice (host-side counter + sidecar-side reality)
+    keeps a single source of truth and avoids the host-counter restart-
+    survival concern.
+
+    Returns a typed object so future stats (recall corpus size, archival
+    passage count, last-saved timestamp) extend without a new endpoint per
+    metric — a pragma the §6 observability stream may benefit from.
+    """
+    agent = registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
+
+    pm = agent.persistence_manager
+    return StatsResponse(total_message_count=len(pm.all_messages))
 
 
 # ── Core memory endpoints — §2.4 ─────────────────────────────────────────────
