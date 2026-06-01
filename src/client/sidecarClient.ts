@@ -33,6 +33,7 @@ import type {
   RecallSearchDateParams,
   SaveResult,
   SearchResult,
+  StatsResponse,
   SummarizeResult,
   SystemPromptSection,
 } from "./types.ts";
@@ -86,6 +87,9 @@ export interface SidecarClient {
 
   /** §2.2 /healthz — liveness; embedder + resident count. */
   healthz(): Promise<HealthzResponse>;
+
+  /** §2.2 GET /agents/{id}/stats — sidecar-tracked counts (6c.6.2 totalMessageCount source). */
+  getStats(): Promise<StatsResponse>;
 }
 
 // ============================================================================
@@ -532,5 +536,16 @@ export class SidecarClientImpl implements SidecarClient {
       embedder: raw.embedder,
       agentsResident: raw.agents_resident,
     };
+  }
+
+  async getStats(): Promise<StatsResponse> {
+    await this.ensureReady();
+    const agentId = this.resolveAgentId();
+    const path = `/agents/${encodeURIComponent(agentId)}/stats`;
+    const resp = await fetch(this.buildSidecarRequest("GET", path));
+    const raw = await this.handleResponse<{
+      total_message_count: number;
+    }>(resp, path);
+    return { totalMessageCount: raw.total_message_count };
   }
 }
