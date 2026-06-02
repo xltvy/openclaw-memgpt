@@ -57,12 +57,16 @@
  *     the predicate will trip again and retry the summarise naturally).
  */
 
+import { createHash } from "node:crypto";
+
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import { BufferTooSmallError } from "../client/errors.ts";
 import { normaliseMessages, type OpenClawMessage } from "../normalise.ts";
 import type { ToolDeps } from "../tools/deps.ts";
 import {
+  getRuntimeSession,
+  hasAlreadyFlushedForCurrentCompaction,
   loadSessionEntry,
   resolveFreshSessionTotalTokens,
   type AgentContext,
@@ -114,6 +118,18 @@ export function registerFlushPressureHook(
       }
 
       if (tokens < MESSAGE_SUMMARY_WARNING_TOKENS) return;
+
+      // Already flushed for the current OpenClaw compaction cycle — skip to
+      // avoid re-summarising the same context. This fires when
+      // `memoryFlushCompactionCount === compactionCount`, which we write at the
+      // end of a successful flush (6c.6.3). It unblocks naturally when
+      // OpenClaw's compaction fires and increments `compactionCount`.
+      if (hasAlreadyFlushedForCurrentCompaction(entry)) {
+        deps.logger.debug(
+          `openclaw-memgpt: flush already done for current compaction cycle, skipping (sessionKey=${ctx.sessionKey})`,
+        );
+        return;
+      }
 
       // Threshold tripped + fresh + guarded. Log here (the 6c.6.1 contract);
       // then call :summarize. Without the messages we can't summarise — the
@@ -172,12 +188,102 @@ export function registerFlushPressureHook(
             hiddenMessageCount: result.hiddenMessageCount,
           },
         });
-        // 6c.6.3 wires the trim-and-prepend here:
-        //   - session-store update to replace event.messages with
-        //     [messages[0], result.packagedMessage, ...messages[cutoff:]]
-        //   - client.messagesAppend([result.packagedMessage]) for recall
-        //   - write memoryFlushAt / memoryFlushContextHash on SessionEntry
-        //     to suppress OpenClaw's own compaction this round
+        // ── 6c.6.3: metadata write + recall mirror ─────────────────────────
+        //
+        // NOTE on the missing transcript trim:
+        // MemGPT's summarize_messages_inplace trims the active buffer to
+        // [system, packagedMessage, messages[cutoff:]]. That trim cannot be
+        // done via the plugin surface: `SessionEntry` has no `messages` field
+        // (buffer lives in `entry.sessionFile`, the transcript JSONL), and
+        // `rewriteTranscriptEntriesInSessionFile` supports replacements only,
+        // not deletion. Trimming requires a `ContextEngine` registration with
+        // `compact()` + `runtimeContext.rewriteTranscriptEntries()`.
+        // Deferred to future ContextEngine work.
+        //
+        // What we DO write here:
+        //   memoryFlushAt            — ms timestamp of this flush
+        //   memoryFlushCompactionCount — matches compactionCount so
+        //                               hasAlreadyFlushedForCurrentCompaction
+        //                               returns true until OpenClaw's next
+        //                               compaction cycle (preventing re-summary)
+        //   memoryFlushContextHash   — SHA-256(messages)[0:16] for dedup
+        const contextHash = computeContextHash(v0Messages);
+
+        const session = getRuntimeSession(api);
+        if (session && ctx.agentId && ctx.sessionKey) {
+          try {
+            const storePath = session.resolveStorePath(undefined, {
+              agentId: ctx.agentId,
+            });
+            const store = session.loadSessionStore(storePath);
+            const currentEntry = store[ctx.sessionKey];
+            if (currentEntry) {
+              // Spread to avoid mutating the loaded store object in-place;
+              // saveSessionStore receives a new snapshot with the updated entry.
+              await session.saveSessionStore(storePath, {
+                ...store,
+                [ctx.sessionKey]: {
+                  ...currentEntry,
+                  memoryFlushAt: Date.now(),
+                  memoryFlushCompactionCount: currentEntry.compactionCount ?? 0,
+                  memoryFlushContextHash: contextHash,
+                },
+              });
+            } else {
+              // Session entry vanished between predicate read and write —
+              // recoverable: skip the metadata write silently.
+              deps.logger.debug(
+                `openclaw-memgpt: session entry vanished before flush metadata write; skipping (sessionKey=${ctx.sessionKey})`,
+              );
+            }
+          } catch (storeErr) {
+            deps.logger.warn(
+              `openclaw-memgpt: flush metadata write failed for sessionKey=${ctx.sessionKey}: ${stringifyError(storeErr)}`,
+            );
+            deps.emit({
+              kind: "emit_failed",
+              namespace: deps.namespace,
+              ts: new Date().toISOString(),
+              meta: {
+                operation: "sessionStore",
+                reason: stringifyError(storeErr),
+              },
+            });
+          }
+        }
+
+        // Mirror the packaged summary to recall so it remains searchable
+        // after the flush. packagedMessage is already in PyMemGPT v0 format
+        // (returned by the sidecar); no normalisation needed.
+        try {
+          await deps.client.messagesAppend([result.packagedMessage]);
+          deps.emit({
+            kind: "flush_applied",
+            namespace: deps.namespace,
+            ts: new Date().toISOString(),
+            meta: {
+              cutoff: result.cutoff,
+              summaryLength: result.summaryLength,
+              hiddenMessageCount: result.hiddenMessageCount,
+            },
+          });
+        } catch (mirrorErr) {
+          // Mirror failure: session metadata is already written. The next
+          // agent_end hook mirrors all turn messages anyway, so the summary
+          // will reach recall on the following turn.
+          deps.logger.warn(
+            `openclaw-memgpt: flush recall mirror failed; next agent_end will retry (sessionKey=${ctx.sessionKey}): ${stringifyError(mirrorErr)}`,
+          );
+          deps.emit({
+            kind: "emit_failed",
+            namespace: deps.namespace,
+            ts: new Date().toISOString(),
+            meta: {
+              operation: "messagesAppend",
+              reason: stringifyError(mirrorErr),
+            },
+          });
+        }
       } catch (err) {
         if (err instanceof BufferTooSmallError) {
           // §2.8: a small token-heavy buffer is recoverable — false-alarm
@@ -221,4 +327,18 @@ export function registerFlushPressureHook(
 function stringifyError(err: unknown): string {
   if (err instanceof Error) return `${err.name}: ${err.message}`;
   return String(err);
+}
+
+/**
+ * SHA-256 of the full message array (JSON-serialised), truncated to 16 hex
+ * chars. Matches the SDK's `computeContextHash` algorithm pattern
+ * (`auto-reply/reply/memory-flush.d.ts`) for coordination compatibility.
+ * The SDK function is not re-exported from `openclaw/plugin-sdk`, so we
+ * implement it locally using the same algorithm type (SHA-256 / 16 chars).
+ */
+function computeContextHash(messages: unknown[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify(messages))
+    .digest("hex")
+    .slice(0, 16);
 }

@@ -28,14 +28,24 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 /**
  * The subset of `SessionEntry` (from
- * `src/config/sessions/types.d.ts` in the installed SDK) that 6c.6 reads.
- * Optional throughout because OpenClaw's own type marks them optional.
+ * `src/config/sessions/types.d.ts` in the installed SDK) that 6c.6 reads
+ * and writes. Optional throughout because OpenClaw's own type marks them
+ * optional.
  */
 export interface SessionEntry {
   totalTokens?: number;
   totalTokensFresh?: boolean;
-  /** Reserved for 6c.6.2 / 6c.6.3 — coordination with OpenClaw's own
-   * compaction so a double-flush is suppressed. Not read at this sub-task. */
+  /**
+   * OpenClaw's compaction cycle counter — increments after each full context
+   * engine compaction run. Used by `hasAlreadyFlushedForCurrentCompaction` to
+   * detect whether our MemGPT flush already fired in the current cycle.
+   */
+  compactionCount?: number;
+  /**
+   * Set by 6c.6.3 after a successful flush to suppress OpenClaw's own memory
+   * flush for the same compaction cycle. Value = `compactionCount` at flush
+   * time; `hasAlreadyFlushedForCurrentCompaction` returns true when equal.
+   */
   memoryFlushAt?: number;
   memoryFlushCompactionCount?: number;
   memoryFlushContextHash?: string;
@@ -43,9 +53,10 @@ export interface SessionEntry {
 
 /**
  * The subset of `api.runtime.agent.session` (from
- * `src/plugins/runtime/types-core.d.ts:54-59`) needed for load access.
- * `saveSessionStore` / `updateSessionStore` will be added when 6c.6.2
- * wires the state mutation path.
+ * `src/plugins/runtime/types-core.d.ts:54-59`) needed for read + write
+ * access. Note: `updateSessionStore` is NOT on `api.runtime.agent.session`
+ * (confirmed by SDK read) — only `loadSessionStore` + `saveSessionStore`
+ * are exposed at the plugin surface. Use load + mutate + save for writes.
  */
 export interface RuntimeSessionApi {
   resolveStorePath(
@@ -56,6 +67,11 @@ export interface RuntimeSessionApi {
     storePath: string,
     opts?: unknown,
   ): Record<string, SessionEntry>;
+  saveSessionStore(
+    storePath: string,
+    store: Record<string, SessionEntry>,
+    opts?: unknown,
+  ): Promise<void>;
 }
 
 /** The hook's `ctx` payload — `PluginHookAgentContext` from the SDK. */
@@ -139,4 +155,24 @@ export function loadSessionEntry(
   });
   const store = session.loadSessionStore(storePath);
   return store[ctx.sessionKey] ?? null;
+}
+
+/**
+ * Returns true when our MemGPT flush has already run for the current OpenClaw
+ * compaction cycle. Mirrors the SDK's `hasAlreadyFlushedForCurrentCompaction`
+ * logic (`auto-reply/reply/memory-flush.d.ts`, confirmed by SDK read):
+ *   `memoryFlushCompactionCount === (compactionCount ?? 0)` → already flushed.
+ *
+ * We set `memoryFlushCompactionCount = compactionCount ?? 0` at flush time,
+ * which causes this to return true until OpenClaw's compaction fires and
+ * increments `compactionCount`. This prevents re-summarizing the same context
+ * on subsequent turns when the transcript hasn't been trimmed yet.
+ */
+export function hasAlreadyFlushedForCurrentCompaction(
+  entry: SessionEntry | null | undefined,
+): boolean {
+  if (!entry) return false;
+  const compactionCount = entry.compactionCount ?? 0;
+  const lastFlushAt = entry.memoryFlushCompactionCount;
+  return typeof lastFlushAt === "number" && lastFlushAt === compactionCount;
 }

@@ -20,10 +20,14 @@ import {
   MESSAGE_SUMMARY_WARNING_TOKENS,
   registerFlushPressureHook,
 } from "../../src/hooks/flushPressure.ts";
-import type { SessionEntry } from "../../src/hooks/sessionStore.ts";
+import {
+  hasAlreadyFlushedForCurrentCompaction,
+  type SessionEntry,
+} from "../../src/hooks/sessionStore.ts";
 import { BufferTooSmallError } from "../../src/client/errors.ts";
 import type { SidecarClient } from "../../src/client/sidecarClient.ts";
 import type {
+  MessagesAppendResult,
   StatsResponse,
   SummarizeResult,
 } from "../../src/client/types.ts";
@@ -73,18 +77,30 @@ function makeDeps(
 /**
  * Build a mock api where api.runtime.agent.session is a controllable store.
  * Returns both the api (cast to OpenClawPluginApi) and call-count mocks so
- * tests can assert whether the store was read.
+ * tests can assert whether the store was read or written.
+ *
+ * `loadSessionStore` by default returns `store` for every call. Pass a
+ * custom mock via `loadOverride` when a test needs to return different values
+ * on successive calls (e.g. "session vanished between read and write").
  */
-function makeMockApi(store: Record<string, SessionEntry>): {
+function makeMockApi(
+  store: Record<string, SessionEntry>,
+  opts?: { loadOverride?: ReturnType<typeof mock.fn> },
+): {
   api: OpenClawPluginApi;
   resolveStorePath: ReturnType<typeof mock.fn>;
   loadSessionStore: ReturnType<typeof mock.fn>;
+  saveSessionStore: ReturnType<typeof mock.fn>;
   capturedHandler: () => Handler;
 } {
   const resolveStorePath = mock.fn(
     (_store?: string, _opts?: { agentId?: string }) => "/test/store/path",
   );
-  const loadSessionStore = mock.fn((_path: string) => store);
+  const loadSessionStore =
+    opts?.loadOverride ?? mock.fn((_path: string) => store);
+  const saveSessionStore = mock.fn(
+    async (_path: string, _s: Record<string, SessionEntry>) => {},
+  );
 
   let captured: Handler | undefined;
   const api = {
@@ -104,7 +120,7 @@ function makeMockApi(store: Record<string, SessionEntry>): {
     registerService: () => {},
     runtime: {
       agent: {
-        session: { resolveStorePath, loadSessionStore },
+        session: { resolveStorePath, loadSessionStore, saveSessionStore },
       },
     },
   } as unknown as OpenClawPluginApi;
@@ -113,6 +129,7 @@ function makeMockApi(store: Record<string, SessionEntry>): {
     api,
     resolveStorePath,
     loadSessionStore,
+    saveSessionStore,
     capturedHandler: () => {
       if (!captured) throw new Error("hook did not register");
       return captured;
@@ -623,4 +640,276 @@ test("empty event.messages above threshold → predicate trips but summarise ski
     String(c.arguments[0]),
   );
   assert.ok(debugMsgs.some((m) => /event\.messages empty/i.test(m)));
+});
+
+// ── 9. 6c.6.3 — metadata write + recall mirror ────────────────────────────
+
+/** Store with a compactionCount to verify memoryFlushCompactionCount matches. */
+const STORE_WITH_COMPACTION_COUNT: Record<string, SessionEntry> = {
+  "agent:main:main": {
+    totalTokens: MESSAGE_SUMMARY_WARNING_TOKENS + 100,
+    totalTokensFresh: true,
+    compactionCount: 2,
+  },
+};
+
+test("6c.6.3: already flushed for current cycle → debug + skip; no summarize call", async () => {
+  // hasAlreadyFlushedForCurrentCompaction: memoryFlushCompactionCount === compactionCount → skip.
+  // This prevents re-summarising the same context when the transcript wasn't trimmed.
+  const store: Record<string, SessionEntry> = {
+    "agent:main:main": {
+      totalTokens: MESSAGE_SUMMARY_WARNING_TOKENS + 200,
+      totalTokensFresh: true,
+      compactionCount: 3,
+      memoryFlushCompactionCount: 3, // already flushed for cycle 3
+    },
+  };
+  const getStats = mock.fn(async (): Promise<StatsResponse> => ({ totalMessageCount: 5 }));
+  const summarize = mock.fn(async (): Promise<SummarizeResult> => makeSummarizeResult());
+
+  const { api, capturedHandler } = makeMockApi(store);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, { getStats, summarize }));
+
+  await capturedHandler()(makeEvent(), INTERACTIVE_CTX);
+
+  assert.equal(summarize.mock.callCount(), 0, "summarize must NOT be called if already flushed for cycle");
+  assert.equal(getStats.mock.callCount(), 0, "getStats must NOT be called either");
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  assert.ok(
+    debugMsgs.some((m) => /already done for current compaction cycle/i.test(m)),
+    `expected already-flushed debug log; got: ${debugMsgs.join(" | ")}`,
+  );
+});
+
+test("6c.6.3: hasAlreadyFlushedForCurrentCompaction helper — boundary cases", () => {
+  // Direct unit tests of the helper (memoryFlushCompactionCount === compactionCount → true).
+  assert.equal(hasAlreadyFlushedForCurrentCompaction(null), false, "null entry → false");
+  assert.equal(hasAlreadyFlushedForCurrentCompaction(undefined), false, "undefined → false");
+  assert.equal(hasAlreadyFlushedForCurrentCompaction({}), false, "no flush fields → false");
+  assert.equal(
+    hasAlreadyFlushedForCurrentCompaction({ compactionCount: 0, memoryFlushCompactionCount: 0 }),
+    true,
+    "both 0 → already flushed",
+  );
+  assert.equal(
+    hasAlreadyFlushedForCurrentCompaction({ compactionCount: 3, memoryFlushCompactionCount: 3 }),
+    true,
+    "equal non-zero → already flushed",
+  );
+  assert.equal(
+    hasAlreadyFlushedForCurrentCompaction({ compactionCount: 3, memoryFlushCompactionCount: 2 }),
+    false,
+    "flush behind compaction → not yet flushed",
+  );
+  assert.equal(
+    hasAlreadyFlushedForCurrentCompaction({ memoryFlushCompactionCount: 0 /* no compactionCount */ }),
+    true,
+    "compactionCount absent (defaults to 0) + memoryFlushCompactionCount=0 → already flushed",
+  );
+});
+
+test("6c.6.3: flush metadata written to session store on success (memoryFlushAt, memoryFlushCompactionCount, memoryFlushContextHash)", async () => {
+  // Pins the metadata write: after a successful summarize, the entry gains
+  // memoryFlushAt (number), memoryFlushCompactionCount (= compactionCount),
+  // and memoryFlushContextHash (non-empty string).
+  const getStats = mock.fn(async (): Promise<StatsResponse> => ({ totalMessageCount: 10 }));
+  const summarize = mock.fn(async (): Promise<SummarizeResult> => makeSummarizeResult({ cutoff: 3 }));
+  const messagesAppend = mock.fn(
+    async (_msgs: unknown[]): Promise<MessagesAppendResult> => ({ appended: 1 }),
+  );
+
+  const { api, saveSessionStore, capturedHandler } = makeMockApi(STORE_WITH_COMPACTION_COUNT);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, { getStats, summarize, messagesAppend }));
+
+  await capturedHandler()(makeEvent(), INTERACTIVE_CTX);
+
+  // saveSessionStore must have been called with the updated entry.
+  assert.equal(saveSessionStore.mock.callCount(), 1, "saveSessionStore should fire once");
+  const savedStore = saveSessionStore.mock.calls[0].arguments[1] as Record<string, SessionEntry>;
+  const saved = savedStore["agent:main:main"];
+  assert.ok(saved, "saved entry must exist");
+  assert.equal(typeof saved.memoryFlushAt, "number", "memoryFlushAt must be a number (ms timestamp)");
+  assert.ok(saved.memoryFlushAt! > 0, "memoryFlushAt must be a positive timestamp");
+  assert.equal(
+    saved.memoryFlushCompactionCount,
+    2,
+    "memoryFlushCompactionCount must match compactionCount (= 2)",
+  );
+  assert.ok(saved.memoryFlushContextHash, "memoryFlushContextHash must be non-empty");
+  assert.equal(typeof saved.memoryFlushContextHash, "string");
+  assert.equal(saved.memoryFlushContextHash!.length, 16, "hash is 16 hex chars");
+  // Verify other fields preserved.
+  assert.equal(saved.compactionCount, 2, "compactionCount must be unchanged");
+  assert.equal(saved.totalTokensFresh, true);
+});
+
+test("6c.6.3: recall mirror is called after metadata write; flush_applied event fires", async () => {
+  // Order matters: session metadata (coordination) before recall mirror
+  // (searchability). flush_applied emits only when both succeed.
+  const callOrder: string[] = [];
+  const getStats = mock.fn(async (): Promise<StatsResponse> => ({ totalMessageCount: 5 }));
+  const summarize = mock.fn(async (): Promise<SummarizeResult> => makeSummarizeResult({ cutoff: 3 }));
+  const messagesAppend = mock.fn(async (_msgs: unknown[]): Promise<MessagesAppendResult> => {
+    callOrder.push("messagesAppend");
+    return { appended: 1 };
+  });
+  // Capture save call order via the mock.
+  const saveSessionStoreMock = mock.fn(
+    async (_path: string, _s: Record<string, SessionEntry>) => {
+      callOrder.push("saveSessionStore");
+    },
+  );
+  const loadSessionStoreMock = mock.fn(
+    (_path: string) => STORE_WITH_COMPACTION_COUNT,
+  );
+
+  const { api, capturedHandler } = makeMockApi(STORE_WITH_COMPACTION_COUNT, {
+    loadOverride: loadSessionStoreMock,
+  });
+  // Override the saveSessionStore on the api's session object to use our mock.
+  (api as unknown as { runtime: { agent: { session: { saveSessionStore: unknown } } } })
+    .runtime.agent.session.saveSessionStore = saveSessionStoreMock;
+
+  const logger = makeLogger();
+  const emitted: MemoryEvent[] = [];
+  registerFlushPressureHook(api, makeDeps(logger, { getStats, summarize, messagesAppend }, emitted));
+
+  await capturedHandler()(makeEvent(), INTERACTIVE_CTX);
+
+  // Metadata write before mirror.
+  assert.ok(callOrder.indexOf("saveSessionStore") < callOrder.indexOf("messagesAppend"),
+    `saveSessionStore (${callOrder.indexOf("saveSessionStore")}) must come before messagesAppend (${callOrder.indexOf("messagesAppend")})`);
+
+  // flush_applied event fires with the right shape.
+  const applied = emitted.find((e) => e.kind === "flush_applied");
+  assert.ok(applied, "flush_applied event should fire");
+  assert.equal(applied!.meta?.cutoff, 3);
+  assert.equal(applied!.meta?.hiddenMessageCount, 2, "hiddenMessageCount from SummarizeResult");
+  assert.equal(applied!.meta?.summaryLength, 2);
+  assert.equal(typeof applied!.ts, "string");
+  // No emit_failed.
+  assert.ok(!emitted.some((e) => e.kind === "emit_failed"), "no emit_failed on happy path");
+});
+
+test("6c.6.3: session entry vanished between read and write → skip save; no throw", async () => {
+  // The predicate reads the store (call 1 → entry present, threshold fires).
+  // The success branch reads it again for the write path (call 2 → entry gone).
+  // Guard: if store[sessionKey] is absent at write time, skip saveSessionStore.
+  let callCount = 0;
+  const loadSessionStoreMock = mock.fn((_path: string) => {
+    callCount++;
+    if (callCount === 1) {
+      return {
+        "agent:main:main": {
+          totalTokens: MESSAGE_SUMMARY_WARNING_TOKENS + 100,
+          totalTokensFresh: true,
+          compactionCount: 1,
+        } satisfies SessionEntry,
+      };
+    }
+    return {}; // second call: session vanished
+  });
+
+  const getStats = mock.fn(async (): Promise<StatsResponse> => ({ totalMessageCount: 5 }));
+  const summarize = mock.fn(async (): Promise<SummarizeResult> => makeSummarizeResult());
+  const messagesAppend = mock.fn(
+    async (_msgs: unknown[]): Promise<MessagesAppendResult> => ({ appended: 1 }),
+  );
+
+  const { api, saveSessionStore, capturedHandler } = makeMockApi({}, { loadOverride: loadSessionStoreMock });
+  const logger = makeLogger();
+  const emitted: MemoryEvent[] = [];
+  registerFlushPressureHook(api, makeDeps(logger, { getStats, summarize, messagesAppend }, emitted));
+
+  // Must not throw.
+  await assert.doesNotReject(() => capturedHandler()(makeEvent(), INTERACTIVE_CTX));
+
+  // saveSessionStore must NOT be called (entry vanished).
+  assert.equal(saveSessionStore.mock.callCount(), 0, "saveSessionStore must not fire when entry vanished");
+
+  // Mirror still runs (mirror is independent of the session store write).
+  assert.equal(messagesAppend.mock.callCount(), 1, "recall mirror should still run");
+
+  // Debug log for vanished entry.
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  assert.ok(
+    debugMsgs.some((m) => /session entry vanished/i.test(m)),
+    `expected vanished-entry debug log; got: ${debugMsgs.join(" | ")}`,
+  );
+});
+
+test("6c.6.3: recall mirror fails after metadata write → warn + emit_failed; hook does NOT re-throw", async () => {
+  // The metadata write succeeded; the mirror failed. Next agent_end will catch up.
+  const getStats = mock.fn(async (): Promise<StatsResponse> => ({ totalMessageCount: 5 }));
+  const summarize = mock.fn(async (): Promise<SummarizeResult> => makeSummarizeResult());
+  const messagesAppend = mock.fn(async (): Promise<MessagesAppendResult> => {
+    throw new Error("recall sidecar unavailable");
+  });
+
+  const { api, saveSessionStore, capturedHandler } = makeMockApi(STORE_WITH_COMPACTION_COUNT);
+  const logger = makeLogger();
+  const emitted: MemoryEvent[] = [];
+  registerFlushPressureHook(api, makeDeps(logger, { getStats, summarize, messagesAppend }, emitted));
+
+  await assert.doesNotReject(() => capturedHandler()(makeEvent(), INTERACTIVE_CTX));
+
+  // Metadata write still happened.
+  assert.equal(saveSessionStore.mock.callCount(), 1, "session metadata write should still fire");
+
+  // warn log.
+  assert.ok(
+    logger.warn.mock.calls.some((c) => /flush recall mirror failed/i.test(String(c.arguments[0]))),
+    "warn log should mention mirror failure",
+  );
+
+  // emit_failed with operation=messagesAppend.
+  const failed = emitted.find((e) => e.kind === "emit_failed");
+  assert.ok(failed, "emit_failed should fire");
+  assert.equal(failed!.meta?.operation, "messagesAppend");
+  assert.match(String(failed!.meta?.reason), /recall sidecar unavailable/);
+
+  // flush_applied must NOT fire (mirror didn't succeed).
+  assert.ok(!emitted.some((e) => e.kind === "flush_applied"), "flush_applied must not fire when mirror fails");
+});
+
+test("6c.6.3: session store write fails → warn + emit_failed; recall mirror still runs; hook does NOT re-throw", async () => {
+  // Store save failure is recoverable; the flush metadata coordination misses
+  // this cycle but the recall mirror can still run.
+  const getStats = mock.fn(async (): Promise<StatsResponse> => ({ totalMessageCount: 5 }));
+  const summarize = mock.fn(async (): Promise<SummarizeResult> => makeSummarizeResult());
+  const messagesAppend = mock.fn(
+    async (_msgs: unknown[]): Promise<MessagesAppendResult> => ({ appended: 1 }),
+  );
+  const saveSessionStoreMock = mock.fn(async () => {
+    throw new Error("disk write error");
+  });
+  const loadOverride = mock.fn((_path: string) => STORE_WITH_COMPACTION_COUNT);
+
+  const { api, capturedHandler } = makeMockApi(STORE_WITH_COMPACTION_COUNT, { loadOverride });
+  (api as unknown as { runtime: { agent: { session: { saveSessionStore: unknown } } } })
+    .runtime.agent.session.saveSessionStore = saveSessionStoreMock;
+
+  const logger = makeLogger();
+  const emitted: MemoryEvent[] = [];
+  registerFlushPressureHook(api, makeDeps(logger, { getStats, summarize, messagesAppend }, emitted));
+
+  await assert.doesNotReject(() => capturedHandler()(makeEvent(), INTERACTIVE_CTX));
+
+  // Warn log for store failure.
+  assert.ok(
+    logger.warn.mock.calls.some((c) => /flush metadata write failed/i.test(String(c.arguments[0]))),
+    "warn log should mention metadata write failure",
+  );
+
+  // emit_failed for sessionStore.
+  const storeFailed = emitted.find((e) => e.kind === "emit_failed" && e.meta?.operation === "sessionStore");
+  assert.ok(storeFailed, "emit_failed{operation:sessionStore} should fire");
+
+  // recall mirror still ran.
+  assert.equal(messagesAppend.mock.callCount(), 1, "mirror should still run after store failure");
+
+  // flush_applied fires (mirror succeeded).
+  assert.ok(emitted.some((e) => e.kind === "flush_applied"), "flush_applied should fire when mirror succeeded");
 });
