@@ -1,19 +1,16 @@
 /**
  * Unit tests for the §4.4 flush-pressure check on before_prompt_build.
  *
- * 6c.6.1 scope: trigger predicate only — no summariser call yet (that's
- * 6c.6.2). Tests assert:
- *   - registration shape (api.on called with "before_prompt_build")
- *   - guards skip before any session-store access (non-interactive, subagent,
- *     missing sessionKey/agentId)
- *   - missing entry (first turn) → silent skip
- *   - stale snapshot → debug log + skip (no info log)
- *   - below threshold + fresh → silent skip
- *   - above threshold + fresh → info log "flush threshold tripped"
- *   - the threshold value matches §4.4 / fork constants (6000)
+ * 6c.6.1 scope (still pinned below): trigger predicate.
+ * 6c.6.2 scope: summariser glue behind the same predicate — happy path,
+ * BufferTooSmallError (§2.8 422) no-op, generic error → recoverable, the
+ * sub-threshold regression guard, and the totalMessageCount source path
+ * (client.getStats). Session-store mutation is still 6c.6.3.
  *
  * api.runtime.agent.session is mocked — a synthetic store keyed by
- * sessionKey lets each test control entry presence + token values.
+ * sessionKey lets each test control entry presence + token values. The
+ * sidecar client is a partial-mock too — only methods this hook calls
+ * (summarize, getStats) need to be stubbed per test.
  */
 
 import { test, mock } from "node:test";
@@ -24,7 +21,12 @@ import {
   registerFlushPressureHook,
 } from "../../src/hooks/flushPressure.ts";
 import type { SessionEntry } from "../../src/hooks/sessionStore.ts";
+import { BufferTooSmallError } from "../../src/client/errors.ts";
 import type { SidecarClient } from "../../src/client/sidecarClient.ts";
+import type {
+  StatsResponse,
+  SummarizeResult,
+} from "../../src/client/types.ts";
 import type { MemoryEvent, ToolDeps } from "../../src/tools/deps.ts";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
@@ -53,11 +55,17 @@ function makeLogger(): CapturedLogger {
   };
 }
 
-function makeDeps(logger: CapturedLogger): ToolDeps {
+function makeDeps(
+  logger: CapturedLogger,
+  client: Partial<SidecarClient> = {},
+  emitted?: MemoryEvent[],
+): ToolDeps {
   return {
-    client: {} as SidecarClient,
+    client: client as SidecarClient,
     namespace: "test-ns",
-    emit: (_e: MemoryEvent) => {},
+    emit: (e: MemoryEvent) => {
+      if (emitted) emitted.push(e);
+    },
     logger,
   };
 }
@@ -315,4 +323,304 @@ test("MESSAGE_SUMMARY_WARNING_TOKENS = 6000 (= int(0.75 * 8000) per fork constan
   // Pinned so a typo in the literal is caught. The §4.4 design depends on
   // this exact value — it's MemGPT's behavioural contract, not a tunable.
   assert.equal(MESSAGE_SUMMARY_WARNING_TOKENS, 6000);
+});
+
+// ── 8. summariser glue (6c.6.2) ────────────────────────────────────────────
+
+/** A canonical above-threshold store + a representative event payload. */
+const ABOVE_THRESHOLD_STORE: Record<string, SessionEntry> = {
+  "agent:main:main": {
+    totalTokens: MESSAGE_SUMMARY_WARNING_TOKENS + 100,
+    totalTokensFresh: true,
+  },
+};
+
+/**
+ * A representative `before_prompt_build` event. The flush hook reads
+ * `event.messages` per the module docstring (SessionEntry has no
+ * `messages` field; `event.messages` is the SDK-sanctioned source).
+ */
+function makeEvent() {
+  return {
+    prompt: "user question",
+    messages: [
+      { role: "system", content: "system prompt" },
+      { role: "user", content: "first" },
+      { role: "assistant", content: "first reply" },
+      { role: "user", content: "second" },
+      { role: "assistant", content: "second reply" },
+    ],
+  };
+}
+
+/** Build a successful SummarizeResult fixture. */
+function makeSummarizeResult(
+  overrides: Partial<SummarizeResult> = {},
+): SummarizeResult {
+  return {
+    cutoff: 3,
+    summary: "summary text",
+    summaryLength: 2,
+    hiddenMessageCount: 2,
+    totalMessageCount: 5,
+    packagedMessage: {
+      role: "user",
+      content: '{"type":"system_alert","message":"prior messages..."}',
+    },
+    ...overrides,
+  };
+}
+
+test("above threshold → calls getStats then summarize; emits summarisation_succeeded; logs success", async () => {
+  // The happy path. Pins the contract: getStats fires for the
+  // totalMessageCount source, then summarize fires with the event messages
+  // and the stats count, and the success path emits the
+  // summarisation_succeeded event with cutoff + totalTokens meta.
+  const getStats = mock.fn(
+    async (): Promise<StatsResponse> => ({ totalMessageCount: 42 }),
+  );
+  const summarize = mock.fn(
+    async (
+      _messages: unknown[],
+      _count: number,
+    ): Promise<SummarizeResult> => makeSummarizeResult({ cutoff: 3 }),
+  );
+
+  const { api, capturedHandler } = makeMockApi(ABOVE_THRESHOLD_STORE);
+  const logger = makeLogger();
+  const emitted: MemoryEvent[] = [];
+  registerFlushPressureHook(
+    api,
+    makeDeps(logger, { getStats, summarize }, emitted),
+  );
+
+  await capturedHandler()(makeEvent(), INTERACTIVE_CTX);
+
+  // getStats called for totalMessageCount source.
+  assert.equal(getStats.mock.callCount(), 1);
+
+  // summarize called with the (normalised) event messages + the stats count.
+  assert.equal(summarize.mock.callCount(), 1);
+  const [passedMessages, passedCount] = summarize.mock.calls[0].arguments as [
+    unknown[],
+    number,
+  ];
+  assert.equal(passedMessages.length, 5);
+  assert.equal(passedCount, 42);
+
+  // Threshold trip log + success log fire.
+  const infoMsgs = logger.info.mock.calls.map((c) =>
+    String(c.arguments[0]),
+  );
+  assert.ok(infoMsgs.some((m) => /flush threshold tripped/i.test(m)));
+  assert.ok(infoMsgs.some((m) => /summarisation succeeded/i.test(m)));
+
+  // summarisation_succeeded event carries the cutoff + totalTokens meta.
+  const success = emitted.find(
+    (e) => e.kind === "summarisation_succeeded",
+  );
+  assert.ok(success, "summarisation_succeeded event should fire");
+  assert.equal(success!.meta?.cutoff, 3);
+  assert.equal(
+    success!.meta?.totalTokens,
+    MESSAGE_SUMMARY_WARNING_TOKENS + 100,
+  );
+  assert.equal(success!.meta?.summaryLength, 2);
+  assert.equal(typeof success!.ts, "string");
+});
+
+test("BufferTooSmallError → info-level no-op + summarisation_skipped event (§2.8 422)", async () => {
+  // §2.8: a small token-heavy buffer is recoverable. Treat the 422 as a
+  // false-alarm threshold crossing — info log + emit `summarisation_skipped`
+  // with `reason:"buffer_too_small"`. Hook returns normally; turn continues.
+  const getStats = mock.fn(
+    async (): Promise<StatsResponse> => ({ totalMessageCount: 5 }),
+  );
+  const summarize = mock.fn(async (): Promise<SummarizeResult> => {
+    throw new BufferTooSmallError(
+      "Summarize error: less than 2 messages... wait for more messages.",
+    );
+  });
+
+  const { api, capturedHandler } = makeMockApi(ABOVE_THRESHOLD_STORE);
+  const logger = makeLogger();
+  const emitted: MemoryEvent[] = [];
+  registerFlushPressureHook(
+    api,
+    makeDeps(logger, { getStats, summarize }, emitted),
+  );
+
+  // Does NOT throw — the §2.8 422 is a quiet no-op.
+  await assert.doesNotReject(() =>
+    capturedHandler()(makeEvent(), INTERACTIVE_CTX),
+  );
+
+  // summarize was attempted (proving the predicate tripped).
+  assert.equal(summarize.mock.callCount(), 1);
+
+  // Info-level log (not error — explicit per §2.8: recoverable).
+  const infoMsgs = logger.info.mock.calls.map((c) =>
+    String(c.arguments[0]),
+  );
+  assert.ok(
+    infoMsgs.some((m) => /summarisation skipped.*buffer too small/i.test(m)),
+    `expected buffer-too-small info log; got: ${infoMsgs.join(" | ")}`,
+  );
+  assert.equal(logger.error.mock.callCount(), 0, "must NOT log at error");
+
+  // summarisation_skipped event with the right reason.
+  const skipped = emitted.find((e) => e.kind === "summarisation_skipped");
+  assert.ok(skipped, "summarisation_skipped event should fire");
+  assert.equal(skipped!.meta?.reason, "buffer_too_small");
+  assert.equal(
+    skipped!.meta?.totalTokens,
+    MESSAGE_SUMMARY_WARNING_TOKENS + 100,
+  );
+
+  // No success event.
+  assert.ok(
+    !emitted.some((e) => e.kind === "summarisation_succeeded"),
+    "summarisation_succeeded must not fire on 422",
+  );
+});
+
+test("generic summarize error → logs error + emits emit_failed; does NOT re-throw (recoverable next turn)", async () => {
+  // Other failures are recoverable on the next turn — tokens stay above
+  // threshold; the predicate trips again; retry is natural. Same pattern
+  // as 6c.5's save failure.
+  const transportErr = new Error("sidecar 500");
+  const getStats = mock.fn(
+    async (): Promise<StatsResponse> => ({ totalMessageCount: 5 }),
+  );
+  const summarize = mock.fn(async () => {
+    throw transportErr;
+  });
+
+  const { api, capturedHandler } = makeMockApi(ABOVE_THRESHOLD_STORE);
+  const logger = makeLogger();
+  const emitted: MemoryEvent[] = [];
+  registerFlushPressureHook(
+    api,
+    makeDeps(logger, { getStats, summarize }, emitted),
+  );
+
+  await assert.doesNotReject(() =>
+    capturedHandler()(makeEvent(), INTERACTIVE_CTX),
+  );
+
+  assert.equal(logger.error.mock.callCount(), 1);
+  const errMsg = String(logger.error.mock.calls[0].arguments[0]);
+  assert.match(errMsg, /summarise failed/i);
+  assert.match(errMsg, /sidecar 500/);
+
+  const failed = emitted.find((e) => e.kind === "emit_failed");
+  assert.ok(failed, "emit_failed event should fire");
+  assert.equal(failed!.meta?.operation, "summarize");
+  assert.match(String(failed!.meta?.reason), /sidecar 500/);
+
+  assert.ok(
+    !emitted.some((e) => e.kind === "summarisation_succeeded"),
+    "summarisation_succeeded must not fire on generic error",
+  );
+});
+
+test("getStats failure → logs error + emits emit_failed; does NOT call summarize", async () => {
+  // The getStats round-trip is a precondition for summarize (we can't pass
+  // a totalMessageCount we don't have). If it fails, recoverable-next-turn
+  // pattern applies and summarize is not attempted with a wrong count.
+  const getStats = mock.fn(async (): Promise<StatsResponse> => {
+    throw new Error("stats 503");
+  });
+  const summarize = mock.fn(
+    async (): Promise<SummarizeResult> => makeSummarizeResult(),
+  );
+
+  const { api, capturedHandler } = makeMockApi(ABOVE_THRESHOLD_STORE);
+  const logger = makeLogger();
+  const emitted: MemoryEvent[] = [];
+  registerFlushPressureHook(
+    api,
+    makeDeps(logger, { getStats, summarize }, emitted),
+  );
+
+  await assert.doesNotReject(() =>
+    capturedHandler()(makeEvent(), INTERACTIVE_CTX),
+  );
+
+  assert.equal(
+    summarize.mock.callCount(),
+    0,
+    "summarize must NOT be called if we couldn't get a totalMessageCount",
+  );
+  const failed = emitted.find((e) => e.kind === "emit_failed");
+  assert.ok(failed);
+  assert.equal(failed!.meta?.operation, "getStats");
+});
+
+test("sub-threshold + fresh → summarize is NOT called (regression guard)", async () => {
+  // Existing 6c.6.1 silent-skip path; pin that 6c.6.2 didn't accidentally
+  // start calling summarize unconditionally.
+  const getStats = mock.fn(
+    async (): Promise<StatsResponse> => ({ totalMessageCount: 5 }),
+  );
+  const summarize = mock.fn(
+    async (): Promise<SummarizeResult> => makeSummarizeResult(),
+  );
+
+  const { api, capturedHandler } = makeMockApi({
+    "agent:main:main": {
+      totalTokens: MESSAGE_SUMMARY_WARNING_TOKENS - 1,
+      totalTokensFresh: true,
+    },
+  });
+  const logger = makeLogger();
+  registerFlushPressureHook(
+    api,
+    makeDeps(logger, { getStats, summarize }),
+  );
+
+  await capturedHandler()(makeEvent(), INTERACTIVE_CTX);
+
+  assert.equal(summarize.mock.callCount(), 0);
+  assert.equal(
+    getStats.mock.callCount(),
+    0,
+    "below threshold should not even fetch stats — predicate short-circuits first",
+  );
+});
+
+test("empty event.messages above threshold → predicate trips but summarise skipped (defensive)", async () => {
+  // The threshold-trip log still fires (predicate-only contract from
+  // 6c.6.1 stays intact), but the summarise call is guarded against an
+  // empty messages array. Without this guard, summarize would be called
+  // with an empty array and the sidecar would 422 unnecessarily.
+  const getStats = mock.fn(
+    async (): Promise<StatsResponse> => ({ totalMessageCount: 5 }),
+  );
+  const summarize = mock.fn(
+    async (): Promise<SummarizeResult> => makeSummarizeResult(),
+  );
+
+  const { api, capturedHandler } = makeMockApi(ABOVE_THRESHOLD_STORE);
+  const logger = makeLogger();
+  registerFlushPressureHook(
+    api,
+    makeDeps(logger, { getStats, summarize }),
+  );
+
+  await capturedHandler()({ messages: [] }, INTERACTIVE_CTX);
+
+  // Predicate tripped (threshold log fired).
+  const infoMsgs = logger.info.mock.calls.map((c) =>
+    String(c.arguments[0]),
+  );
+  assert.ok(infoMsgs.some((m) => /flush threshold tripped/i.test(m)));
+
+  // But summarise is NOT called.
+  assert.equal(summarize.mock.callCount(), 0);
+  // Defensive-skip log.
+  const debugMsgs = logger.debug.mock.calls.map((c) =>
+    String(c.arguments[0]),
+  );
+  assert.ok(debugMsgs.some((m) => /event\.messages empty/i.test(m)));
 });
