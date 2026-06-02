@@ -4,12 +4,14 @@
  * in the 6c.6.0 SDK read; Mem0 reference also registers `before_prompt_build`
  * twice for separate concerns).
  *
- * **6c.6.2 scope:** threshold check (6c.6.1) + summariser glue. When the
- * threshold trips, call `client.summarize(event.messages, totalMessageCount)`
+ * **6c.6.2–6c.6.3 scope:** threshold check (6c.6.1) + summariser glue
+ * (6c.6.2) + session-store metadata write + recall mirror (6c.6.3). When
+ * the threshold trips, calls `client.summarize(event.messages, totalMessageCount)`
  * with the §2.8 422 → no-op policy and recoverable-on-next-turn semantics
- * for other failures. **Session-store mutation still deferred to 6c.6.3**
- * (the actual buffer trim + packagedMessage prepend + `memoryFlushAt`
- * write happen there; a code comment in the success branch names this).
+ * for other failures. On success: writes flush metadata to `SessionEntry`
+ * (including `memoryFlushCutoff` + `memoryFlushPackagedMessageJson` for the
+ * ContextEngine assemble() virtual-trim path — §4.4) and mirrors the
+ * packagedMessage to recall via `messagesAppend`.
  *
  * Why session-entry tokens, not event tokens: `PluginHookBeforePromptBuildEvent`
  * is `{prompt, messages}` — no token field. OpenClaw stores cumulative context
@@ -190,23 +192,16 @@ export function registerFlushPressureHook(
         });
         // ── 6c.6.3: metadata write + recall mirror ─────────────────────────
         //
-        // NOTE on the missing transcript trim:
-        // MemGPT's summarize_messages_inplace trims the active buffer to
-        // [system, packagedMessage, messages[cutoff:]]. That trim cannot be
-        // done via the plugin surface: `SessionEntry` has no `messages` field
-        // (buffer lives in `entry.sessionFile`, the transcript JSONL), and
-        // `rewriteTranscriptEntriesInSessionFile` supports replacements only,
-        // not deletion. Trimming requires a `ContextEngine` registration with
-        // `compact()` + `runtimeContext.rewriteTranscriptEntries()`.
-        // Deferred to future ContextEngine work.
-        //
-        // What we DO write here:
-        //   memoryFlushAt            — ms timestamp of this flush
-        //   memoryFlushCompactionCount — matches compactionCount so
-        //                               hasAlreadyFlushedForCurrentCompaction
-        //                               returns true until OpenClaw's next
-        //                               compaction cycle (preventing re-summary)
-        //   memoryFlushContextHash   — SHA-256(messages)[0:16] for dedup
+        // What we write (§4.4 — 6c.6.3a investigation outcome):
+        //   memoryFlushAt                — ms timestamp of this flush
+        //   memoryFlushCompactionCount   — = compactionCount; causes
+        //     hasAlreadyFlushedForCurrentCompaction to return true until
+        //     OpenClaw's next compaction cycle (prevents re-summary)
+        //   memoryFlushContextHash       — SHA-256(messages)[0:16] for dedup
+        //   memoryFlushCutoff            — cutoff index for assemble() to slice
+        //   memoryFlushPackagedMessageJson — packagedMessage JSON for assemble()
+        //     to prepend; together these two fields let ContextEngine.assemble()
+        //     return the virtually-trimmed message set on the next turn (§4.4).
         const contextHash = computeContextHash(v0Messages);
 
         const session = getRuntimeSession(api);
@@ -227,6 +222,13 @@ export function registerFlushPressureHook(
                   memoryFlushAt: Date.now(),
                   memoryFlushCompactionCount: currentEntry.compactionCount ?? 0,
                   memoryFlushContextHash: contextHash,
+                  // Written for ContextEngine.assemble() on the next turn:
+                  // assemble() slices messages at cutoff and prepends the
+                  // packagedMessage to form the virtually-trimmed set (§4.4).
+                  memoryFlushCutoff: result.cutoff,
+                  memoryFlushPackagedMessageJson: JSON.stringify(
+                    result.packagedMessage,
+                  ),
                 },
               });
             } else {

@@ -49,6 +49,18 @@ export interface SessionEntry {
   memoryFlushAt?: number;
   memoryFlushCompactionCount?: number;
   memoryFlushContextHash?: string;
+  /**
+   * Cutoff index from the last successful :summarize call. Written alongside
+   * memoryFlushAt so ContextEngine.assemble() can slice messages correctly on
+   * the next turn (virtual-trim path — see §4.4).
+   */
+  memoryFlushCutoff?: number;
+  /**
+   * JSON-serialised packagedMessage from the last successful :summarize call.
+   * Written alongside memoryFlushAt; assemble() deserialises and prepends it
+   * to messages[memoryFlushCutoff:] to form the virtually-trimmed message set.
+   */
+  memoryFlushPackagedMessageJson?: string;
 }
 
 /**

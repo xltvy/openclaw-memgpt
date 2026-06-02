@@ -709,12 +709,17 @@ test("6c.6.3: hasAlreadyFlushedForCurrentCompaction helper — boundary cases", 
   );
 });
 
-test("6c.6.3: flush metadata written to session store on success (memoryFlushAt, memoryFlushCompactionCount, memoryFlushContextHash)", async () => {
+test("6c.6.3: flush metadata written to session store on success (all five fields)", async () => {
   // Pins the metadata write: after a successful summarize, the entry gains
-  // memoryFlushAt (number), memoryFlushCompactionCount (= compactionCount),
-  // and memoryFlushContextHash (non-empty string).
+  // memoryFlushAt, memoryFlushCompactionCount, memoryFlushContextHash (dedup
+  // coordination) + memoryFlushCutoff + memoryFlushPackagedMessageJson (for
+  // ContextEngine.assemble() virtual-trim path — §4.4).
+  const CUTOFF = 3;
+  const PACKAGED = { role: "user" as const, content: "Summary of N messages." };
   const getStats = mock.fn(async (): Promise<StatsResponse> => ({ totalMessageCount: 10 }));
-  const summarize = mock.fn(async (): Promise<SummarizeResult> => makeSummarizeResult({ cutoff: 3 }));
+  const summarize = mock.fn(
+    async (): Promise<SummarizeResult> => makeSummarizeResult({ cutoff: CUTOFF, packagedMessage: PACKAGED }),
+  );
   const messagesAppend = mock.fn(
     async (_msgs: unknown[]): Promise<MessagesAppendResult> => ({ appended: 1 }),
   );
@@ -730,6 +735,7 @@ test("6c.6.3: flush metadata written to session store on success (memoryFlushAt,
   const savedStore = saveSessionStore.mock.calls[0].arguments[1] as Record<string, SessionEntry>;
   const saved = savedStore["agent:main:main"];
   assert.ok(saved, "saved entry must exist");
+  // Coordination fields.
   assert.equal(typeof saved.memoryFlushAt, "number", "memoryFlushAt must be a number (ms timestamp)");
   assert.ok(saved.memoryFlushAt! > 0, "memoryFlushAt must be a positive timestamp");
   assert.equal(
@@ -740,6 +746,18 @@ test("6c.6.3: flush metadata written to session store on success (memoryFlushAt,
   assert.ok(saved.memoryFlushContextHash, "memoryFlushContextHash must be non-empty");
   assert.equal(typeof saved.memoryFlushContextHash, "string");
   assert.equal(saved.memoryFlushContextHash!.length, 16, "hash is 16 hex chars");
+  // Virtual-trim fields (§4.4 ContextEngine.assemble() path).
+  assert.equal(saved.memoryFlushCutoff, CUTOFF, "memoryFlushCutoff must equal result.cutoff");
+  assert.equal(
+    typeof saved.memoryFlushPackagedMessageJson,
+    "string",
+    "memoryFlushPackagedMessageJson must be a JSON string",
+  );
+  assert.deepEqual(
+    JSON.parse(saved.memoryFlushPackagedMessageJson!),
+    PACKAGED,
+    "memoryFlushPackagedMessageJson must round-trip the packagedMessage",
+  );
   // Verify other fields preserved.
   assert.equal(saved.compactionCount, 2, "compactionCount must be unchanged");
   assert.equal(saved.totalTokensFresh, true);
