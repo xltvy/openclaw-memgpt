@@ -54,8 +54,8 @@ declare module "openclaw/plugin-sdk" {
     registerCommand?(definition: Record<string, unknown>): void;
     registerService(service: {
       id: string;
-      start: (...args: any[]) => void;
-      stop: () => void;
+      start?: (ctx: Record<string, unknown>) => void | Promise<void>;
+      stop?: (ctx: Record<string, unknown>) => void | Promise<void>;
     }): void;
     registerMemoryCapability?(config: MemoryCapabilityConfig): void;
     [key: string]: unknown;

@@ -23,6 +23,7 @@ import { registerFlushPressureHook } from "./hooks/flushPressure.ts";
 import { registerAgentEndHook } from "./hooks/mirror.ts";
 import { registerPromptSectionHook } from "./hooks/promptSection.ts";
 import { registerReplyDispatchHook } from "./hooks/replyDispatch.ts";
+import { registerTeardown } from "./lifecycle/teardown.ts";
 import { makeToolDeps } from "./tools/deps.ts";
 import { registerTools } from "./tools/index.ts";
 
@@ -64,8 +65,10 @@ const memgptPlugin = definePluginEntry({
     (api as unknown as { registerContextEngine(id: string, factory: unknown): void })
       .registerContextEngine("memgpt", makeMemgptContextEngine(deps, api));
 
+    registerTeardown(api, deps);
+
     api.logger.info(
-      `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end + reply_dispatch hooks + ContextEngine registered (namespace: ${config.namespace}, observability: ${config.observability})`,
+      `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end + reply_dispatch hooks + ContextEngine + teardown registered (namespace: ${config.namespace}, observability: ${config.observability})`,
     );
   },
 });
