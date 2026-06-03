@@ -96,10 +96,11 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 import httpx
 from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi.responses import StreamingResponse
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +240,88 @@ def normalise_response(
 
 
 # ---------------------------------------------------------------------------
+# Streaming conversion — synthesise Anthropic SSE from a complete response
+# ---------------------------------------------------------------------------
+
+def _sse_event(event_type: str, data: Any) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+
+def _anthropic_sse_from_response(body: dict[str, Any]) -> Iterator[str]:
+    """Convert a complete Anthropic non-streaming response to Anthropic SSE chunks."""
+    msg_id = body.get("id", "msg_shim_placeholder")
+    model = body.get("model", "")
+    usage = body.get("usage", {})
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    stop_reason = body.get("stop_reason", "end_turn")
+    stop_sequence = body.get("stop_sequence")
+
+    yield _sse_event("message_start", {
+        "type": "message_start",
+        "message": {
+            "id": msg_id,
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": [],
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {"input_tokens": input_tokens, "output_tokens": 0},
+        },
+    })
+    yield _sse_event("ping", {"type": "ping"})
+
+    content_blocks = body.get("content", []) or []
+    for index, block in enumerate(content_blocks):
+        block_type = block.get("type", "text")
+        if block_type == "text":
+            text = block.get("text", "")
+            yield _sse_event("content_block_start", {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "text", "text": ""},
+            })
+            yield _sse_event("content_block_delta", {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "text_delta", "text": text},
+            })
+            yield _sse_event("content_block_stop", {
+                "type": "content_block_stop", "index": index,
+            })
+        elif block_type == "tool_use":
+            yield _sse_event("content_block_start", {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": block.get("id", ""),
+                    "name": block.get("name", ""),
+                    "input": {},
+                },
+            })
+            yield _sse_event("content_block_delta", {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": json.dumps(block.get("input", {})),
+                },
+            })
+            yield _sse_event("content_block_stop", {
+                "type": "content_block_stop", "index": index,
+            })
+
+    yield _sse_event("message_delta", {
+        "type": "message_delta",
+        "delta": {"stop_reason": stop_reason, "stop_sequence": stop_sequence},
+        "usage": {"output_tokens": output_tokens},
+    })
+    yield _sse_event("message_stop", {"type": "message_stop"})
+
+
+# ---------------------------------------------------------------------------
 # Main endpoint
 # ---------------------------------------------------------------------------
 
@@ -247,20 +330,31 @@ async def messages(request: Request) -> Response:
     """
     Mimics Anthropic's /v1/messages endpoint. Forwards to the configured
     upstream with proper auth, and normalises the response for LiteLLM.
+    Supports both streaming and non-streaming responses.
     """
     raw_body = await request.body()
 
-    # Peek at requested max_tokens for stop_reason inference.
+    # Peek at requested max_tokens and stream flag.
     try:
         req_json = json.loads(raw_body)
         requested_max_tokens = req_json.get("max_tokens")
+        wants_stream = bool(req_json.get("stream", False))
     except json.JSONDecodeError:
         requested_max_tokens = None
+        wants_stream = False
+
+    # Always call upstream non-streaming; convert if needed.
+    if wants_stream:
+        upstream_body = dict(req_json)
+        upstream_body.pop("stream", None)
+        upstream_content = json.dumps(upstream_body).encode()
+    else:
+        upstream_content = raw_body
 
     try:
         upstream = await _client.post(
             _config.upstream_url,
-            content=raw_body,
+            content=upstream_content,
             headers={
                 "Content-Type": "application/json",
                 _config.upstream_auth_header: _config.auth_header_value,
@@ -283,7 +377,6 @@ async def messages(request: Request) -> Response:
     try:
         resp_json = upstream.json()
     except ValueError:
-        # Non-JSON 2xx would be surprising; pass through verbatim.
         return Response(
             content=upstream.content,
             status_code=upstream.status_code,
@@ -291,6 +384,13 @@ async def messages(request: Request) -> Response:
         )
 
     normalised = normalise_response(resp_json, requested_max_tokens)
+
+    if wants_stream:
+        return StreamingResponse(
+            _anthropic_sse_from_response(normalised),
+            status_code=200,
+            media_type="text/event-stream",
+        )
 
     return Response(
         content=json.dumps(normalised),
