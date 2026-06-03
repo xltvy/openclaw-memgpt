@@ -2,13 +2,14 @@
  * openclaw-memgpt — MemGPT three-tier memory architecture for OpenClaw
  * via a pymemgpt FastAPI sidecar (Shape B; API_DESIGN.md §1, §3.8).
  *
- * 6c.6.4 wiring: parse config → construct sidecar client → build ToolDeps →
+ * 6c.7b wiring: parse config → construct sidecar client → build ToolDeps →
  * register the seven tools → register the `before_prompt_build` prompt-
  * section hook → register the `before_prompt_build` flush-pressure hook
  * (predicate + :summarize + flush metadata write) → register the
- * `agent_end` hook (mirror + save) → register ContextEngine (virtual-trim
- * path consuming flush metadata on the next turn). 6c.7 reply_dispatch +
- * lifecycle (6c.8 / 6d) still deferred.
+ * `agent_end` hook (mirror + save) → register the `reply_dispatch` hook
+ * (§4.3 suppression seam read side) → register ContextEngine (virtual-trim
+ * path consuming flush metadata on the next turn). Lifecycle (6c.8 / 6d)
+ * still deferred.
  */
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
@@ -21,6 +22,7 @@ import { makeMemgptContextEngine } from "./contextEngine/memgptEngine.ts";
 import { registerFlushPressureHook } from "./hooks/flushPressure.ts";
 import { registerAgentEndHook } from "./hooks/mirror.ts";
 import { registerPromptSectionHook } from "./hooks/promptSection.ts";
+import { registerReplyDispatchHook } from "./hooks/replyDispatch.ts";
 import { makeToolDeps } from "./tools/deps.ts";
 import { registerTools } from "./tools/index.ts";
 
@@ -54,6 +56,7 @@ const memgptPlugin = definePluginEntry({
     registerPromptSectionHook(api, deps);
     registerFlushPressureHook(api, deps);
     registerAgentEndHook(api, deps);
+    registerReplyDispatchHook(api, deps);
 
     // Register the ContextEngine — exclusive slot; only one active at a time.
     // api.registerContextEngine is on OpenClawPluginApi via the index-signature
@@ -62,7 +65,7 @@ const memgptPlugin = definePluginEntry({
       .registerContextEngine("memgpt", makeMemgptContextEngine(deps, api));
 
     api.logger.info(
-      `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end hooks + ContextEngine registered (namespace: ${config.namespace}, observability: ${config.observability})`,
+      `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end + reply_dispatch hooks + ContextEngine registered (namespace: ${config.namespace}, observability: ${config.observability})`,
     );
   },
 });
