@@ -296,7 +296,79 @@ test("extra unknown fields on input are dropped (not relayed to v0)", () => {
   assert.ok(!("openclaw_internal" in out));
 });
 
-// ── 9. batch wrapper ────────────────────────────────────────────────────────
+// ── 9. content-blocks array flattening (OpenClaw modern API) ────────────────
+
+test("user message with single text content part → flattened to string", () => {
+  const input: OpenClawMessage = {
+    role: "user",
+    content: [{ type: "text", text: "My name is Altay." }],
+  };
+  assert.deepEqual(normalise(input), {
+    role: "user",
+    content: "My name is Altay.",
+  });
+});
+
+test("user message with multiple text parts → joined in order", () => {
+  const input: OpenClawMessage = {
+    role: "user",
+    content: [
+      { type: "text", text: "Hello" },
+      { type: "text", text: " world" },
+    ],
+  };
+  assert.deepEqual(normalise(input), {
+    role: "user",
+    content: "Hello world",
+  });
+});
+
+test("assistant with empty content array → null", () => {
+  const input: OpenClawMessage = {
+    role: "assistant",
+    content: [],
+  };
+  assert.deepEqual(normalise(input), {
+    role: "assistant",
+    content: null,
+  });
+});
+
+test("assistant with tool_call and array content → function_call; content flattened", () => {
+  const input: OpenClawMessage = {
+    role: "assistant",
+    content: [{ type: "text", text: "calling tool" }],
+    tool_calls: [
+      { id: "c1", function: { name: "core_memory_append", arguments: '{"name":"human","content":"Altay"}' } },
+    ],
+  };
+  assert.deepEqual(normalise(input), {
+    role: "assistant",
+    content: "calling tool",
+    function_call: { name: "core_memory_append", arguments: '{"name":"human","content":"Altay"}' },
+  });
+});
+
+test("content array with no text parts → null", () => {
+  const input: OpenClawMessage = {
+    role: "user",
+    content: [{ type: "image_url", url: "https://example.com/img.png" }] as never,
+  };
+  assert.deepEqual(normalise(input), {
+    role: "user",
+    content: null,
+  });
+});
+
+test("content array flattening idempotent: already-string passes through unchanged", () => {
+  const input: OpenClawMessage = { role: "user", content: "hello" };
+  const first = normalise(input);
+  const second = normalise(first as OpenClawMessage);
+  assert.deepEqual(second, first);
+  assert.equal(second.content, "hello");
+});
+
+// ── 10. batch wrapper ────────────────────────────────────────────────────────
 
 test("normaliseMessages: applies normalise across an array", () => {
   const input: OpenClawMessage[] = [

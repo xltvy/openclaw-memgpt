@@ -40,6 +40,13 @@ export interface OpenClawToolCall {
   };
 }
 
+/** A single content part in OpenAI's content-blocks format. */
+export interface ContentPart {
+  type: string;
+  text?: string;
+  [key: string]: unknown;
+}
+
 /**
  * The OpenClaw-side message shape this boundary accepts. Kept structurally
  * open (`[key: string]: unknown`) so non-load-bearing extra fields pass
@@ -47,10 +54,14 @@ export interface OpenClawToolCall {
  *
  * Already-v0 inputs (role: "function", or assistant with `function_call`)
  * are also accepted; the function detects them and returns the v0 shape.
+ *
+ * `content` accepts both the legacy string form and the modern content-blocks
+ * array form (`[{type:"text",text:"..."}]`). `normalise` flattens arrays to
+ * strings so the sidecar only ever sees the v0 string form (§3.7 invariant).
  */
 export interface OpenClawMessage {
   role: "system" | "user" | "assistant" | "tool" | "function";
-  content?: string | null;
+  content?: string | ContentPart[] | null;
   name?: string | null;
   /** Modern tools API: array on assistant messages. */
   tool_calls?: OpenClawToolCall[];
@@ -59,6 +70,29 @@ export interface OpenClawMessage {
   /** Already-v0 form on assistant messages. Preserved if present. */
   function_call?: { name: string; arguments: string } | null;
   [key: string]: unknown;
+}
+
+/**
+ * Flatten OpenAI content-blocks arrays to a plain string for the pymemgpt
+ * v0 wire format. v0 requires `content: string | null`; OpenClaw may send
+ * `content: [{type:"text",text:"..."}]`.
+ *
+ * - null / undefined → null
+ * - string → string (unchanged)
+ * - empty array → null
+ * - array with text parts → text parts joined (order preserved)
+ * - array with no text parts → null
+ */
+function flattenContent(content: string | ContentPart[] | null | undefined): string | null {
+  if (content === null || content === undefined) return null;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content) || content.length === 0) return null;
+  const text = content
+    .filter((p): p is ContentPart & { text: string } =>
+      p !== null && typeof p === "object" && p.type === "text" && typeof p.text === "string")
+    .map(p => p.text)
+    .join("");
+  return text.length > 0 ? text : null;
 }
 
 // ============================================================================
@@ -74,7 +108,7 @@ export function normalise(message: OpenClawMessage): PyMemGptMessage {
   if (message.role === "tool") {
     const out: PyMemGptMessage = {
       role: "function",
-      content: message.content ?? null,
+      content: flattenContent(message.content),
     };
     if (message.name !== undefined && message.name !== null) {
       out.name = message.name;
@@ -97,7 +131,7 @@ export function normalise(message: OpenClawMessage): PyMemGptMessage {
     const first = message.tool_calls[0];
     const out: PyMemGptMessage = {
       role: "assistant",
-      content: message.content ?? null,
+      content: flattenContent(message.content),
       function_call: {
         name: first.function.name,
         arguments: first.function.arguments,
@@ -116,7 +150,7 @@ export function normalise(message: OpenClawMessage): PyMemGptMessage {
   // normalise(normalise(x)) sees the same canonical shape.
   const out: PyMemGptMessage = {
     role: message.role,
-    content: message.content ?? null,
+    content: flattenContent(message.content),
   };
   if (message.name !== undefined && message.name !== null) {
     out.name = message.name;
