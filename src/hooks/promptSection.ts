@@ -44,20 +44,98 @@
  *     `prependContext` for MemGPT's standard dynamic prompt section.
  */
 
+import fs from "node:fs/promises";
+
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import type { ToolDeps } from "../tools/deps.ts";
+import { loadSessionEntry, type AgentContext } from "./sessionStore.ts";
 
 interface PromptSectionContribution {
   prependSystemContext: string;
   prependContext?: string;
 }
 
+/**
+ * Remove the trailing synthetic empty assistant message that OpenClaw writes
+ * after `reply_dispatch` claims the turn (§4.3 mechanism). This message has
+ * `content: []` and zero token usage — it's a session-close record, not a
+ * real LLM response. Its presence at the end of the JSONL causes the next
+ * turn to record as "abandoned" even when the tool (send_message) delivered
+ * the response correctly. Removing it before each turn avoids that false
+ * positive and keeps the session in a clean state for context-building.
+ *
+ * Operates on the JSONL at `before_prompt_build` time — after the previous
+ * turn is fully written and before the new session manager opens the file.
+ */
+async function repairTrailingEmptyAssistant(
+  sessionFile: string,
+  logger: ToolDeps["logger"],
+): Promise<void> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(sessionFile, "utf-8");
+  } catch {
+    return; // file not yet created (first turn)
+  }
+  const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return;
+
+  let last: Record<string, unknown>;
+  try {
+    last = JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+
+  // Identify the synthetic empty-content, zero-usage, stopReason=stop assistant message.
+  const msg = last?.message as Record<string, unknown> | undefined;
+  if (
+    last?.type !== "message" ||
+    msg?.role !== "assistant" ||
+    !Array.isArray(msg?.content) ||
+    (msg.content as unknown[]).length !== 0 ||
+    msg?.stopReason !== "stop"
+  ) {
+    return;
+  }
+
+  // Verify it's genuinely zero-usage (not just a fast model with tiny output).
+  const usage = msg?.usage as Record<string, number> | undefined;
+  const totalUsage =
+    (usage?.input ?? 0) +
+    (usage?.output ?? 0) +
+    (usage?.cacheRead ?? 0) +
+    (usage?.cacheWrite ?? 0);
+  if (totalUsage !== 0) return;
+
+  // Remove the last line.
+  await fs.writeFile(
+    sessionFile,
+    lines.slice(0, -1).join("\n") + "\n",
+    "utf-8",
+  );
+  logger.debug(
+    `openclaw-memgpt: repaired trailing synthetic assistant in ${sessionFile}`,
+  );
+}
+
 export function registerPromptSectionHook(
   api: OpenClawPluginApi,
   deps: ToolDeps,
 ): void {
-  api.on("before_prompt_build", async (_event, _ctx) => {
+  api.on("before_prompt_build", async (_event, ctx) => {
+    // Repair trailing synthetic empty assistant left by reply_dispatch §4.3.
+    const entry = loadSessionEntry(api, ctx as AgentContext);
+    if (entry?.sessionFile) {
+      await repairTrailingEmptyAssistant(entry.sessionFile, deps.logger).catch(
+        (err: unknown) =>
+          deps.logger.warn(
+            `openclaw-memgpt: session repair failed: ${stringifyError(err)}`,
+          ),
+      );
+    }
+
     // Step 1 — per-turn ensure for `via` observability. Failures are
     // telemetry-lossy: logged + emitted but swallowed (§4.2).
     try {

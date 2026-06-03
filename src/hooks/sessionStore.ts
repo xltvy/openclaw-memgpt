@@ -33,6 +33,8 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
  * optional.
  */
 export interface SessionEntry {
+  /** Path to the session JSONL transcript file. */
+  sessionFile?: string;
   totalTokens?: number;
   totalTokensFresh?: boolean;
   /**
