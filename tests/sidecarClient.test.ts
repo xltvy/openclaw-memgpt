@@ -67,6 +67,30 @@ test("healthz: round-trip (camelCase mapping; embedder ready)", async () => {
   assert.equal(typeof h.agentsResident, "number");
 });
 
+// ── 1b. getStats (6c.6.2) ───────────────────────────────────────────────────
+
+test("getStats: snake_case total_message_count → camelCase totalMessageCount; grows with messagesAppend", async () => {
+  // The 6c.6.2 source-of-truth path: GET /agents/{id}/stats lets the flush-
+  // pressure hook read total_message_count without tracking it host-side.
+  // Wire-mapping test (camelCase) + sanity that append-then-read reflects
+  // the grown count.
+  const client = makeClient("stats");
+  await client.ensure();
+  const before = await client.getStats();
+  assert.equal(typeof before.totalMessageCount, "number");
+  assert.ok(
+    before.totalMessageCount >= 4,
+    `expected boot baseline >=4; got ${before.totalMessageCount}`,
+  );
+
+  await client.messagesAppend([
+    { role: "user", content: "one" },
+    { role: "assistant", content: "two" },
+  ]);
+  const after = await client.getStats();
+  assert.equal(after.totalMessageCount, before.totalMessageCount + 2);
+});
+
 // ── 2. ensure / save / load ─────────────────────────────────────────────────
 
 test("ensure: first call returns via:'create'; second returns via:'resident'", async () => {

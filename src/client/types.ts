@@ -165,6 +165,24 @@ export interface HealthzResponse {
 }
 
 // ============================================================================
+// Stats (§2.2 — sidecar-tracked counts; 6c.6.2)
+// ============================================================================
+
+/**
+ * Sidecar-tracked stats — currently just `totalMessageCount`. The 6c.6.2
+ * flush-pressure hook reads this for the `total_message_count` it must
+ * pass on :summarize requests (SessionEntry doesn't expose an all-time
+ * counter — only `compactionCount`).
+ *
+ * Typed object rather than a bare number so future stats can extend the
+ * response without a new endpoint per metric.
+ */
+export interface StatsResponse {
+  /** `len(pm.all_messages)` on the sidecar — the running all-time count. */
+  totalMessageCount: number;
+}
+
+// ============================================================================
 // Management / status (§3.5 — operational, owned by SidecarAdminClient)
 // ============================================================================
 
