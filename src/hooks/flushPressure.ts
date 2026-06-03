@@ -12,7 +12,8 @@
  *   session store, and mirrors the packagedMessage to recall.
  *
  *   `ContextEngine.assemble()` (start of turn N): reads the flush metadata
- *   and returns `[packagedMessage, ...messages.slice(cutoff)]`. The LLM on
+ *   and returns `[messages[0] (system anchor), packagedMessage, ...messages.slice(cutoff)]`.
+ *   Faithful to MemGPT's native post-summarise buffer shape. The LLM on
  *   turn N sees the trimmed context.
  *
  * Both `llm_output` and `agent_end` are fire-and-forget (.catch); the race

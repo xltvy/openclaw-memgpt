@@ -347,7 +347,9 @@ test("packagedMessage with unexpected shape (not role:user) → pass-through + w
 
 // ── assemble: virtual-trim path ───────────────────────────────────────────────
 
-test("flush metadata present → assemble returns [packagedMessage, ...messages.slice(cutoff)]", async () => {
+test("flush metadata present → assemble returns [messages[0] (system anchor), packagedMessage, ...messages.slice(cutoff)]", async () => {
+  // Faithful to MemGPT's native post-summarise buffer shape: system stays at [0],
+  // packaged summary is prepended after it, tail starts at cutoff.
   const logger = makeLogger();
   const deps = makeDeps(logger);
   const cutoff = 3;
@@ -363,28 +365,27 @@ test("flush metadata present → assemble returns [packagedMessage, ...messages.
     messages,
   });
 
-  // First message is the packaged summary (role: user, content: the summary string)
-  assert.equal(result.messages[0].role, "user");
+  // messages[0] is the system anchor — preserved at position 0
+  assert.deepStrictEqual(result.messages[0], messages[0]);
+  // messages[1] is the packagedMessage (role: user, content: the summary string)
+  assert.equal(result.messages[1].role, "user");
   assert.equal(
-    result.messages[0].content,
+    result.messages[1].content,
     "Summary: the previous 3 messages discussed X.",
   );
-  // Remainder is messages.slice(cutoff)
-  assert.deepStrictEqual(result.messages.slice(1), messages.slice(cutoff));
-  // Total length = 1 (packaged) + (6 - 3) = 4
-  assert.equal(result.messages.length, 1 + (messages.length - cutoff));
+  // messages[2:] is messages.slice(cutoff)
+  assert.deepStrictEqual(result.messages.slice(2), messages.slice(cutoff));
+  // Total length = 1 (anchor) + 1 (packaged) + (6 - 3) = 5
+  assert.equal(result.messages.length, 2 + (messages.length - cutoff));
 });
 
 test("virtual trim: estimatedTokens is derived from the returned messages, not the full input", async () => {
   // Pins the invariant that estimatedTokens is computed from assemble()'s returned
-  // messages, not the original input. Uses known-length content so the char→token
-  // arithmetic is verifiable without floating-point rounding surprises.
+  // messages, not the original input.
+  // Returned set: [messages[0] (anchor), packagedMessage, messages[3..5]] = 5 messages.
   const logger = makeLogger();
   const deps = makeDeps(logger);
   const cutoff = 3;
-  // Summary content is "Summary: the previous 3 messages discussed X." (46 chars)
-  // kept messages[3..5]: content "message 3", "message 4", "message 5" (9 chars each)
-  // total chars in trimmed: 46 + 27 = 73 → ceil(73/4) = 19
   const { api } = makeMockApi({
     [SESSION_KEY]: makeFlushEntry({ memoryFlushCutoff: cutoff }),
   });
@@ -397,8 +398,8 @@ test("virtual trim: estimatedTokens is derived from the returned messages, not t
     messages,
   });
 
-  // Verify the returned set is the trimmed one
-  assert.equal(result.messages.length, 1 + (6 - cutoff));
+  // Verify the returned set is the trimmed one: [anchor, packed, tail...]
+  assert.equal(result.messages.length, 2 + (6 - cutoff));
 
   // Manually compute expected tokens from the returned messages
   let chars = 0;

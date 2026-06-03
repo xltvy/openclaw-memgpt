@@ -631,7 +631,7 @@ test("BufferTooSmallError → info-level no-op + summarisation_skipped event (§
     { usage: { total: MESSAGE_SUMMARY_WARNING_TOKENS + 100 } },
     INTERACTIVE_CTX,
   );
-  await assert.doesNotReject(() =>
+  await assert.doesNotReject(async () =>
     capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX),
   );
 
@@ -681,7 +681,7 @@ test("generic summarize error → logs error + emits emit_failed; does NOT re-th
     { usage: { total: MESSAGE_SUMMARY_WARNING_TOKENS + 100 } },
     INTERACTIVE_CTX,
   );
-  await assert.doesNotReject(() =>
+  await assert.doesNotReject(async () =>
     capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX),
   );
 
@@ -723,7 +723,7 @@ test("getStats failure → logs error + emits emit_failed; does NOT call summari
     { usage: { total: MESSAGE_SUMMARY_WARNING_TOKENS + 100 } },
     INTERACTIVE_CTX,
   );
-  await assert.doesNotReject(() =>
+  await assert.doesNotReject(async () =>
     capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX),
   );
 
@@ -958,7 +958,7 @@ test("6c.6.3: session entry vanished between read and write → skip save; no th
     { usage: { total: MESSAGE_SUMMARY_WARNING_TOKENS + 100 } },
     INTERACTIVE_CTX,
   );
-  await assert.doesNotReject(() =>
+  await assert.doesNotReject(async () =>
     capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX),
   );
 
@@ -997,7 +997,7 @@ test("6c.6.3: recall mirror fails after metadata write → warn + emit_failed; h
     { usage: { total: MESSAGE_SUMMARY_WARNING_TOKENS + 100 } },
     INTERACTIVE_CTX,
   );
-  await assert.doesNotReject(() =>
+  await assert.doesNotReject(async () =>
     capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX),
   );
 
@@ -1051,7 +1051,7 @@ test("6c.6.3: session store write fails → warn + emit_failed; recall mirror st
     { usage: { total: MESSAGE_SUMMARY_WARNING_TOKENS + 100 } },
     INTERACTIVE_CTX,
   );
-  await assert.doesNotReject(() =>
+  await assert.doesNotReject(async () =>
     capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX),
   );
 

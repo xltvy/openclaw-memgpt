@@ -40,6 +40,13 @@
  *     is structurally compatible — { role: string; content: unknown; [key]: unknown }
  *     accepts any user/assistant/tool-result message shape.
  *
+ *   Buffer shape after virtual trim (faithful to MemGPT's native post-summarise shape):
+ *     [messages[0] (system anchor), packagedMessage, ...messages.slice(cutoff)]
+ *   MemGPT's summarize_messages_inplace always keeps messages[0] (system prompt) at
+ *   position 0 and prepends the packaged preamble immediately after. select_cutoff
+ *   accounts for the system message at [0]; cutoff >= 1 is always guaranteed
+ *   (values < 1 result in a 422 at the sidecar, which we no-op per §2.8).
+ *
  *   ingest(): no-op (returns { ingested: false }). The agent_end mirror hook handles
  *     message persistence into the sidecar's recall corpus; a second write from
  *     the context engine would duplicate the mirror.
@@ -234,9 +241,28 @@ export function makeMemgptContextEngine(
         };
       }
 
-      // Virtual trim: [packagedSummary, ...messages.slice(cutoff)]
-      // The LLM on this turn sees the trimmed context instead of the full buffer.
-      const trimmed = [packagedMessage, ...messages.slice(memoryFlushCutoff)];
+      // Virtual trim — faithful to MemGPT's native post-summarise buffer shape:
+      //   [messages[0] (system anchor), packagedSummary, ...messages.slice(cutoff)]
+      //
+      // MemGPT's `summarize_messages_inplace` always keeps messages[0] (the system
+      // prompt) at position 0 and prepends the packaged preamble immediately after.
+      // select_cutoff accounts for the system message being at [0]; cutoff >= 1
+      // is guaranteed (values < 1 would have resulted in a 422 at the sidecar).
+      // Defensive: guard against empty buffer (unreachable in normal operation).
+      if (messages.length === 0 || memoryFlushCutoff < 1) {
+        deps.logger.debug(
+          `openclaw-memgpt: virtual trim skipped — empty buffer or cutoff < 1 (cutoff=${memoryFlushCutoff}) for sessionKey=${sessionKey ?? "?"}`,
+        );
+        return {
+          messages,
+          estimatedTokens: estimateTokens(messages),
+        };
+      }
+      const trimmed = [
+        messages[0],
+        packagedMessage,
+        ...messages.slice(memoryFlushCutoff),
+      ];
       deps.logger.debug(
         `openclaw-memgpt: virtual trim applied for sessionKey=${sessionKey ?? "?"}: ${messages.length} → ${trimmed.length} messages (cutoff=${memoryFlushCutoff})`,
       );
