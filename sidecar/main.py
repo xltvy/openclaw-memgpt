@@ -2,8 +2,8 @@
 openclaw-memgpt sidecar — FastAPI entry point.
 
 Import order is load-order critical:
-  1. settings  — sets MEMGMT_CONFIG_PATH env var; NO memgpt imports
-  2. bootstrap — patches MEMGMT_DIR in memgpt.constants + memgpt.config,
+  1. settings  — sets MEMGPT_CONFIG_PATH env var; NO memgpt imports
+  2. bootstrap — patches MEMGPT_DIR in memgpt.constants + memgpt.config,
                  then imports the rest of memgpt
   3. everything else
 

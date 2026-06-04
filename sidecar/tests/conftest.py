@@ -1,9 +1,10 @@
 """
 Pytest fixtures for sidecar integration tests.
 
-Sets OPENCLAW_MEMGPT_DIR to a temp directory before importing main, so each
-test session gets an isolated data directory and MEMGPT_DIR is patched before
-any memgpt import fires (import-ordering rule, CLAUDE.md §NON-NEGOTIABLES 7).
+Sets OPENCLAW_MEMGPT_DATA_DIR to a temp directory before importing main, so
+each test session gets an isolated data directory and MEMGPT_DIR is patched
+before any memgpt import fires (import-ordering rule, CLAUDE.md
+§NON-NEGOTIABLES 7).
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ def client(tmp_data_dir):
     if sidecar_dir not in sys.path:
         sys.path.insert(0, sidecar_dir)
 
-    os.environ["OPENCLAW_MEMGPT_DIR"] = tmp_data_dir
+    os.environ["OPENCLAW_MEMGPT_DATA_DIR"] = tmp_data_dir
 
     from main import app  # noqa: PLC0415 — deferred until env is set
 

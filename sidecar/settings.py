@@ -29,7 +29,7 @@ class SidecarSettings:
 
 def _load() -> SidecarSettings:
     data_dir = os.environ.get(
-        "OPENCLAW_MEMGMT_DATA_DIR",
+        "OPENCLAW_MEMGPT_DATA_DIR",
         os.path.join(os.path.expanduser("~"), ".openclaw-memgpt"),
     )
     config_path = os.path.join(data_dir, "config")
@@ -41,8 +41,8 @@ def _load() -> SidecarSettings:
     return SidecarSettings(
         data_dir=data_dir,
         config_path=config_path,
-        host=os.environ.get("OPENCLAW_MEMGMT_HOST", "127.0.0.1"),
-        port=int(os.environ.get("OPENCLAW_MEMGMT_PORT", "8765")),
+        host=os.environ.get("OPENCLAW_MEMGPT_HOST", "127.0.0.1"),
+        port=int(os.environ.get("OPENCLAW_MEMGPT_PORT", "8765")),
     )
 
 
