@@ -63,14 +63,16 @@ function assertAllowedKeys(value: Record<string, unknown>): void {
   }
 }
 
-function requireString(
+function stringWithDefault(
   value: Record<string, unknown>,
   key: string,
+  defaultValue: string,
 ): string {
   const raw = value[key];
+  if (raw === undefined) return defaultValue;
   if (typeof raw !== "string" || raw.length === 0) {
     throw new Error(
-      `openclaw-memgpt config: '${key}' is required and must be a non-empty string`,
+      `openclaw-memgpt config: '${key}' must be a non-empty string when set`,
     );
   }
   return raw;
@@ -122,17 +124,20 @@ export function parseConfig(api: OpenClawPluginApi): PluginConfig {
  * Direct value parser — exported for tests that don't have a full api stub.
  */
 export function parseConfigValue(value: unknown): PluginConfig {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("openclaw-memgpt config required (object)");
+  if (value === undefined || value === null) {
+    value = {};
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("openclaw-memgpt config must be an object");
   }
   const cfg = value as Record<string, unknown>;
   assertAllowedKeys(cfg);
 
   return {
-    namespace: requireString(cfg, "namespace"),
-    model: requireString(cfg, "model"),
-    persona: requireString(cfg, "persona"),
-    human: requireString(cfg, "human"),
+    namespace: stringWithDefault(cfg, "namespace", "default"),
+    model: stringWithDefault(cfg, "model", "gpt-4"),
+    persona: stringWithDefault(cfg, "persona", "You are a helpful AI assistant."),
+    human: stringWithDefault(cfg, "human", "The user."),
     sidecarUrl: optionalString(cfg, "sidecarUrl"),
     observability: resolveObservability(cfg),
   };

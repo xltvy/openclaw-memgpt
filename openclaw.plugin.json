@@ -18,11 +18,11 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["namespace"],
     "properties": {
       "namespace": {
         "type": "string",
-        "description": "Memory namespace — maps to agent_config.name in the sidecar. Shared across agents when two plugin instances use the same value."
+        "default": "default",
+        "description": "Memory namespace — maps to agent_config.name in the sidecar. Shared across agents when two plugin instances use the same value. Defaults to 'default'."
       },
       "model": {
         "type": "string",

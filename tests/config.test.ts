@@ -39,12 +39,10 @@ test("parseConfig: happy path with all optional fields set", () => {
   assert.equal(cfg.observability, "verbose");
 });
 
-test("parseConfig: missing namespace throws", () => {
+test("parseConfig: missing namespace defaults to 'default'", () => {
   const { namespace: _, ...withoutNamespace } = VALID;
-  assert.throws(
-    () => parseConfigValue(withoutNamespace),
-    /namespace.*required/i,
-  );
+  const cfg = parseConfigValue(withoutNamespace);
+  assert.equal(cfg.namespace, "default");
 });
 
 test("parseConfig: invalid observability throws with the rejected value in the message", () => {
@@ -61,8 +59,14 @@ test("parseConfig: unknown key throws (guard against typos / spec drift)", () =>
   );
 });
 
+test("parseConfig: null/undefined treated as empty config (all defaults apply)", () => {
+  const cfg = parseConfigValue(null);
+  assert.equal(cfg.namespace, "default");
+  const cfg2 = parseConfigValue(undefined);
+  assert.equal(cfg2.namespace, "default");
+});
+
 test("parseConfig: non-object input throws", () => {
-  assert.throws(() => parseConfigValue(null), /required/i);
-  assert.throws(() => parseConfigValue("string"), /required/i);
-  assert.throws(() => parseConfigValue([]), /required/i);
+  assert.throws(() => parseConfigValue("string"), /object/i);
+  assert.throws(() => parseConfigValue([]), /object/i);
 });
