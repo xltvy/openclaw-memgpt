@@ -22,6 +22,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import type { PluginConfig } from "../config.ts";
 import type { SidecarClient } from "../client/sidecarClient.ts";
+import type { LifecycleManager } from "../lifecycle/lifecycleManager.ts";
 
 // ============================================================================
 // MemoryEvent — observability surface for §6.2
@@ -74,6 +75,14 @@ export interface ToolDeps {
   namespace: string;
   emit: (event: MemoryEvent) => void;
   logger: ToolLogger;
+  /**
+   * §6.1 lifecycle — tools and hooks consult `lifecycle.isDead` at entry to
+   * short-circuit cleanly when the sidecar has crashed (6c.10a Q4). Optional
+   * at this seam so existing tests that build a deps bag by hand keep working
+   * without constructing a full LifecycleManager; the entry point always
+   * supplies a real one.
+   */
+  lifecycle?: LifecycleManager;
 }
 
 /**
@@ -86,6 +95,7 @@ export function makeToolDeps(
   client: SidecarClient,
   config: PluginConfig,
   api: OpenClawPluginApi,
+  lifecycle?: LifecycleManager,
 ): ToolDeps {
   return {
     client,
@@ -94,5 +104,6 @@ export function makeToolDeps(
       /* 6d wires the level-gated emitter; no-op until then. */
     },
     logger: api.logger,
+    lifecycle,
   };
 }

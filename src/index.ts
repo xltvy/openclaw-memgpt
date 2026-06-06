@@ -2,45 +2,31 @@
  * openclaw-memgpt — MemGPT three-tier memory architecture for OpenClaw
  * via a pymemgpt FastAPI sidecar (Shape B; API_DESIGN.md §1, §3.8).
  *
- * 6c.7b wiring: parse config → construct sidecar client → build ToolDeps →
- * register the seven tools → register the `before_prompt_build` prompt-
- * section hook → register the `before_prompt_build` flush-pressure hook
- * (predicate + :summarize + flush metadata write) → register the
- * `agent_end` hook (mirror + save) → register the `reply_dispatch` hook
- * (§4.3 suppression seam read side) → register ContextEngine (virtual-trim
- * path consuming flush metadata on the next turn). Lifecycle (6c.8 / 6d)
- * still deferred.
+ * 6c.10 wiring: parse config → construct LifecycleManager (Q5 spawn-vs-attach
+ * resolver) → construct sidecar client closing over the manager's resolver →
+ * build ToolDeps (carrying lifecycle so tools/hooks can short-circuit on
+ * deadFlag) → register tools + hooks + ContextEngine → register the
+ * `registerService({ start, stop })` pair that drives the spawn lifecycle
+ * (start spawns + healthz-blocks; stop saves + SIGTERMs + SIGKILL-fallbacks).
+ *
+ * The previous 6c.8 teardown used a stop-only `registerService` — the SDK's
+ * service runner TypErrors on the missing `start`, which silently skips the
+ * stop wiring. Providing both here fixes the latent bug surfaced in 6c.10a.
  */
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import { parseConfig } from "./config.ts";
-import type { PluginConfig } from "./config.ts";
 import { SidecarClientImpl } from "./client/sidecarClient.ts";
 import { makeMemgptContextEngine } from "./contextEngine/memgptEngine.ts";
 import { registerFlushPressureHook } from "./hooks/flushPressure.ts";
 import { registerAgentEndHook } from "./hooks/mirror.ts";
 import { registerPromptSectionHook } from "./hooks/promptSection.ts";
 import { registerReplyDispatchHook } from "./hooks/replyDispatch.ts";
-import { registerTeardown } from "./lifecycle/teardown.ts";
+import { LifecycleManager } from "./lifecycle/lifecycleManager.ts";
 import { makeToolDeps } from "./tools/deps.ts";
 import { registerTools } from "./tools/index.ts";
-
-/** Sidecar default — matches sidecar/settings.py (OPENCLAW_MEMGPT_PORT default 8765). */
-const DEFAULT_SIDECAR_URL = "http://127.0.0.1:8765";
-
-/**
- * 6c.0 stub. The real resolver — env override, spawn-via-uv, port allocation —
- * lands in 6d with the lifecycle layer (§6.1). Keeping the injection point in
- * place now so the client surface doesn't change when lifecycle wires in.
- */
-function stubResolveBaseUrl(config: PluginConfig): () => Promise<string> {
-  return async () =>
-    config.sidecarUrl ??
-    process.env.OPENCLAW_MEMGPT_SIDECAR_URL ??
-    DEFAULT_SIDECAR_URL;
-}
 
 const memgptPlugin = definePluginEntry({
   id: "openclaw-memgpt",
@@ -50,8 +36,14 @@ const memgptPlugin = definePluginEntry({
 
   register(api: OpenClawPluginApi): void {
     const config = parseConfig(api);
-    const client = new SidecarClientImpl(config, stubResolveBaseUrl(config));
-    const deps = makeToolDeps(client, config, api);
+    const lifecycle = new LifecycleManager(config, api.logger);
+
+    // Resolver closure: SidecarClient calls this once in doInit (at first
+    // tool/hook fire — well after registerService.start has resolved the URL).
+    const client = new SidecarClientImpl(config, async () =>
+      lifecycle.resolveBaseUrl(),
+    );
+    const deps = makeToolDeps(client, config, api, lifecycle);
 
     registerTools(api, deps);
     registerPromptSectionHook(api, deps);
@@ -65,10 +57,16 @@ const memgptPlugin = definePluginEntry({
     (api as unknown as { registerContextEngine(id: string, factory: unknown): void })
       .registerContextEngine("memgpt", makeMemgptContextEngine(deps, api));
 
-    registerTeardown(api, deps);
+    // §6.1 lifecycle service — both start and stop wired so the SDK's
+    // service runner (services-CLs267o9.js) registers our stop into `running`.
+    api.registerService({
+      id: "memgpt-sidecar",
+      start: (ctx) => lifecycle.start(ctx),
+      stop: (ctx) => lifecycle.stop(client, ctx),
+    });
 
     api.logger.info(
-      `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end + reply_dispatch hooks + ContextEngine + teardown registered (namespace: ${config.namespace}, observability: ${config.observability})`,
+      `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end + reply_dispatch hooks + ContextEngine + lifecycle service registered (namespace: ${config.namespace}, observability: ${config.observability})`,
     );
   },
 });
