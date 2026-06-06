@@ -11,7 +11,7 @@ its own — read it without other context.
 
 ---
 
-## "Almost certainly X" was wrong — ten instances
+## "Almost certainly X" was wrong — eleven instances
 
 Each entry: the assumed behaviour, the actual mechanism revealed by source, and the
 shape of the resolution. Listed in roughly the order they surfaced.
@@ -89,6 +89,28 @@ shape of the resolution. Listed in roughly the order they surfaced.
     `abandoned`. The CLI summary is a false-negative on every `send_message`
     turn; verify success via session JSONL + recall growth instead. Banked as
     the "upstream fix" V2 follow-up.
+
+11. **`registerService.start` is optional in the type but required in
+    practice.** 6c.8's `teardown.ts` registered a stop-only service on the
+    declared rationale that `start?` is optional in the SDK's `.d.ts`. 6c.10a's
+    SDK read showed the runtime call-site (`services-CLs267o9.js:30`) is
+    `await service.start(serviceContext)` — no `?.` guard. A missing `start`
+    therefore TypErrors at `await undefined(...)`, the runner's try/catch
+    swallows it as a "plugin service failed" warning, and the matching
+    `running.push({...stop})` is **never executed**. The 6c.8 plugin teardown
+    contract was therefore silently never wired: `stop` did not fire on
+    OpenClaw shutdown for any of the V1 vertical-slice / Stage-3 verification
+    runs. Why we didn't notice: the `agent_end` hook persists per turn (§4.5
+    declared D1 deviation), so the on-disk state was always at most one turn
+    behind the in-memory state; the teardown save is a belt-and-braces close
+    of an effectively empty window. The bug was real and bit every run; it
+    did not affect data integrity because per-turn save covered the gap. Fix
+    in 6c.10b: `LifecycleManager` exposes both `start` (the spawn-and-poll
+    path) and `stop` (the save+SIGTERM path). Source-read lesson: an
+    optional-in-`.d.ts` is a documentation claim, not a runtime guarantee —
+    confirm against the call-site before trusting it. Same shape as
+    instance 5's reference-repair (optional-in-source but load-bearing in
+    practice).
 
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy

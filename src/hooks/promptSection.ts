@@ -125,6 +125,17 @@ export function registerPromptSectionHook(
   deps: ToolDeps,
 ): void {
   api.on("before_prompt_build", async (_event, ctx) => {
+    // §6.1 lifecycle — if the sidecar died, return an empty contribution and
+    // log once per turn. Letting the turn proceed without a MemGPT prompt
+    // section is the lesser harm vs throwing here (which would block every
+    // turn until restart).
+    if (deps.lifecycle?.isDead) {
+      deps.logger.warn(
+        "openclaw-memgpt: skipping prompt section — sidecar dead",
+      );
+      return { prependSystemContext: "" };
+    }
+
     // Repair trailing synthetic empty assistant left by reply_dispatch §4.3.
     const entry = loadSessionEntry(api, ctx as AgentContext);
     if (entry?.sessionFile) {

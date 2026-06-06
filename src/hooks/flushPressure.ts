@@ -140,6 +140,15 @@ export function registerFlushPressureHook(
       const ctx = (ctxRaw ?? {}) as AgentContext;
       const event = (eventRaw ?? {}) as AgentEndEvent;
 
+      // §6.1 lifecycle — skip silently if the sidecar died (no point
+      // attempting :summarize against an unreachable endpoint; the mirror
+      // hook's same-turn skip means there's nothing to summarise into
+      // anyway).
+      if (deps.lifecycle?.isDead) {
+        if (ctx.sessionKey) capturedTokens.delete(ctx.sessionKey);
+        return;
+      }
+
       // Standard guards — same precedent as the mirror hook.
       if (isNonInteractiveTrigger(ctx.trigger, ctx.sessionKey)) return;
       if (isSubagentSession(ctx.sessionKey)) return;
