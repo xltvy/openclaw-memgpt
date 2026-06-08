@@ -171,8 +171,17 @@ result.
 
 Endpoint chain rationale (Q2): the LiteLLM → shim → Bedrock chain is the same
 one Cell C uses operationally; reusing it for Cell A controls for endpoint
-variance (auth, parsing, latency, request shaping). Both cells exercise the
-identical wire format upstream.
+variance (auth, parsing, latency, request shaping).
+
+What is **not** controlled is the request envelope reaching the endpoint. The
+V1.0 freeze claimed "Both cells exercise the identical wire format upstream"
+on intuition; V1.3 setup surfaced this as empirically false (Cell A emits
+pre-v1 OpenAI Functions API; Cell C emits modern `tool_use` schema), and a
+single-probe equivalence check confirmed the envelope difference is
+non-material for the §7.3 dimensions. See §4.5 (declared deviation),
+`methodology-bank.md` entry #12 (empirical evidence), and `/tmp/wire-format-check.md`
+(raw responses). The controlled variable is the served model, not the wire
+shape.
 
 The persona/human strings are verbatim the 6c.9 vertical-slice strings
 (`CLAUDE.md:336`) so V1 reuses an already-exercised configuration rather than
@@ -246,6 +255,46 @@ dimension and are ignored.
 result, not the wrapping role tag. The §5 dimensions are agent-behavioural
 choices — what tool was invoked, with what arguments, in response to what —
 not the storage envelope around the response.
+
+### 4.5 LLM wire format
+
+- **Cell A.** Pre-v1 OpenAI Chat Completions with `functions` /
+  `function_call` / role=function messages. This is the wire format pre-v1
+  MemGPT was built against (2023 OpenAI SDK era), pinned upstream and not
+  modifiable in the fork per the PERMITTED CHANGES discipline (`CLAUDE.md`).
+- **Cell C.** Modern OpenAI Chat Completions with `tools` / `tool_calls` /
+  role=tool, as `normalise.ts` produces from OpenClaw's session buffer.
+
+**Why this is a deviation, not a controlled variable.** The V1.0 freeze
+implicitly assumed both cells reached the LLM with identical wire shape
+because they share the LiteLLM → shim → Bedrock chain. LiteLLM was expected
+to translate both shapes into valid Anthropic Messages on the way to
+Bedrock. In practice, LiteLLM's translator mints independent
+`uuid.uuid4()` values for the assistant `tool_use.id` and the matching
+`tool_result.tool_use_id` when fed pre-v1 Functions API
+(`litellm/litellm_core_utils/prompt_templates/factory.py:1877-1898` and
+`:1859-1868`), producing malformed Messages that Anthropic rejects on
+multi-turn agent runs. Cell A and Cell C therefore cannot reach the same
+endpoint with the same envelope without a Cell A-specific upgrade pass.
+
+**Normalisation.** Empirically checked (single-probe, single-trial; see
+`methodology-bank.md` entry #12 and `/tmp/wire-format-check.md`): the same
+served model, given a conversation expressed either as modern `tool_use`
+shape via LiteLLM or as the same conversation hand-translated to valid
+Messages bypassing LiteLLM, produces token-equivalent input (701/701) and
+agent-loop-equivalent output (same tool-selection decision, same recall
+content, output-token deltas within single-token noise). V1.4 treats §7.3
+dimensions as wire-format-robust on this basis. The §6.5 ladder picks up
+the residual confound (richer multi-turn probes may exhibit subtler
+envelope-induced variance not visible on the PINEAPPLE_8101 pair).
+
+**Operational consequence.** Cell A's chain is no longer load-bearing as
+an envelope-equivalence control. A Cell A-specific pre-LiteLLM pass that
+upgrades pre-v1 Functions API to modern `tool_calls` / role=tool shape
+suffices to reach the served model in a form LiteLLM's translator handles
+correctly; this is plumbing, not architecture, and lives outside the fork
+per the PERMITTED CHANGES discipline. See §7 (Cell A operational chain)
+for the chain shape, adapter role, and discipline boundary.
 
 ---
 
@@ -334,11 +383,69 @@ identified declared deviations and known fork touchpoints.
 
 Likely experimental error, not architectural divergence. Sanity-check:
 
-1. Cell endpoint configuration — both pointing at the same LiteLLM:4000.
+1. Cell endpoint configuration — both reaching the same served model
+   (Claude Sonnet 4.5 via the institutional Bedrock gateway).
 2. Persona/human strings — byte-identical across cells.
 3. Cell C namespace not contaminated from a prior run (per V2 follow-up #7).
 4. Cell A agent state not carrying over from a prior probe set (delete or
    archive `~/.memgpt/agents/<name>/` between probe sets).
+5. **Wire-format-induced LLM response variance (residual confound from §4.5).**
+   Cell A's Functions API → upgraded → Anthropic Messages pipeline and Cell C's
+   modern `tool_use` → Anthropic Messages pipeline produce
+   structurally-near-identical Messages payloads at the Bedrock boundary
+   (single-probe verified — `methodology-bank.md` entry #12), but the
+   single-probe check does not cover richer multi-turn topologies. If a probe
+   that exercises an unusual conversation structure (e.g., nested tool calls,
+   long tool-result payloads, interleaved user clarifications between tool
+   rounds) fails multiple dimensions together, capture the upstream Messages
+   payload on both arms and diff structurally before counting it as
+   architectural divergence. A repeatable structural difference at the
+   Messages boundary is a §4.5 deviation widening, not a §7 failure.
+
+---
+
+## 7. Cell A operational chain
+
+**Shape.**
+
+```
+MemGPT (pre-v1 Functions API)
+  → cell-a-adapter (port TBD; rewrites Functions API → modern tool_calls)
+  → LiteLLM:4000 (translates OpenAI tools → Anthropic Messages)
+  → shim:4100 (transport-layer adapter for the Bedrock gateway)
+  → institutional Bedrock gateway
+```
+
+Cell C's chain is unchanged from V1.0:
+`OpenClaw → LiteLLM:4000 → shim:4100 → Bedrock`. Cell A's chain is one hop
+longer by design: the adapter exists because pre-v1 MemGPT's wire format
+cannot reach Anthropic through LiteLLM without an upgrade pass (§4.5
+*Why this is a deviation*). The asymmetry is not a control failure — the
+controlled variable is the served model, not the chain shape (§3
+refinement, this changelog entry dated 2026-06-09).
+
+**Adapter role.** Walk paired `function_call` (assistant) and role=function
+(result) turns in conversation order, mint a single `tool_call_id` per pair,
+and emit the equivalent modern Chat Completions request with `tools` /
+`tool_calls` / role=tool. Downstream, LiteLLM's translator hits the working
+branch at `convert_to_anthropic_tool_invoke` (`litellm/litellm_core_utils/prompt_templates/factory.py:1901`)
+which preserves the OpenAI `tool.id` as the Anthropic `tool_use.id` (line
+1956), keeping the pairing intact. Empirical evidence that this is
+dimensionally equivalent to Cell C's path: `methodology-bank.md` entry #12.
+
+**Discipline boundary.** The adapter is plumbing, not architecture. It does
+not touch `memgpt/**` (forbidden per the fork's PERMITTED CHANGES) and does
+not extend `proxy_shim.py` (the shim's own discipline forbids API-flavour
+translation; `proxy_shim.py:44-50`). It lives in `cell-a-adapter/` at the
+openclaw-memgpt repo root with its own venv, kept visibly separate from the
+shim so the naming carries the intent ("adapter for Cell A" vs "transport
+adapter for any Anthropic-flavour upstream").
+
+**Implementation status.** Documented in this section as the design
+decision; the adapter source and the four-terminal Cell A run recipe
+(adapter, shim, LiteLLM, MemGPT CLI replacing the three-terminal recipe
+in §1 above) are deferred to the next task. §1's build/run instructions
+will be updated when the adapter lands.
 
 ---
 
@@ -353,3 +460,18 @@ Likely experimental error, not architectural divergence. Sanity-check:
   tool-invocation≥95% / tier-reasoning≥80% / monologue≥70%. Aggregate gate
   layers two sanity checks (zero `send_message` failures; no probe with
   >50% dimensional failure) on top of the per-dimension thresholds.
+
+- 2026-06-09 — V1.0 refinement: wire-format demotion. V1.3 setup surfaced
+  that Cell A's pre-v1 Functions API and Cell C's modern `tool_use` schema
+  cannot reach an Anthropic endpoint with identical wire shape via LiteLLM's
+  translator. §3 rationale retracted the implicit "identical wire format
+  upstream" claim in favour of "controlling the served model, not the wire
+  shape." New §4.5 declares wire format as a deviation with empirical
+  evidence of dimensional equivalence (PINEAPPLE_8101 fact-recall probe,
+  token-identical input 701/701, agent-loop-equivalent output). New §6.5
+  rung points at wire-format envelope variance as a residual confound to
+  inspect before counting multi-dimensional probe failures as architectural.
+  Threshold structure (§5) and aggregate gate unchanged. Empirical evidence
+  banked at `methodology-bank.md` entry #12. Cell A operational chain
+  documented in §7; adapter lives in `cell-a-adapter/` (implementation in
+  the next task; §1 build/run instructions to be updated then).
