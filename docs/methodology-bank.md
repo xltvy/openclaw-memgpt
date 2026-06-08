@@ -111,6 +111,54 @@ shape of the resolution. Listed in roughly the order they surfaced.
     confirm against the call-site before trusting it. Same shape as
     instance 5's reference-repair (optional-in-source but load-bearing in
     practice).
+    
+12. **Wire format as controlled variable.** V1.3 setup hit a blocker: Cell A's
+    pre-v1 MemGPT emits OpenAI Chat Completions with legacy `functions` /
+    `function_call` / role=function messages; LiteLLM's
+    `litellm/llms/anthropic/` translation produces a `tool_result` block whose
+    `tool_use_id` has no corresponding `tool_use` in the preceding assistant
+    turn, and Anthropic rejects with *"tool_result block without corresponding
+    tool_use"*. Cell C does not hit this — its `normalise.ts` produces modern
+    `tool_use` / role=tool shape, which LiteLLM translates cleanly. V1.0 §3
+    therefore claimed "Both cells exercise the identical wire format upstream"
+    on intuition rather than source; the claim is empirically false.
+
+    **What's actually controlled.** The *served model* (Claude Sonnet 4.5 via
+    the institutional Bedrock gateway), not the request envelope.
+
+    **Empirical check.** Single-probe equivalence test, two payloads carrying
+    the same conversation semantics (`"my project codename is PINEAPPLE_8101"`
+    → `store_fact` call → tool_result `"stored"` → `"what codename did I
+    mention?"`):
+    - **A1.** Modern OpenAI Chat Completions with `tools` (Cell C shape) →
+      LiteLLM:4000 (OpenAI→Anthropic translation) → shim:4100 → Bedrock.
+    - **A2.** The same conversation, hand-translated to valid Anthropic
+      Messages with matched `tool_use`/`tool_result` IDs (Cell A shape, as
+      MemGPT's Functions log would translate if the translator worked) →
+      shim:4100 → Bedrock, bypassing the broken LiteLLM translator.
+
+    Both responses converged on `PINEAPPLE_8101` with token-identical input
+    (701/701), no tool re-invocation on the follow-up (in-context recall in
+    both), and output-token deltas of one (22/21) — well inside single-token
+    noise. Raw responses captured in `/tmp/wire-format-check.md`.
+
+    **Implication.** The finding strengthens the §7 equivalence claim rather
+    than weakening it: V1's §7.3 dimensions measure agent-loop decisions
+    (tier choice, tool selection, send_message routing) that are downstream
+    of any single LLM response and robust to envelope variance. The cost is a
+    small V1.0 refinement (§3 rationale retraction, new §4.5 declared
+    deviation, new §6.5 ladder rung).
+
+    **Residual confound (declared, not hidden).** Single-probe, single-trial.
+    The check shows wire format *can* be non-material on a representative
+    fact-recall pair; it does not prove envelope variance is *always*
+    non-material across richer multi-turn probes. V1.4 normalisation should
+    still inspect §7.3 divergences for structural-envelope signatures before
+    counting them as architectural divergence. Pattern: experimental design
+    that names a variable as "controlled" needs the same empirical check as
+    code that names a behaviour as "the path is via X" (instance #11) —
+    intuition-level controlled-variable claims fail the same way as
+    intuition-level mechanism claims.
 
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy
