@@ -212,6 +212,38 @@ shape of the resolution. Listed in roughly the order they surfaced.
     not a finding about MemGPT's design. Sonnet 4.5 and other Claude models (presumably) maintain
     the chain; that question is left for a future cross-model robustness study.
 
+16. **Manual `memgpt run` fires a boot turn; programmatic wrapper does not.** Manual CLI invokes
+    `agent.step()` once at startup (before user input) to surface MemGPT's "first login" welcome
+    via send_message. Programmatic wrapper (`run_single_turn_trial`) skips this and goes directly
+    to the probe message. Both invoke paths exercise the same agent-loop architecture; the boot
+    turn is a CLI UX convention. V1.4 normalises by comparing probe-response sub-sequences rather
+    than full message lists. Documented as expected divergence between manual and wrapper
+    invocation patterns; not a wrapper bug.
+
+17. **Cell A wrapper-vs-CLI dry-run has two expected non-architectural divergences.**
+    (a) **Boot turn divergence.** Manual `memgpt run` runs an extra `agent.step()` in
+    response to the synthetic `get_login_event` user message that
+    `initialize_message_sequence` (`agent.py:80`) injects after the initial boot
+    `send_message`; the programmatic wrapper skips this and goes straight to the
+    probe (mechanism described in entry #16). Normalised at diff time by
+    `pickle_diff.py --skip-boot`, which drops everything in `all_messages` before
+    the first probe-user-message (`type=user_message`) on each side. Dry-run
+    rerun (2026-06-10, probe p1, Sonnet 4.5 at `temperature: 0`) dropped 5 prefix
+    entries from the CLI side and 3 from the wrapper side — the 2-entry
+    asymmetry is exactly the welcome turn (assistant `send_message` + matching
+    function result). Diff result: `experiments/v1-runs/dry-run/diff-structural-temp0.json`.
+
+    (b) **Content stochasticity at temperature 0.** Anthropic Claude Sonnet 4.5 exhibits residual
+    sampling variance at `temperature: 0` (configured in `litellm_config.yaml` for `gpt-5.4` model
+    entry as of 2026-06-10). Empirical measurement from V1.3 dry-run re-runs of probe p1: 0
+    structural divergences, 3 content-aware divergences. All content divergences are prose
+    paraphrases at the inner-monologue and send_message text level (estimated Jaccard 0.5-0.7
+    over content-word tokens). No tool-name, tier, or function-call arg-key variance. The
+    `--structural-only` mode in `pickle_diff.py` normalises content fields to sentinels for
+    gate-level comparisons where content equivalence is not the load-bearing test. V1.4 uses
+    Jaccard ≥0.5 (per V1.1 §3.2) for monologue substantive equivalence, which is calibrated
+    comfortably above this measured noise floor.
+
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy
 path) even when behaviour looks obviously wrong — "obvious bug" and "reference's
