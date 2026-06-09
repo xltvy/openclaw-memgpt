@@ -142,6 +142,15 @@ shape of the resolution. Listed in roughly the order they surfaced.
     both), and output-token deltas of one (22/21) — well inside single-token
     noise. Raw responses captured in `/tmp/wire-format-check.md`.
 
+    **Re-verified at Claude Haiku 4.5 (2026-06-09).** Served model switched
+    to `eu.anthropic.claude-haiku-4-5-20251001-v1:0` (institutional Bedrock
+    gateway, LiteLLM entry updated). Same A1/A2 pair re-run unchanged: both
+    arms emitted **byte-identical** response text with token counts identical
+    on both axes (701/21 both arms) — strictly stronger than the Sonnet 4.5
+    baseline (which had a 1-token output delta and near-identical phrasing).
+    Wire-format finding holds and tightens at the new served model. Raw
+    responses appended to `/tmp/wire-format-check.md`.
+
     **Implication.** The finding strengthens the §7 equivalence claim rather
     than weakening it: V1's §7.3 dimensions measure agent-loop decisions
     (tier choice, tool selection, send_message routing) that are downstream
@@ -159,6 +168,49 @@ shape of the resolution. Listed in roughly the order they surfaced.
     code that names a behaviour as "the path is via X" (instance #11) —
     intuition-level controlled-variable claims fail the same way as
     intuition-level mechanism claims.
+
+13. **`OPENAI_API_BASE` is load-bearing on `v1-cell-a`; `~/.memgpt/config`'s
+    `model_endpoint` is decorative.** `memgpt configure` writes the value and
+    presents it interactively, suggesting it controls the LLM endpoint. It
+    doesn't — `openai_tools.py:8-14` reads `OPENAI_API_BASE` from env at module
+    import time, and the OpenAI 0.28.1 SDK module-global `openai.api_base` is
+    set from there only. `~/.secrets` setting `OPENAI_API_BASE=http://localhost:4000/v1`
+    for the V1.0 LiteLLM setup transparently bypassed the Cell A adapter for the
+    entire smoke-test session until the env var was overridden in the MemGPT
+    terminal. The config's `model_endpoint` field is presented faithfullyon read
+    but never wired through on this branch.
+
+14. **Model self-identification is unreliable; trust response metadata.** When asked
+    "what model are you?", Anthropic Claude Haiku 4.5 (served via institutional Bedrock
+    proxy at `eu.anthropic.claude-haiku-4-5-20251001-v1:0`) responds "Claude 3.5 Sonnet"
+    — a training-data-conditioned self-claim, not its actual identity. The authoritative
+    identifier is in the institutional upstream's response metadata (`model` field), not
+    the model's textual self-claim. Verified by behavioural fingerprint: `gpt-5.4`
+    (configured to route to Haiku 4.5) produces materially different output style and
+    length than the explicit Sonnet 4.5 entry on the same prompt, ruling out routing
+    failure. For identity verification of served models in V1.3+, rely on the `model`
+    field of response metadata or distinct behavioural fingerprints, never the model's
+    self-claim.
+
+15. **Claude Haiku 4.5 does not chain `send_message` after memory tool calls in MemGPT'spre-v1 agent loop.**
+    Sanity probe p1 ("Please remember that I'm working on a dissertation about AI memory
+    architectures.") was run through Cell A's chain with Haiku 4.5 as served model. The agent
+    invoked `core_memory_append` with the correct tier choice, but set `request_heartbeat=False`
+    explicitly in the tool arguments — opting not to chain a confirmation `send_message`. The boot
+    turn (system-initiated welcome) fired `send_message` cleanly, demonstrating the model can call
+    the tool when prompted by the loop's seed; it just does not autonomously chain after memory
+    tools. Send_message discipline (V1.0 §5 dimension at 100% threshold) is broken at Haiku 4.5
+    in this loop pattern. Pickle evidence: `agents/agent_9/persistence_manager.pkl` entries [7]-[9].
+    
+    **Implication:** V1 cannot be run against Haiku 4.5 with the current Cell A chain. The
+    dissertation's claim is about _architectural_ equivalence; if the underlying model is below
+    the discipline-discrimination threshold, behavioural divergence between cells would conflate
+    model-capability gaps with architectural gaps. Sonnet 4.5 reverted as served model per
+    V1.0 §5's fallback rule.
+    
+    This is a finding about Haiku 4.5's prompt-following at this specific multi-step discipline,
+    not a finding about MemGPT's design. Sonnet 4.5 and other Claude models (presumably) maintain
+    the chain; that question is left for a future cross-model robustness study.
 
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy

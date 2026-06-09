@@ -163,6 +163,7 @@ result.
 |---|---|
 | LLM endpoint | `http://localhost:4000/v1` (LiteLLM:4000 → shim:4100 → institutional Bedrock) |
 | Model id | `gpt-5.4` |
+| Served model | `eu.anthropic.claude-sonnet-4-5-20250929-v1:0` (Claude Sonnet 4.5 via institutional Bedrock gateway). Haiku 4.5 (`eu.anthropic.claude-haiku-4-5-20251001-v1:0`) tried and rejected on 2026-06-09 — failed p1's `send_message`-discipline criterion by explicit `request_heartbeat=false` on `core_memory_append`; see `methodology-bank.md` #15. |
 | Temperature | 0 (low/zero per §7.4 — minimise stochastic variance) |
 | Persona string | `Sam is a friendly AI assistant with an extensive knowledge base.` |
 | Human string | `The user is a researcher exploring AI memory architectures.` |
@@ -410,7 +411,7 @@ Likely experimental error, not architectural divergence. Sanity-check:
 
 ```
 MemGPT (pre-v1 Functions API)
-  → cell-a-adapter (port TBD; rewrites Functions API → modern tool_calls)
+  → cell-a-adapter:4200 (rewrites Functions API → modern tool_calls)
   → LiteLLM:4000 (translates OpenAI tools → Anthropic Messages)
   → shim:4100 (transport-layer adapter for the Bedrock gateway)
   → institutional Bedrock gateway
@@ -433,6 +434,15 @@ which preserves the OpenAI `tool.id` as the Anthropic `tool_use.id` (line
 1956), keeping the pairing intact. Empirical evidence that this is
 dimensionally equivalent to Cell C's path: `methodology-bank.md` entry #12.
 
+**Endpoint resolution.** On the `v1-cell-a` fork branch, the OpenAI SDK
+endpoint is sourced from the `OPENAI_API_BASE` environment variable
+(`memgpt/openai_tools.py:8-14`), not from `~/.memgpt/config`'s
+`model_endpoint` field. The MemGPT terminal must export
+`OPENAI_API_BASE=http://localhost:4200/v1` before invoking `memgpt run` —
+otherwise the adapter is silently bypassed and requests hit LiteLLM directly,
+reproducing the original wire-format blocker. See `methodology-bank.md`
+entry #13 for the diagnosis trail.
+
 **Discipline boundary.** The adapter is plumbing, not architecture. It does
 not touch `memgpt/**` (forbidden per the fork's PERMITTED CHANGES) and does
 not extend `proxy_shim.py` (the shim's own discipline forbids API-flavour
@@ -441,11 +451,34 @@ openclaw-memgpt repo root with its own venv, kept visibly separate from the
 shim so the naming carries the intent ("adapter for Cell A" vs "transport
 adapter for any Anthropic-flavour upstream").
 
-**Implementation status.** Documented in this section as the design
-decision; the adapter source and the four-terminal Cell A run recipe
-(adapter, shim, LiteLLM, MemGPT CLI replacing the three-terminal recipe
-in §1 above) are deferred to the next task. §1's build/run instructions
-will be updated when the adapter lands.
+**Four-terminal Cell A run recipe** (replaces §1's three-terminal recipe):
+
+```
+Terminal 1 — shim
+cd ~/Workspace/UCL/dissertation/openclaw-memgpt/proxy
+source ~/.secrets
+uv run uvicorn proxy_shim:app --host 127.0.0.1 --port 4100
+
+Terminal 2 — LiteLLM
+cd ~/Workspace/UCL/dissertation/openclaw-memgpt/proxy
+uv run litellm --config litellm_config.yaml --port 4000
+
+Terminal 3 — Adapter
+cd ~/Workspace/UCL/dissertation/openclaw-memgpt/cell-a-adapter
+uv run uvicorn adapter:app --port 4200
+
+Terminal 4 — MemGPT CLI
+cd ~/Workspace/UCL/dissertation/memgpt-service
+export OPENAI_API_BASE=http://localhost:4200/v1     # critical, see Endpoint resolution
+uv run memgpt run --persona sam_v1 --human researcher_v1
+```
+
+**Implementation status.** Adapter source landed in `cell-a-adapter/` on
+the `feat/v1-runs` branch; end-to-end smoke test passed on 2026-06-09
+(MemGPT → adapter → LiteLLM → shim → Bedrock, with the first agent.step
+producing inner monologue, `send_message` tool invocation, and a clean
+user-facing reply). §1's build/run instructions superseded by the recipe
+above for Cell A.
 
 ---
 
@@ -475,3 +508,20 @@ will be updated when the adapter lands.
   banked at `methodology-bank.md` entry #12. Cell A operational chain
   documented in §7; adapter lives in `cell-a-adapter/` (implementation in
   the next task; §1 build/run instructions to be updated then).
+
+- 2026-06-09 — V1.0 refinement: served-model freeze. §3 controlled-variables
+  table now names the served model explicitly
+  (`eu.anthropic.claude-sonnet-4-5-20250929-v1:0`). Haiku 4.5
+  (`eu.anthropic.claude-haiku-4-5-20251001-v1:0`) was tried as a candidate
+  and rejected: at p1, Haiku 4.5 chose the correct memory tier
+  (`core_memory_append` on the `human` field) but explicitly emitted
+  `request_heartbeat=false`, terminating MemGPT's heartbeat loop after the
+  function result without chaining `send_message` — a structural fail of the
+  §5 100%-`send_message` discipline criterion. Sonnet 4.5 re-verified clean
+  end-to-end on the same probe: `core_memory_replace` (within-tier discipline
+  choice) with `request_heartbeat=true` → synthetic heartbeat user message →
+  chained `send_message` with coherent confirmation reply. Empirical
+  evidence: `agent_9` pickle (Haiku 4.5 fail) and `agent_10` pickle (Sonnet
+  4.5 pass). Banked at `methodology-bank.md` entry #15. §3 wire-format
+  re-verification at Haiku 4.5 held (#12 update) — the rejection is purely
+  on chain-discipline, not on envelope handling.
