@@ -403,6 +403,44 @@ Likely experimental error, not architectural divergence. Sanity-check:
    architectural divergence. A repeatable structural difference at the
    Messages boundary is a §4.5 deviation widening, not a §7 failure.
 
+### 6.6 Known non-divergence patterns — do not flag as architectural
+
+Banked from V1.3 dry-run characterisation. These are reproducible divergences
+that arise from rig conventions, not from architectural differences between
+Cell A and Cell C. V1.4 must recognise and normalise them; flagging them as
+§7 dimension failures is a misdiagnosis.
+
+1. **CLI welcome-turn vs wrapper bypass** (`methodology-bank.md` #16, #17(a)).
+   Manual `memgpt run` invokes `agent.step()` once before user input to surface
+   the "first login" welcome; the V1.3 programmatic wrapper skips this and goes
+   straight to the probe. Concretely, the manual CLI's `all_messages` carries 5
+   pre-probe entries (`initial_boot_messages` × 2 + login event + welcome
+   assistant `send_message` + welcome function result); the wrapper carries 3
+   (initial boot pair + login event only). The 2-entry asymmetry is exactly
+   the welcome turn. Within Cell A this is normalised by `pickle_diff.py
+   --skip-boot`, which drops everything before the first probe-user-message.
+   For Cell-A-vs-Cell-C comparison: Cell C exhibits neither prefix (the plugin
+   does not inject a synthetic login event), so the boot-skip rule applies
+   uniformly and yields aligned probe-response sub-sequences. **Don't count as
+   `send_message` discipline divergence** — the welcome `send_message` is rig
+   plumbing, not a probe response.
+
+2. **Prose paraphrase at inner-monologue and `send_message` text** at
+   `temperature: 0` (`methodology-bank.md` #17(b)). Anthropic Claude Sonnet
+   4.5 exhibits residual sampling variance at `temperature: 0` (3 content-
+   level divergences over probe p1's 9-entry probe response). All paraphrases
+   are semantically equivalent — same tool, same arguments-keys, same chain
+   shape, same tier choice. Comfortably above V1.4's inner-monologue Jaccard
+   ≥0.5 threshold (§5). **Don't count as memory-tier-reasoning or inner-
+   monologue substantive divergence at the categorical level** — the variance
+   is text-surface noise, not behavioural drift.
+
+If a probe shows ONLY these patterns and no structural variance (same
+function_call.name sequence per step, same argument-key sets, same tier
+classifications, same step counts), it is an equivalence pass per §5 even
+when the raw byte-level content-aware diff is non-zero. The `pickle_diff.py
+--structural-only` mode is the operational check.
+
 ---
 
 ## 7. Cell A operational chain
