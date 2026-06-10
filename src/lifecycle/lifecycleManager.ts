@@ -261,6 +261,22 @@ export class LifecycleManager {
     }
 
     this.wireChildEvents(this.child);
+    // Detach the child from the parent's event loop reference count: without
+    // this, openclaw's process can't exit cleanly because Node.js waits for
+    // child.stdout / child.stderr to close. In gateway mode `services.stop`
+    // SIGTERMs the child before exit, but `--local` mode never fires stop,
+    // so the parent hangs post-turn waiting for the long-running uvicorn.
+    // `unref()` only removes the keep-alive reference; the child still runs
+    // until SIGTERMed. We pair this with `installExitHandler` below so the
+    // child doesn't leak when the parent exits without going through
+    // `LifecycleManager.stop` (the `--local` path).
+    this.child.unref();
+    // Cast: stdout/stderr are typed as Readable in @types/node, but the
+    // runtime instances are Socket (subclass of Duplex) which has unref().
+    // The cast keeps the unref call without weakening Readable elsewhere.
+    (this.child.stdout as { unref?: () => void } | null)?.unref?.();
+    (this.child.stderr as { unref?: () => void } | null)?.unref?.();
+    this.installExitHandler();
     this.spawnedUrl = url;
 
     try {
@@ -277,6 +293,41 @@ export class LifecycleManager {
 
     this.started = true;
     this.logger.info(`openclaw-memgpt: sidecar ready on ${url}`);
+  }
+
+  /** Already-registered exit handler closure (kept for test cleanup). */
+  private exitHandler?: () => void;
+
+  /**
+   * Register a `process.on('exit', …)` handler that SIGTERMs the spawned
+   * child. Belt + braces complement to `LifecycleManager.stop`:
+   *
+   * - **Gateway mode** — `services.stop` fires before parent exit and
+   *   calls `stop()` → `terminateChild()` → SIGTERM/SIGKILL → child exits.
+   *   By the time this handler fires, `this.child` is undefined or dead,
+   *   and the handler no-ops.
+   * - **`--local` mode** — `services.stop` never fires. This handler is
+   *   the only path that kills the child, ensuring no zombie uvicorn
+   *   processes leak across trials.
+   *
+   * `process.on('exit')` runs synchronously and only sync work is
+   * possible — `child.kill()` is sync, which is what we need. We don't
+   * `await terminateChild()` here (which has SIGTERM-then-await-then-
+   * SIGKILL semantics); SIGTERM fire-and-forget is the best we can do at
+   * exit time.
+   */
+  private installExitHandler(): void {
+    if (this.exitHandler !== undefined) return;
+    this.exitHandler = () => {
+      if (this.child !== undefined && this.child.exitCode === null && !this.child.killed) {
+        try {
+          this.child.kill("SIGTERM");
+        } catch {
+          // Process already gone or unprivileged — nothing to clean up.
+        }
+      }
+    };
+    process.on("exit", this.exitHandler);
   }
 
   // ── stop ─────────────────────────────────────────────────────────────────
@@ -322,6 +373,13 @@ export class LifecycleManager {
     }
 
     await this.terminateChild();
+    // De-register the exit handler now that we've cleaned up explicitly —
+    // belt + braces no longer needed, and dangling listeners would
+    // accumulate across tests that construct many managers.
+    if (this.exitHandler !== undefined) {
+      process.off("exit", this.exitHandler);
+      this.exitHandler = undefined;
+    }
     this.logger.info(
       "openclaw-memgpt: teardown — save+shutdown complete (or timed out)",
     );

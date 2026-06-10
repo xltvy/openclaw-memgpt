@@ -72,13 +72,25 @@ function makeLogger(): LoggerStub {
 class FakeChild extends EventEmitter {
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
-  stdout = new Readable({ read() {} });
-  stderr = new Readable({ read() {} });
+  stdout: Readable & { unref?: () => void } = Object.assign(
+    new Readable({ read() {} }),
+    { unref: () => undefined },
+  );
+  stderr: Readable & { unref?: () => void } = Object.assign(
+    new Readable({ read() {} }),
+    { unref: () => undefined },
+  );
   killed = false;
   killSignals: NodeJS.Signals[] = [];
+  unrefCount = 0;
 
   /** Indicates whether kill('SIGTERM') causes a synchronous exit. */
   exitOnSigterm = true;
+
+  /** Matches the real ChildProcess.unref() contract (no-op for the stub). */
+  unref(): void {
+    this.unrefCount += 1;
+  }
 
   kill(signal: NodeJS.Signals | number = "SIGTERM"): boolean {
     const sig =
@@ -414,6 +426,39 @@ test("resolveBaseUrl lazy-init — concurrent first calls share one start (no do
   assert.equal(a, b);
   assert.equal(b, c);
   assert.match(a, /^http:\/\/127\.0\.0\.1:\d+$/);
+});
+
+// Spawn-mode detach (post-V1.3) — `child.unref()` is called so Node.js
+// doesn't keep the parent's event loop alive waiting for the long-running
+// uvicorn child to exit. Without this, `--local` mode hangs post-turn
+// because services.stop never fires to SIGTERM the child.
+test("spawn-mode start — child.unref() called; process.exit handler registered", async () => {
+  const fakeChild = new FakeChild();
+  const exitListenerCountBefore = process.listenerCount("exit");
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 1_000,
+    pollIntervalMs: 10,
+    stateDirOverride: "/tmp/oc-test-unref",
+    fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+    spawn: spawnReturning(fakeChild) as never,
+  });
+
+  await lc.start({});
+  assert.equal(fakeChild.unrefCount, 1, "child.unref() must fire once after spawn");
+  assert.equal(
+    process.listenerCount("exit"),
+    exitListenerCountBefore + 1,
+    "spawn-mode start must register a process.on('exit') handler",
+  );
+
+  // Teardown via stop() must remove the exit listener so test isolation
+  // doesn't accumulate listeners (Node warns at 10+).
+  await lc.stop(undefined, {});
+  assert.equal(
+    process.listenerCount("exit"),
+    exitListenerCountBefore,
+    "stop() must remove the exit handler it registered",
+  );
 });
 
 // Q5 lazy-init — explicit start() (e.g. SDK gateway path firing
