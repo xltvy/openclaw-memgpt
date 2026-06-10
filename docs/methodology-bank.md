@@ -244,6 +244,67 @@ shape of the resolution. Listed in roughly the order they surfaced.
     Jaccard ≥0.5 (per V1.1 §3.2) for monologue substantive equivalence, which is calibrated
     comfortably above this measured noise floor.
 
+18. **(candidate, hold until Cell C completes) — p4 cross-turn observed behaviour at Sonnet 4.5.**
+    Across 5 Cell A trials, turn 1 (codename fact) elicited `core_memory_append` without chained
+    `send_message` (similar pattern to methodology #15 for Haiku 4.5, but emerging here on Sonnet 4.5).
+    Turn 2 (codename recall) read from active context rather than invoking `conversation_search`.
+    The path-agnostic design of p4 (V1.2 §refinement) tolerates this; V1.4 measures cell-to-cell
+    agreement on the chosen path, not a specific path. Worth noting that the "send_message after
+    memory tools" chaining isn't universally present even at flagship models — a research-relevant
+    observation for the dissertation's methodology chapter on MemGPT-Anthropic compatibility.
+
+19. **OpenClaw SDK `--local` mode does not fire `services.start`.** Plugin's `register()` runs
+    (tools/hooks/ContextEngine all wire up, "lifecycle service registered" logs cleanly) but
+    the SDK's service runner never invokes `LifecycleManager.start`. First tool/hook call
+    surfaces "lifecycle not started", at which point the local-mode agent silently falls back
+    to stock OpenClaw tools (`read`/`write`/etc.) and the trial returns `exit 0` despite the
+    plugin never having touched the sidecar.
+
+    **Source confirmation.** `startPluginServices` is imported and awaited at exactly one
+    site: `server.impl-DLF59fRo.js:21287`, inside the gateway server startup path. The
+    `agent-command-*.js` bundle and the `--local` dispatch path do not reference it.
+    `run-main-CTb0YOht.js:152` only collects `--local` as a flag value; the dispatch is
+    gateway-only or local-only based on it, and local skips startup-trace's
+    `sidecars.plugin-services` stanza entirely.
+
+    **Symptom signature.** Trial logs show the plugin's `register()` log line ("lifecycle
+    service registered (namespace: …)") followed immediately by repeated "lifecycle not
+    started" errors on every hook (`agent_ensured emit failed`, `getSystemPromptSection
+    failed`, `before_prompt_build handler failed`, `core_memory_append failed`,
+    `messagesAppend failed`, `agent_end handler failed`). The agent's `toolSummary`
+    nevertheless reports `success` with stock tools chosen — diagnostic gold for
+    distinguishing this from a sidecar-down failure (which would surface "sidecar process
+    died" instead).
+
+    **Fix.** `LifecycleManager.resolveBaseUrl` is now `async`; when called with neither
+    `spawnedUrl` nor `attachUrl` set and `_dead` false, it triggers `start({})` via a
+    singleton `lazyStartPromise` (race-protected against concurrent first calls) and awaits
+    it. Empty `ctx` is handled by `resolveStateDir`'s env + homedir fallback chain
+    (`OPENCLAW_STATE_DIR` → `~/.openclaw-dev`). `start()` itself carries a `this.started`
+    idempotency guard at the top so the gateway and lazy paths can't double-register
+    sidecar state — when the SDK eventually fires `services.start` the lazy path becomes a
+    no-op. Unit-tested at `tests/lifecycle/lifecycleManager.test.ts`: (a) lazy-init fires
+    when neither URL set (attach mode); (b) concurrent first calls share one start
+    (spawn-count = 1 across `Promise.all([resolveBaseUrl, resolveBaseUrl, resolveBaseUrl])`);
+    (c) explicit `start()` short-circuits subsequent resolveBaseUrl calls.
+
+    **Trade-off documented in code.** The 120 s spawn-mode healthz block now lives at
+    first-turn (attach-style entry) rather than gateway startup. For interactive `--local`
+    use this is a one-time first-turn wait; for V1.3 per-trial-spawn it adds ~60–90 s to
+    each trial's wall-clock (embedder is disk-cached but uvicorn + `:ensure` round-trip
+    still costs). Acceptable for V1 acceptance.
+
+    **Significance — real fix, not V1 workaround.** Ships in the plugin because (a) any
+    future user running `openclaw agent --local` against this plugin would hit the same
+    "lifecycle not started" wall, (b) the upstream SDK bug may never be fixed, (c) the
+    fallback is defensive and idempotent — when the SDK does fire `services.start`, the
+    explicit start path wins and the lazy path's idempotency guard makes it a no-op.
+
+    Same pattern as #11 (the optional-in-`.d.ts` `start?` that was load-bearing in
+    practice): the SDK's documented contract (services-start fires per registered service)
+    holds in one dispatch path but not the other; verifying mechanism by source-read at the
+    call site, not by `.d.ts` inspection, is the only safe ground.
+
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy
 path) even when behaviour looks obviously wrong — "obvious bug" and "reference's
