@@ -126,10 +126,29 @@ function spawnReturning(child: FakeChild): (...args: unknown[]) => FakeChild {
 
 // ── tests ──────────────────────────────────────────────────────────────────
 
-// Q5 — resolveBaseUrl before start
-test("resolveBaseUrl throws if lifecycle not started", () => {
-  const lc = new LifecycleManager(makeConfig(), makeLogger());
-  assert.throws(() => lc.resolveBaseUrl(), /not started/);
+// Q5 lazy-init (methodology-bank #18) — resolveBaseUrl without prior start
+// triggers a one-shot start({}) so plugin works under `openclaw agent --local`
+// where the SDK skips startPluginServices.
+test("resolveBaseUrl lazy-init — fires start({}) when neither URL set, returns URL on success (attach mode)", async () => {
+  const fakeFetch = fetchReturning(async () => ({ ok: true, status: 200 }));
+  const lc = new LifecycleManager(
+    makeConfig({ sidecarUrl: "http://lazy.attach:7777" }),
+    makeLogger(),
+    {
+      attachTimeoutMs: 1_000,
+      pollIntervalMs: 10,
+      fetch: fakeFetch,
+      // Spawn should never be invoked — attach config wins inside start().
+      spawn: (() => {
+        throw new Error("spawn should not fire in attach lazy-init");
+      }) as never,
+    },
+  );
+  // No explicit start() call here — resolveBaseUrl triggers it via the lazy
+  // path; the SDK contract is what register() set up, not what we awaited.
+  const url = await lc.resolveBaseUrl();
+  assert.equal(url, "http://lazy.attach:7777");
+  assert.equal(lc.mode, "attach", "must be in attach mode after lazy init");
 });
 
 // Q5 — attach via config
@@ -158,7 +177,7 @@ test("attach mode (config.sidecarUrl) — pings configured URL, doesn't spawn", 
   assert.equal(spawnCalled, false, "must not spawn in attach mode");
   assert.deepEqual(calls, ["http://attach.test:1234/healthz"]);
   assert.equal(lc.mode, "attach");
-  assert.equal(lc.resolveBaseUrl(), "http://attach.test:1234");
+  assert.equal(await lc.resolveBaseUrl(), "http://attach.test:1234");
 });
 
 // Q5 — attach via env var
@@ -176,7 +195,7 @@ test("attach mode (OPENCLAW_MEMGPT_SIDECAR_URL env) — env honoured when config
       }) as never,
     });
     await lc.start({});
-    assert.equal(lc.resolveBaseUrl(), "http://env.test:9999");
+    assert.equal(await lc.resolveBaseUrl(), "http://env.test:9999");
   } finally {
     if (prev === undefined) delete process.env.OPENCLAW_MEMGPT_SIDECAR_URL;
     else process.env.OPENCLAW_MEMGPT_SIDECAR_URL = prev;
@@ -200,7 +219,7 @@ test("config.sidecarUrl takes precedence over env var", async () => {
       },
     );
     await lc.start({});
-    assert.equal(lc.resolveBaseUrl(), "http://config.wins:2");
+    assert.equal(await lc.resolveBaseUrl(), "http://config.wins:2");
   } finally {
     if (prev === undefined) delete process.env.OPENCLAW_MEMGPT_SIDECAR_URL;
     else process.env.OPENCLAW_MEMGPT_SIDECAR_URL = prev;
@@ -339,8 +358,8 @@ test("child exit after start — isDead set; stderr tail surfaces in error log",
   );
 });
 
-// Q5 — resolveBaseUrl throws when dead
-test("resolveBaseUrl throws when isDead", async () => {
+// Q5 — resolveBaseUrl rejects when dead
+test("resolveBaseUrl rejects when isDead", async () => {
   const fakeChild = new FakeChild();
   const lc = new LifecycleManager(makeConfig(), makeLogger(), {
     spawnTimeoutMs: 200,
@@ -351,7 +370,77 @@ test("resolveBaseUrl throws when isDead", async () => {
   await lc.start({ stateDir: "/tmp/oc-test" });
   fakeChild.emitExit(1, null);
   await new Promise((r) => setImmediate(r));
-  assert.throws(() => lc.resolveBaseUrl(), /sidecar process died/);
+  await assert.rejects(
+    async () => await lc.resolveBaseUrl(),
+    /sidecar process died/,
+  );
+});
+
+// Q5 lazy-init — concurrent first calls share one in-flight start; spawn is
+// invoked exactly once. The singleton promise in `resolveBaseUrl` is the
+// race guard; if it broke we'd see two spawn calls and two healthz polls.
+test("resolveBaseUrl lazy-init — concurrent first calls share one start (no double-spawn)", async () => {
+  let spawnCount = 0;
+  let healthzCount = 0;
+  const fakeFetch = fetchReturning(async () => {
+    healthzCount += 1;
+    return { ok: true, status: 200 };
+  });
+  const fakeChild = new FakeChild();
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 1_000,
+    pollIntervalMs: 10,
+    stateDirOverride: "/tmp/oc-test-lazy-concurrent",
+    fetch: fakeFetch,
+    spawn: ((cmd: string, args: unknown, opts: unknown) => {
+      void cmd;
+      void args;
+      void opts;
+      spawnCount += 1;
+      return fakeChild as never;
+    }) as never,
+  });
+
+  // Fire three concurrent resolveBaseUrl calls before any can settle. The
+  // first triggers lazy init; the next two await the same promise.
+  const [a, b, c] = await Promise.all([
+    lc.resolveBaseUrl(),
+    lc.resolveBaseUrl(),
+    lc.resolveBaseUrl(),
+  ]);
+
+  assert.equal(spawnCount, 1, "spawn must fire exactly once across concurrent first calls");
+  assert.equal(healthzCount, 1, "healthz polling must fire exactly once");
+  assert.equal(a, b);
+  assert.equal(b, c);
+  assert.match(a, /^http:\/\/127\.0\.0\.1:\d+$/);
+});
+
+// Q5 lazy-init — explicit start() (e.g. SDK gateway path firing
+// startPluginServices) suppresses the lazy path on subsequent calls. This is
+// the "we still work in non-local mode too" guarantee.
+test("resolveBaseUrl lazy-init — explicit start() short-circuits subsequent lazy path", async () => {
+  let spawnCount = 0;
+  const fakeFetch = fetchReturning(async () => ({ ok: true, status: 200 }));
+  const fakeChild = new FakeChild();
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 1_000,
+    pollIntervalMs: 10,
+    stateDirOverride: "/tmp/oc-test-explicit-start",
+    fetch: fakeFetch,
+    spawn: (() => {
+      spawnCount += 1;
+      return fakeChild as never;
+    }) as never,
+  });
+
+  await lc.start({}); // gateway path
+  assert.equal(spawnCount, 1);
+
+  // Two subsequent calls — neither should trigger another start.
+  await lc.resolveBaseUrl();
+  await lc.resolveBaseUrl();
+  assert.equal(spawnCount, 1, "explicit-start path must suppress lazy re-start");
 });
 
 // Q6 — teardown sequence: save → SIGTERM → child exits cleanly

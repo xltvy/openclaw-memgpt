@@ -117,6 +117,14 @@ export class LifecycleManager {
   private started = false;
   /** Set true on `stop` entry so the child `exit` listener doesn't flip deadFlag. */
   private shuttingDown = false;
+  /**
+   * Singleton in-flight promise for the lazy-init path (see `resolveBaseUrl`).
+   * Concurrent first calls await the same promise so `start({})` only fires
+   * once even under bursty parallel tool dispatch. Cleared on failure so a
+   * subsequent call can retry; left set on success so subsequent calls
+   * short-circuit at the `spawnedUrl !== undefined` check above lazy init.
+   */
+  private lazyStartPromise?: Promise<void>;
 
   /** Lifecycle.start sets this; tools/hooks can ask "what URL would I hit?". */
   get mode(): "spawn" | "attach" | "uninitialised" {
@@ -165,8 +173,24 @@ export class LifecycleManager {
    * Throwing here means the inner try/catch logs + skips `running.push`, so
    * `stop` is never registered — but plugin tools/hooks remain wired, so
    * first-turn calls return clean "sidecar unavailable" errors via deadFlag.
+   *
+   * Also called via the lazy-init path in `resolveBaseUrl` when the SDK
+   * service runner doesn't fire (e.g. `openclaw agent --local` skips
+   * `startPluginServices` per server.impl-DLF59fRo.js:21287). Idempotent on
+   * the success path (`started=true`) and on the failure path (`_dead=true`
+   * + thrown error); a second concurrent call on the lazy path is
+   * race-protected by `resolveBaseUrl`'s singleton promise.
    */
   async start(ctx: Record<string, unknown>): Promise<void> {
+    // Idempotency: prior successful start. Second call is a no-op so SDK and
+    // lazy paths can't double-register sidecar state.
+    if (this.started) return;
+    if (this._dead) {
+      throw new Error(
+        "openclaw-memgpt: start() called after prior failure marked lifecycle dead",
+      );
+    }
+
     // 6c.10a Q5 precedence — config field > env var > spawn.
     this.attachUrl =
       this.config.sidecarUrl ??
@@ -307,11 +331,28 @@ export class LifecycleManager {
 
   /**
    * Q5 — closure body for SidecarClient's `resolveBaseUrl`. Called inside
-   * client.doInit at first hook/tool fire, well after `start` completes.
+   * client.doInit at first hook/tool fire. In the gateway path the SDK has
+   * already awaited `start()` by the time this fires, so the happy path is
+   * a synchronous URL return through the `spawnedUrl`/`attachUrl` branches.
    *
-   * Throws (not rejects) — the client wraps it in a Promise via the closure.
+   * **Lazy-init fallback (post-V1.3).** `openclaw agent --local` skips
+   * `startPluginServices` entirely — `server.impl-DLF59fRo.js:21287` only
+   * fires it inside the gateway startup path — so on the `--local` route
+   * `start()` is never called and both URLs are undefined when tools fire.
+   * Before V1.3 that threw `"lifecycle not started"` and the trial was a
+   * silent no-op (the agent fell through to stock OpenClaw tools).
+   *
+   * The fallback below detects the "neither url set, not dead" condition,
+   * triggers `start({})` once, and awaits it. `resolveStateDir`'s env +
+   * homedir fallback chain handles the empty ctx. Concurrent first calls
+   * share `lazyStartPromise` so only one start fires. After it resolves,
+   * the second branch returns the real URL. The 120 s spawn-mode healthz
+   * block therefore moves from gateway-startup to first-turn — a property
+   * of attach-style entry, not a regression.
+   *
+   * See `docs/methodology-bank.md` #18 for the bug write-up.
    */
-  resolveBaseUrl(): string {
+  async resolveBaseUrl(): Promise<string> {
     if (this._dead) {
       throw new Error(
         "openclaw-memgpt: sidecar process died; restart OpenClaw to recover",
@@ -319,7 +360,27 @@ export class LifecycleManager {
     }
     if (this.spawnedUrl !== undefined) return this.spawnedUrl;
     if (this.attachUrl !== undefined) return this.attachUrl;
-    throw new Error("openclaw-memgpt: lifecycle not started");
+
+    // Lazy-init: SDK service runner never fired (likely --local mode).
+    if (this.lazyStartPromise === undefined) {
+      this.logger.info(
+        "openclaw-memgpt: lazy lifecycle init triggered (SDK services.start did not fire — likely `openclaw agent --local`; see methodology-bank #18)",
+      );
+      this.lazyStartPromise = this.start({}).catch((err) => {
+        // Clear so a later call can retry if the operator fixes the cause
+        // mid-process (rare; the cleared state is what stops a permanently
+        // failed promise from livelocking subsequent tool calls).
+        this.lazyStartPromise = undefined;
+        throw err;
+      });
+    }
+    await this.lazyStartPromise;
+
+    if (this.spawnedUrl !== undefined) return this.spawnedUrl;
+    if (this.attachUrl !== undefined) return this.attachUrl;
+    throw new Error(
+      "openclaw-memgpt: lazy lifecycle init completed but no URL was set — internal invariant violated",
+    );
   }
 
   // ── internals ────────────────────────────────────────────────────────────
