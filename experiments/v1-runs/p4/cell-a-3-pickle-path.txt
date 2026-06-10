@@ -1,0 +1,1 @@
+/Users/altayacar/.memgpt/agents/v1_cell_a_p4_t03/persistence_manager/2026-06-10_02_50_03_AM_.persistence.pickle

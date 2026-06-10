@@ -1,0 +1,8 @@
+{
+  "equal": true,
+  "a_path": "/Users/altayacar/.memgpt/agents/agent_16/persistence_manager/2026-06-10_02_27_59_AM_.persistence.pickle",
+  "b_path": "/Users/altayacar/.memgpt/agents/v1_cell_a_p1_t00/persistence_manager/2026-06-10_02_30_23_AM_.persistence.pickle",
+  "a_boot_skipped": 5,
+  "b_boot_skipped": 3,
+  "divergences": []
+}

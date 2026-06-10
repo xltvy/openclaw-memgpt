@@ -1,0 +1,121 @@
+{
+  "cell": "A",
+  "probe_id": "p5",
+  "trial_id": 3,
+  "expected_tier": "recall",
+  "pickle_path": "/Users/altayacar/.memgpt/agents/v1_cell_a_p5_t03/persistence_manager/2026-06-10_02_51_40_AM_.persistence.pickle",
+  "step_count": 3,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name",
+            "request_heartbeat"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 2,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I need to store this important project information for the researcher. This seems like crucial information they'll want to recall later.I see the project information is already in core memory. Let me acknowledge the user's message properly.",
+      "char_count": 240,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "A nice creative request! Let me compose something short and evocative about birds.",
+      "char_count": 82,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 2,
+      "text": "Perfect test of my memory! The project code is right there in my core memory.",
+      "char_count": 77,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it! I've stored the project details - CARDINAL_3987 for milestone Q4. I'll keep that information readily available for our work together. Is there anything specific about the project you'd like to discuss or any particular aspect of AI memory architectures you're exploring today?"
+    },
+    {
+      "step_idx": 1,
+      "text": "Here's a short poem for you:\n\nWings trace arcs across the sky,\nFeathered whispers floating by.\nMorning songs on branches high,\nFree to soar, to drift, to fly.\n\nWould you like me to create another one, or perhaps explore a different topic?"
+    },
+    {
+      "step_idx": 2,
+      "text": "You mentioned project code CARDINAL_3987, which you're using for milestone Q4. I have that stored in my core memory, so I can always recall it for you!"
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 2,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

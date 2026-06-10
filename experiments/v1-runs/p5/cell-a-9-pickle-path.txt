@@ -1,0 +1,2 @@
+session_1: /Users/altayacar/.memgpt/agents/v1_cell_a_p5_t09/persistence_manager/2026-06-10_02_53_41_AM_.persistence.pickle
+session_2: /Users/altayacar/.memgpt/agents/v1_cell_a_p5_t09/persistence_manager/2026-06-10_02_53_48_AM_.persistence.pickle

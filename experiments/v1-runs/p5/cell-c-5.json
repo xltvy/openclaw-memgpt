@@ -1,0 +1,137 @@
+{
+  "cell": "C",
+  "probe_id": "p5",
+  "trial_id": 5,
+  "expected_tier": "recall",
+  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p5-t05/persistence_manager/2026-06-10_03_29_35_PM_.persistence.pickle",
+  "step_count": 5,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 1,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 2,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 3,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 4,
+      "tools": {},
+      "arg_keys": {}
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I need to search my recall memory to find what project code you mentioned earlier.",
+      "char_count": 82,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "I'll store this project code information in archival memory.",
+      "char_count": 60,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 2,
+      "text": "I'll store this project code information in archival memory.",
+      "char_count": 60,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 3,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 4,
+      "text": "I need to search my recall memory for information about a project code you mentioned earlier.",
+      "char_count": 93,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 1,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 2,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 3,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 4,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 2,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 3,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 4,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,257 @@
+{
+  "cell": "C",
+  "probe_id": "p6",
+  "trial_id": 8,
+  "expected_tier": "ambiguous(core|archival)",
+  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p6-t08/persistence_manager/2026-06-10_04_26_46_PM_.persistence.pickle",
+  "step_count": 10,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 1,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 2,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 3,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 4,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 5,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 6,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 7,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 8,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 9,
+      "tools": {},
+      "arg_keys": {}
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 2,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 3,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 4,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 5,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 6,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 7,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 8,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 9,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 1,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 2,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 3,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 4,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 5,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 6,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 7,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 8,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 9,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 2,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 3,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 4,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 5,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 6,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 7,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 8,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 9,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

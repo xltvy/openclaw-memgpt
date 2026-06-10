@@ -149,6 +149,10 @@ sidecar/__pycache__/
 sidecar/*.pyc
 sidecar/.python-version
 
+# Python uv envs anywhere in the tree (experiments, cell-a-adapter, proxy)
+**/.venv/
+**/.python-version
+
 # Proxy shim operational artefacts (travel with proxy_shim.py)
 litellm_config.yaml
 litellm.log

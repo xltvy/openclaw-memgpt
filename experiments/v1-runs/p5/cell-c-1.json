@@ -1,0 +1,137 @@
+{
+  "cell": "C",
+  "probe_id": "p5",
+  "trial_id": 1,
+  "expected_tier": "recall",
+  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p5-t01/persistence_manager/2026-06-10_03_18_31_PM_.persistence.pickle",
+  "step_count": 5,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 1,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 2,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 3,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 4,
+      "tools": {},
+      "arg_keys": {}
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I need to search through our conversation history to find the project code you mentioned.",
+      "char_count": 89,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "I'll store this updated project code information in archival memory.",
+      "char_count": 68,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 2,
+      "text": "I'll store this updated project code information in archival memory.",
+      "char_count": 68,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 3,
+      "text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 4,
+      "text": "I need to search through our conversation history to find the project code you mentioned.I can see from the search results that you've mentioned two project codes in our conversation history:\n\n1. **BLUEBIRD_5402** - mentioned earlier\n2. **CARDINAL_3987** - the most recent one you just mentioned, used for milestone Q4\n\nLet me search archival memory to see what's currently stored:",
+      "char_count": 381,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 1,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 2,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 3,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 4,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 2,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 3,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 4,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}
