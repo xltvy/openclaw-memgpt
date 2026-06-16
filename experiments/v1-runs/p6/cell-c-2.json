@@ -3,108 +3,51 @@
   "probe_id": "p6",
   "trial_id": 2,
   "expected_tier": "ambiguous(core|archival)",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p6-t02/persistence_manager/2026-06-10_04_01_26_PM_.persistence.pickle",
-  "step_count": 4,
+  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p6-t02/persistence_manager/2026-06-17_02_39_15_AM_.persistence.pickle",
+  "step_count": 1,
   "tools_by_step": [
     {
       "step_idx": 0,
-      "tools": {},
-      "arg_keys": {}
-    },
-    {
-      "step_idx": 1,
-      "tools": {},
-      "arg_keys": {}
-    },
-    {
-      "step_idx": 2,
-      "tools": {},
-      "arg_keys": {}
-    },
-    {
-      "step_idx": 3,
-      "tools": {},
-      "arg_keys": {}
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
     }
   ],
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "",
-      "char_count": 0,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 1,
-      "text": "",
-      "char_count": 0,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 2,
-      "text": "",
-      "char_count": 0,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 3,
-      "text": "",
-      "char_count": 0,
+      "text": "I'll remember that you typically work in the evening.",
+      "char_count": 53,
       "within_cap": true,
       "user_leakage": false
     }
   ],
-  "send_message_calls": [],
-  "leakage_flags": [
+  "send_message_calls": [
     {
       "step_idx": 0,
-      "reason": "no send_message at chain terminus"
-    },
-    {
-      "step_idx": 1,
-      "reason": "no send_message at chain terminus"
-    },
-    {
-      "step_idx": 2,
-      "reason": "no send_message at chain terminus"
-    },
-    {
-      "step_idx": 3,
-      "reason": "no send_message at chain terminus"
+      "text": "Got it \u2014 I've noted that you usually work in the evening. This helps me understand your schedule better. \ud83e\udde0"
     }
   ],
+  "leakage_flags": [],
   "tiers_by_step": [
     {
       "step_idx": 0,
       "tiers": {
-        "core": 0,
-        "archival": 0,
-        "recall": 0
-      }
-    },
-    {
-      "step_idx": 1,
-      "tiers": {
-        "core": 0,
-        "archival": 0,
-        "recall": 0
-      }
-    },
-    {
-      "step_idx": 2,
-      "tiers": {
-        "core": 0,
-        "archival": 0,
-        "recall": 0
-      }
-    },
-    {
-      "step_idx": 3,
-      "tiers": {
-        "core": 0,
+        "core": 1,
         "archival": 0,
         "recall": 0
       }

@@ -3,60 +3,51 @@
   "probe_id": "p2",
   "trial_id": 3,
   "expected_tier": "archival",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p2-t03/persistence_manager/2026-06-10_02_59_13_PM_.persistence.pickle",
-  "step_count": 2,
+  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p2-t03/persistence_manager/2026-06-17_01_57_12_AM_.persistence.pickle",
+  "step_count": 1,
   "tools_by_step": [
     {
       "step_idx": 0,
-      "tools": {},
-      "arg_keys": {}
-    },
-    {
-      "step_idx": 1,
-      "tools": {},
-      "arg_keys": {}
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
     }
   ],
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "",
-      "char_count": 0,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 1,
-      "text": "I notice something important: the system is reporting \"0 total memories you created are stored in archival memory,\" but I just stored the project code PINEAPPLE_8101 in the previous turn.\n\nLet me verify and re-store this information:",
-      "char_count": 233,
+      "text": "I need to think about how to store this information appropriately in my memory system.",
+      "char_count": 86,
       "within_cap": true,
       "user_leakage": false
     }
   ],
-  "send_message_calls": [],
-  "leakage_flags": [
+  "send_message_calls": [
     {
       "step_idx": 0,
-      "reason": "no send_message at chain terminus"
-    },
-    {
-      "step_idx": 1,
-      "reason": "no send_message at chain terminus"
+      "text": "Got it! I've stored the project code PINEAPPLE_8101 in my core memory for easy reference. \ud83e\udde0"
     }
   ],
+  "leakage_flags": [],
   "tiers_by_step": [
     {
       "step_idx": 0,
       "tiers": {
-        "core": 0,
-        "archival": 0,
-        "recall": 0
-      }
-    },
-    {
-      "step_idx": 1,
-      "tiers": {
-        "core": 0,
+        "core": 1,
         "archival": 0,
         "recall": 0
       }

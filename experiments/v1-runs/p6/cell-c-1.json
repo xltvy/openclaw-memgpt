@@ -3,84 +3,51 @@
   "probe_id": "p6",
   "trial_id": 1,
   "expected_tier": "ambiguous(core|archival)",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p6-t01/persistence_manager/2026-06-10_03_57_34_PM_.persistence.pickle",
-  "step_count": 3,
+  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p6-t01/persistence_manager/2026-06-17_02_38_26_AM_.persistence.pickle",
+  "step_count": 1,
   "tools_by_step": [
     {
       "step_idx": 0,
-      "tools": {},
-      "arg_keys": {}
-    },
-    {
-      "step_idx": 1,
-      "tools": {},
-      "arg_keys": {}
-    },
-    {
-      "step_idx": 2,
-      "tools": {},
-      "arg_keys": {}
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
     }
   ],
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "",
-      "char_count": 0,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 1,
-      "text": "",
-      "char_count": 0,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 2,
-      "text": "",
-      "char_count": 0,
+      "text": "I'll update your core memory to note your typical working hours.",
+      "char_count": 64,
       "within_cap": true,
       "user_leakage": false
     }
   ],
-  "send_message_calls": [],
-  "leakage_flags": [
+  "send_message_calls": [
     {
       "step_idx": 0,
-      "reason": "no send_message at chain terminus"
-    },
-    {
-      "step_idx": 1,
-      "reason": "no send_message at chain terminus"
-    },
-    {
-      "step_idx": 2,
-      "reason": "no send_message at chain terminus"
+      "text": "Got it \u2014 I've noted that you typically work in the evening. I'll keep that in mind for scheduling and timing-related suggestions."
     }
   ],
+  "leakage_flags": [],
   "tiers_by_step": [
     {
       "step_idx": 0,
       "tiers": {
-        "core": 0,
-        "archival": 0,
-        "recall": 0
-      }
-    },
-    {
-      "step_idx": 1,
-      "tiers": {
-        "core": 0,
-        "archival": 0,
-        "recall": 0
-      }
-    },
-    {
-      "step_idx": 2,
-      "tiers": {
-        "core": 0,
+        "core": 1,
         "archival": 0,
         "recall": 0
       }

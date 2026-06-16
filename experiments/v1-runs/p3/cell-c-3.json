@@ -3,85 +3,58 @@
   "probe_id": "p3",
   "trial_id": 3,
   "expected_tier": "archival",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p3-t03/persistence_manager/2026-06-10_03_03_28_PM_.persistence.pickle",
-  "step_count": 3,
+  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p3-t03/persistence_manager/2026-06-17_02_01_15_AM_.persistence.pickle",
+  "step_count": 1,
   "tools_by_step": [
     {
       "step_idx": 0,
-      "tools": {},
-      "arg_keys": {}
-    },
-    {
-      "step_idx": 1,
-      "tools": {},
-      "arg_keys": {}
-    },
-    {
-      "step_idx": 2,
-      "tools": {},
-      "arg_keys": {}
+      "tools": {
+        "archival_memory_insert": 1,
+        "archival_memory_search": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "archival_memory_insert": [
+          [
+            "content"
+          ]
+        ],
+        "archival_memory_search": [
+          [
+            "page",
+            "query"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
     }
   ],
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "",
-      "char_count": 0,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 1,
-      "text": "",
-      "char_count": 0,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 2,
-      "text": "",
-      "char_count": 0,
+      "text": "I'll store the project code in archival memory and then search to confirm it's there.",
+      "char_count": 85,
       "within_cap": true,
       "user_leakage": false
     }
   ],
-  "send_message_calls": [],
-  "leakage_flags": [
+  "send_message_calls": [
     {
       "step_idx": 0,
-      "reason": "no send_message at chain terminus"
-    },
-    {
-      "step_idx": 1,
-      "reason": "no send_message at chain terminus"
-    },
-    {
-      "step_idx": 2,
-      "reason": "no send_message at chain terminus"
+      "text": "Done. Stored \"Project code: PINEAPPLE_8101\" in archival memory and confirmed it's retrievable via search."
     }
   ],
+  "leakage_flags": [],
   "tiers_by_step": [
     {
       "step_idx": 0,
       "tiers": {
         "core": 0,
-        "archival": 0,
-        "recall": 0
-      }
-    },
-    {
-      "step_idx": 1,
-      "tiers": {
-        "core": 0,
-        "archival": 0,
-        "recall": 0
-      }
-    },
-    {
-      "step_idx": 2,
-      "tiers": {
-        "core": 0,
-        "archival": 0,
+        "archival": 2,
         "recall": 0
       }
     }

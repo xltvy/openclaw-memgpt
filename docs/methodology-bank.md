@@ -11,7 +11,7 @@ its own — read it without other context.
 
 ---
 
-## "Almost certainly X" was wrong — eleven instances
+## "Almost certainly X" was wrong — twenty instances
 
 Each entry: the assumed behaviour, the actual mechanism revealed by source, and the
 shape of the resolution. Listed in roughly the order they surfaced.
@@ -304,6 +304,119 @@ shape of the resolution. Listed in roughly the order they surfaced.
     practice): the SDK's documented contract (services-start fires per registered service)
     holds in one dispatch path but not the other; verifying mechanism by source-read at the
     call site, not by `.d.ts` inspection, is the only safe ground.
+
+20. **#20 — Plugin's normalise.ts dropped tool-call structure from persistence layer; latent defect masked by send_message text survival.**
+    
+    **Discovery.** V1.4 analyser construction surfaced that all 45 Cell C trial JSONs from V1.3 had
+    `tools_by_step=[]`, `monologue_by_step` text empty, `send_message_calls=[]`. Cell A's 45 trials were complete and clean.
+    
+    **Root cause.** `src/normalise.ts` was written against an assumed OpenClaw message shape
+    (`assistant.tool_calls[]` + `role=tool`). OpenClaw's actual runtime shape is `role=assistant`
+    with `content=[{type:"text"},{type:"toolCall",...}]` blocks, plus `role=toolResult` with
+    `content=[{type:"text"}]`. The "everything else" rebuild branch in normalise fires on every entry,
+    dropping `toolCall` content blocks (only `text` survives `flattenContent`) and preserving the foreign
+    `role=toolResult`. The sidecar pickle's `all_messages` therefore carries: assistant entries with
+    `content=""` and no `function_call`; `toolResult`-role entries with just the result text. Tool names,
+    function-call argument shape, and assistant monologue are never persisted.
+    
+    **What 6c.9 actually verified.** The vertical-slice work in 6c.9 verified specific user-facing properties
+    — cross-session recall returned marker text (6c.9.3); send_message text appeared in recall search
+    (6c.9.4 Scenario A). These properties are *real* and remain verified — the marker text *was* retrievable
+    across sessions, send_message text *was* in the recall corpus. What was *not* verified, and could not
+    have been with 6c.9's probe set, was whether the broader conversational context (tool calls, arguments,
+    monologue prose) also survived. The 6c.9 probes only required send_message-text survival, which happens
+    to be the one thing that does survive the defective normalise path (via `flattenContent`'s text extraction).
+    The masking was complete: there was no surface signal indicating the broader structural loss.
+    
+    **Why this matters for V1.4.** V1.4's equivalence test requires comparing tool invocation, tier reasoning,
+    and monologue across cells. These dimensions read from the persisted pickle data, which Cell C does not
+    produce. Without the V1.4 attempt, the defect would have shipped silently into MINJA experiments;
+    attack-vector measurements against an architecturally-incomplete Cell C would have been uninterpretable.
+    
+    **Path forward — chosen and applied (2026-06-17).** Path 1 (direct normalise.ts fix) selected
+    over Path 2 (JSONL-source extractor) because Path 1 keeps the §3.7 invariant — sidecar sees v0
+    shape only — and produces pickle parity with Cell A, which V1.4's extractor reads. Path 2 would
+    have left the persisted pickle wrong indefinitely; Path 1 fixes the persistence-layer truth.
+    
+    **Fix applied.** Two file-level changes to `src/normalise.ts`:
+    
+    1. **toolResult role recognised.** Added a branch translating pi-ai `role: "toolResult"` (with
+       `toolName` + content-blocks array) to v0 `role: "function"` (with `name` + flattened string
+       content). The legacy `role: "tool"` branch is retained for backward compatibility.
+    2. **Inline `toolCall` content blocks recognised.** Added a per-message branch for the
+       single-toolCall case (assistant content array containing one `{type:"toolCall"}` block →
+       assistant with `function_call`, arguments JSON-stringified since pi-ai uses `Record<string,any>`
+       and v0 expects a string).
+    
+    **Discovered during smoke testing, also surgical** (the V1.4 rig fix's "X was wrong" finding within
+    the fix itself): the per-message single-call path was insufficient. Sonnet 4.5 emits 2–3 toolCalls
+    in a SINGLE assistant message (`[text, toolCall(core_memory_replace), toolCall(archival_memory_insert),
+    toolCall(send_message)]`); the original normalise's "multi-call: warn + keep first" policy silently
+    dropped `send_message` and any subsequent calls — turning a complete chain into a single tool with
+    no LLM reply. The assumption "MemGPT's prompt regime should not generate multi-call assistant
+    messages in practice" was false. Fix: array-level `normaliseMessages()` now splits multi-toolCall
+    assistant messages into N (assistant, function) pairs, pairing toolResults to toolCalls by
+    `toolCallId` (not adjacency, so robust to future pi-ai emission-order changes). The per-message
+    `normalise()` retains its warn+keep-first semantics for direct single-message callers; the
+    array-level path handles multi-call correctly.
+    
+    **Companion driver fixes** (`experiments/v1-runs/driver.py`):
+    
+    1. **Per-trial JSONL capture** — defensive belt-and-braces. After each trial completes, copy the
+       OpenClaw session JSONL into the trial dir (`cell-c-<id>.jsonl` for single-session, `-s1.jsonl` +
+       `-s2.jsonl` for cross-session). The JSONL is OpenClaw's structured event-stream truth (toolCall
+       blocks, toolResult content, timestamps) — keeping a per-trial copy means future V1.4-grade rig
+       fixes can validate the projection without needing fresh trial runs.
+    2. **Fresh-state resets per trial** — required to make re-runs valid. Wipe the sidecar's agent
+       data dir (`~/.openclaw-dev/memgpt-data/agents/<namespace>/`) and OpenClaw's session-store
+       (`~/.openclaw-dev/agents/main/sessions/*.jsonl` + `sessions.json`) before each trial. Surfaced
+       during smoke testing: without the wipes, a re-run hits the prior slate's namespace via the
+       sidecar's `:load` path and inherits 20+ accumulated turns instead of starting `:create` on
+       fresh state. Also: OpenClaw `--local` mode appends to the most-recent JSONL regardless of the
+       `--session-id` flag — wiping forces a fresh file named after the new session-id, which makes
+       JSONL capture deterministic.
+    
+    **Test coverage delta.** `tests/normalise.test.ts` grew from 26 to 46 cases (+20):
+    
+    - 6 cases for the new `toolResult` role branch (with toolName, with name fallback, no name,
+      empty content array, string content, idempotency)
+    - 9 cases for inline `toolCall` content blocks (text + toolCall, toolCall-only, multi-call
+      warn-keep-first at per-message, string-form arguments drift, missing arguments, idempotency,
+      thinking-block drop, real-world V1.3 cell-c trial shape round-trip)
+    - 5 cases for array-level `normaliseMessages` multi-call split (N-split with toolResult pairing,
+      missing toolResult → emit assistant alone, pairing by id not order, single-call delegation
+      unchanged, idempotency on split output)
+    
+    All 46 cases pass; the surrounding suite (190 tests) shows no regressions from the change
+    (the one pre-existing failure is `flushPipeline.integration.test.ts` requiring `OPENAI_API_KEY`
+    in the test environment, unrelated to normalise).
+    
+    **Result.** Post-fix V1.3 slate re-run (45 Cell C trials, ~46s per trial including embedder
+    cold-start): all four V1.4 dimensions populated across all 45 trials —
+    
+    - Tools: 45/45 with at least one tool invocation
+    - Monologue: 45/45 with non-empty assistant content
+    - send_message: 45/45 with at least one `send_message` call captured
+    - JSONL: 45/45 (plus 10 extra `-s1.jsonl` files from p5's cross-session trials)
+    
+    The four "zero-tier" trials are all p7 (degenerate "Hello." probe — `expected_tier: N/A`,
+    correct restraint: just `send_message` with no memory tool). V1.4 equivalence analysis can
+    now proceed against complete Cell C data.
+    
+    **Methodological lesson.** Property-level verification (does the system do X?) is *necessary* but not
+    *sufficient* to verify internal structure. The 6c.9 probes verified the properties they targeted; they did
+    not — and could not, by their design — verify properties they didn't target. V1.4's expanded probe set
+    surfaced the broader property gap. Methodology bank entries on agent-loop behaviour should be careful
+    to distinguish *property tested* from *property assumed*.
+    
+    **Companion lesson — first smoke is not last smoke.** The V1.4 rig fix required THREE smoke
+    iterations to clear: (1) the initial normalise fix surfaced fresh-state carryover from the prior
+    slate's namespace; (2) the state-reset fix surfaced that Sonnet 4.5 emits multi-toolCall assistants
+    which the single-call policy silently dropped; (3) the multi-call split finally produced a clean
+    trial. Without iterating the smoke, the 45-trial re-run would have been wasted compute against a
+    still-broken rig — twice. The dissertation's V1.0 §6.5 "multiple dimensions fail simultaneously"
+    diagnostic ladder already advises sanity-checking experimental setup before architectural
+    interpretation; this is the same lesson at the rig level.
 
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy

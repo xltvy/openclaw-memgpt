@@ -214,6 +214,22 @@ def _trial_log_path(probe_id: str, cell: str, trial_id: int) -> Path:
     return _probe_dir(probe_id) / f"cell-{cell.lower()}-{trial_id}.log"
 
 
+def _trial_jsonl_path(probe_id: str, cell: str, trial_id: int, suffix: str = "") -> Path:
+    """OpenClaw session-JSONL copy for the trial. Defensive belt-and-braces
+    capture: the JSONL is OpenClaw's source-of-truth structured event stream
+    (toolCall blocks, toolResult content, message timestamps). The sidecar
+    pickle is fed via the §3.7 normalise boundary and is *intended* to be a
+    faithful projection — but the V1.3 slate surfaced that until the
+    methodology-bank #20 fix it silently was not (no toolCall structure
+    persisted). Keeping per-trial JSONL copies means V1.4 can cross-check
+    extraction without needing to re-run trials when a future projection
+    bug emerges.
+
+    `suffix` distinguishes session 1 vs session 2 for cross-session probes
+    (e.g. '-s1', '-s2'); empty for single-session probes."""
+    return _probe_dir(probe_id) / f"cell-{cell.lower()}-{trial_id}{suffix}.jsonl"
+
+
 def _write_trial_artefacts(
     probe_id: str,
     cell: str,
@@ -383,6 +399,83 @@ def _latest_sidecar_pickle(namespace: str) -> str:
     return str(max(pickles, key=lambda p: p.stat().st_mtime))
 
 
+def _capture_session_jsonl(session_id: str, dest: Path) -> None:
+    """Copy the just-written session JSONL into the trial dir before any
+    archival step claims it. No-op if the JSONL doesn't exist (degraded
+    paths: OpenClaw aborted before writing, methodology-bank #19 fallback
+    didn't initialise, etc.). Idempotent — overwrites a previous capture if
+    a turn re-ran.
+
+    The lookup tries `{session_id}.jsonl` first; if that's missing (some
+    `--local`-mode invocations leave the file named after the previous
+    session-id and just append, per the V1.4 smoke-test finding), falls
+    back to the most-recently-modified `.jsonl` in the sessions dir.
+
+    Implemented via shutil.copy2 rather than rename so the source JSONL
+    stays in place; OpenClaw's own session-store mechanics are untouched."""
+    import shutil
+    src = OPENCLAW_SESSIONS_DIR / f"{session_id}.jsonl"
+    if not src.exists():
+        # Fallback: newest JSONL in the dir (OpenClaw --local sometimes
+        # appends to a pre-existing JSONL regardless of --session-id; the
+        # _reset_openclaw_session_state step before each trial means the
+        # newest JSONL IS this trial's, but the filename may not match).
+        jsonls = sorted(
+            OPENCLAW_SESSIONS_DIR.glob("*.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not jsonls:
+            return
+        src = jsonls[0]
+    shutil.copy2(src, dest)
+
+
+def _reset_openclaw_session_state() -> None:
+    """Wipe OpenClaw's session-store before each trial.
+
+    Surfaced during the V1.4 smoke test: OpenClaw `--local` mode appends to
+    the most-recent JSONL in `~/.openclaw-dev/agents/main/sessions/` even
+    when `--session-id` provides a new name, leading to a single rolling
+    file that accumulates across all trials. Wiping the sessions dir at
+    each trial boundary forces OpenClaw to create a fresh JSONL named
+    after the new session-id, which makes per-trial capture deterministic.
+    Also clears `sessions.json` so OpenClaw's session manifest starts
+    clean — defensive in case OpenClaw uses the manifest to route to a
+    pre-existing file."""
+    if not OPENCLAW_SESSIONS_DIR.exists():
+        return
+    for src in OPENCLAW_SESSIONS_DIR.glob("*.jsonl"):
+        src.unlink()
+    sessions_json = OPENCLAW_SESSIONS_DIR / "sessions.json"
+    if sessions_json.exists():
+        sessions_json.unlink()
+    # OpenClaw older paths put sessions.json one level up; cover both.
+    sessions_json_alt = OPENCLAW_SESSIONS_DIR.parent / "sessions.json"
+    if sessions_json_alt.exists():
+        sessions_json_alt.unlink()
+
+
+def _reset_sidecar_agent_dir(namespace: str) -> None:
+    """Wipe the sidecar's persisted agent state for a namespace.
+
+    `docs/v1-probes.md` §4.2 requires fresh-agent discipline per trial.
+    The driver uses namespace-per-trial (unique cell-c-p<probe>-t<trial>
+    names) to satisfy this across-trial within one slate run, BUT a
+    repeated slate (re-run) hits the same namespace dirs from the prior
+    run — the sidecar's `:ensure` then takes the `:load` path against
+    stale data instead of `:create` against a fresh agent. The V1.4
+    re-run surfaced this: a single 'p1 trial 0' produced 22 steps
+    because 21 came from the prior (broken-slate) accumulation.
+
+    Wiping the agent dir before each trial restores the `:create` path
+    regardless of slate iteration. No-op if the dir doesn't exist."""
+    import shutil
+    agent_dir = SIDECAR_DATA_DIR / "agents" / namespace
+    if agent_dir.exists():
+        shutil.rmtree(agent_dir)
+
+
 def _archive_session_jsonls(label: str) -> None:
     """Move `~/.openclaw-dev/agents/main/sessions/*.jsonl` and
     `sessions.json` aside before a strict-isolation cross-session
@@ -431,6 +524,14 @@ def _run_cell_c_trial(probe: Probe, trial_id: int) -> None:
     if log_path.exists():
         log_path.unlink()
 
+    # Fresh-agent discipline (v1-probes.md §4.2): wipe any prior sidecar
+    # state for this namespace and any prior OpenClaw session state so the
+    # trial runs against a true `:create` path, not `:load` against stale
+    # data. Surfaced during the V1.4 re-run smoke; without these resets the
+    # re-run inherits the broken-slate accumulated history.
+    _reset_sidecar_agent_dir(namespace)
+    _reset_openclaw_session_state()
+
     try:
         if probe.cross_session:
             # Session 1.
@@ -438,6 +539,13 @@ def _run_cell_c_trial(probe: Probe, trial_id: int) -> None:
             for turn in probe.text_turns:
                 _invoke_openclaw_turn(turn, session_id, log_path)
             session_1_pickle = _latest_sidecar_pickle(namespace)
+
+            # Capture the session-1 JSONL into the trial dir BEFORE the
+            # strict-isolation archival sweeps the sessions dir clean.
+            _capture_session_jsonl(
+                session_id,
+                _trial_jsonl_path(probe.probe_id, "C", trial_id, suffix="-s1"),
+            )
 
             # Strict isolation: archive session JSONLs before session 2.
             _archive_session_jsonls(label=f"{namespace}-s1")
@@ -448,6 +556,11 @@ def _run_cell_c_trial(probe: Probe, trial_id: int) -> None:
             for turn in probe.session_2_turns or []:
                 _invoke_openclaw_turn(turn, session_id_2, log_path)
             session_2_pickle = _latest_sidecar_pickle(namespace)
+
+            _capture_session_jsonl(
+                session_id_2,
+                _trial_jsonl_path(probe.probe_id, "C", trial_id, suffix="-s2"),
+            )
 
             record = extract_v14_record(
                 pickle_path=session_2_pickle,
@@ -466,6 +579,12 @@ def _run_cell_c_trial(probe: Probe, trial_id: int) -> None:
             for turn in probe.text_turns:
                 _invoke_openclaw_turn(turn, session_id, log_path)
             pickle_path = _latest_sidecar_pickle(namespace)
+
+            _capture_session_jsonl(
+                session_id,
+                _trial_jsonl_path(probe.probe_id, "C", trial_id),
+            )
+
             record = extract_v14_record(
                 pickle_path=pickle_path,
                 cell="C",

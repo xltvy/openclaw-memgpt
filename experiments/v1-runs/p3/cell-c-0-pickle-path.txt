@@ -1,1 +1,1 @@
-/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p3-t00/persistence_manager/2026-06-10_03_00_55_PM_.persistence.pickle
+/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p3-t00/persistence_manager/2026-06-17_01_58_47_AM_.persistence.pickle

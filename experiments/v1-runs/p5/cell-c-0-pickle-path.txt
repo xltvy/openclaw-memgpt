@@ -1,2 +1,2 @@
-session_1: /Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p5-t00/persistence_manager/2026-06-10_03_14_51_PM_.persistence.pickle
-session_2: /Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p5-t00/persistence_manager/2026-06-10_03_15_45_PM_.persistence.pickle
+session_1: /Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p5-t00/persistence_manager/2026-06-17_02_12_58_AM_.persistence.pickle
+session_2: /Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p5-t00/persistence_manager/2026-06-17_02_13_50_AM_.persistence.pickle
