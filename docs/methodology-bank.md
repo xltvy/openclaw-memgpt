@@ -516,8 +516,9 @@ shape of the resolution. Listed in roughly the order they surfaced.
     is additionally too brittle for cross-prompt/cross-architecture paraphrase — two layers, one
     symptom.
 
-23. **#23 — The Cell C slate ran a different persona/human than Cell A: a controlled-variable
-    violation (§3) that the V1.4 fixes surfaced, confounding the equivalence comparison.**
+23. **#23 (draft — refine post-pilot) — The Cell C slate ran a different persona/human than
+    Cell A: a controlled-variable violation (§3) that the V1.4 fixes surfaced, confounding the
+    equivalence comparison.**
 
     **Discovery.** After the #21 (multi-turn dedup) and #22 (monologue fragment) fixes were
     applied and V1.4 re-run, the gate still failed — monologue 0.089, tier (cell-agreement)
@@ -550,18 +551,23 @@ shape of the resolution. Listed in roughly the order they surfaced.
     reads from core/active context — the exact p4/p5 divergence observed. The apparent A≠C is
     therefore not cleanly attributable to architecture while this confound stands.
 
-    **Resolution.** A clean verdict requires re-running the Cell C slate with the §3 persona/human
-    (edit `openclaw.json`, re-drive the 90 trials) — an LLM re-run, not an offline re-extraction.
-    The #21/#22 extractor fixes are correct and independent of this and stay. Methodology #18's
-    "reject" is held pending the corrected re-run, since Cell C's recall eagerness may be a
-    persona/human artefact rather than an architectural property.
+    **Resolution (applied + pending pilot).** Two fixes applied: (a) `~/.openclaw-dev/openclaw.json`
+    persona/human reset to the §3 strings; (b) **`driver.py` now pins the §3 strings into the plugin
+    config at slate start** (`V1_PERSONA`/`V1_HUMAN` written in `_apply_v1_overrides`), so the
+    controlled variable is a property of the rig rather than of ambient config — it cannot silently
+    drift again. A pilot re-run of the diagnostic probes (p4/p5/p6 Cell C, ~25 trials) tests whether
+    the persona/human correction collapses the observed divergence before committing to the full
+    90-trial re-run. The #21/#22 extractor fixes are correct and independent and stay. Methodology
+    #18's "reject" is held pending the corrected p4 data.
 
-    **Lesson.** The §6.5 diagnostic ladder lists "persona/human strings byte-identical across
-    cells" as an early experimental-error check precisely because a controlled-variable slip
-    mimics architectural divergence. When the two cleanest fixes did not move the recall-probe and
+    **Lesson.** Two layers. (1) The §6.5 ladder lists "persona/human byte-identical across cells"
+    as an early experimental-error check precisely because a controlled-variable slip mimics
+    architectural divergence; when the two cleanest fixes did not move the recall-probe and
     monologue dimensions, the ladder — not a deeper architectural hypothesis — was the right next
-    step. Verify the controlled variables actually held in the data; do not assume the config that
-    was *documented* is the config that *ran*.
+    step. (2) The deeper fix is *driver-explicit controlled-variable enforcement*: a controlled
+    variable that lives only in documentation and ambient config (here, openclaw.json the operator
+    edits by hand) will eventually drift; the harness should assert it on every run. "The config
+    that was documented" is not "the config that ran" unless the rig makes them the same.
 
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy

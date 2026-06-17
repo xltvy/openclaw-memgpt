@@ -96,6 +96,8 @@ def build(probe_id: str, trial_id: int) -> dict:
 
 
 def main() -> int:
+    import argparse
+
     if len(sys.argv) >= 4 and sys.argv[1] == "--check":
         rec = build(sys.argv[2], int(sys.argv[3]))
         print(f"step_count={rec['step_count']}")
@@ -105,14 +107,28 @@ def main() -> int:
             print(f"  mono{s['step_idx']}: {s['text'][:90]!r}")
         return 0
 
+    ap = argparse.ArgumentParser(description="Re-derive Cell C (JSONL) + Cell A (pickle) trial JSONs")
+    ap.add_argument("--probes", help="Comma-separated probe subset (e.g. p4,p5,p6). Default: all.")
+    ap.add_argument("--cell-c-only", action="store_true",
+                    help="Re-extract only Cell C (leave Cell A JSONs untouched). Use for the pilot re-run.")
+    args = ap.parse_args()
+
+    selected = list(PROBES) if not args.probes else [p.strip() for p in args.probes.split(",")]
+    for p in selected:
+        if p not in PROBES:
+            ap.error(f"unknown probe {p!r}; choose from {list(PROBES)}")
+
     written_c = 0
     written_a = 0
-    for probe_id, (count, expected_tier, _xs) in PROBES.items():
+    for probe_id in selected:
+        count, expected_tier, _xs = PROBES[probe_id]
         for tid in range(count):
             # Cell C — project from JSONL (replay-deduplicated; #21).
             rec_c = build(probe_id, tid)
             (HERE / probe_id / f"cell-c-{tid}.json").write_text(json.dumps(rec_c, indent=2))
             written_c += 1
+            if args.cell_c_only:
+                continue
             # Cell A — re-extract from pickle to refresh the monologue
             # `pre_tool_text` field (#22). Behaviourally identical to the
             # prior extraction; only the new field is added.
@@ -126,7 +142,8 @@ def main() -> int:
             )
             (HERE / probe_id / f"cell-a-{tid}.json").write_text(json.dumps(rec_a, indent=2))
             written_a += 1
-    print(f"re-extracted {written_c} Cell C (JSONL) + {written_a} Cell A (pickle) trial JSONs")
+    print(f"re-extracted {written_c} Cell C (JSONL) + {written_a} Cell A (pickle) trial JSONs"
+          f" [probes={selected}, cell_c_only={args.cell_c_only}]")
     return 0
 
 

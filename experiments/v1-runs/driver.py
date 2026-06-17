@@ -318,6 +318,15 @@ CONFIG_PATH = Path.home() / ".openclaw-dev" / "openclaw.json"
 SIDECAR_DATA_DIR = Path.home() / ".openclaw-dev" / "memgpt-data"
 OPENCLAW_SESSIONS_DIR = Path.home() / ".openclaw-dev" / "agents" / "main" / "sessions"
 
+# Controlled variables — `docs/v1-cells.md` §3. The driver pins these into the
+# plugin config at slate start rather than trusting whatever the operator's
+# openclaw.json happens to carry. Methodology-bank #23: the original slate
+# inherited a stale persona/human from openclaw.json (Cell C ran a different
+# persona than Cell A), confounding the comparison. Asserting them here makes
+# the controlled variable a property of the rig, not of ambient config.
+V1_PERSONA = "Sam is a friendly AI assistant with an extensive knowledge base."
+V1_HUMAN = "The user is a researcher exploring AI memory architectures."
+
 
 def _read_openclaw_config() -> dict:
     return json.loads(CONFIG_PATH.read_text())
@@ -363,6 +372,10 @@ def _apply_v1_overrides(snapshot: dict) -> None:
     plugin_cfg.update(snapshot)  # start from operator's prior state
     plugin_cfg.pop("sidecarUrl", None)  # force spawn mode
     plugin_cfg["observability"] = "default"
+    # Pin the §3 controlled variables (methodology-bank #23) — Cell A reads
+    # these via its own CLI config; Cell C must match byte-for-byte.
+    plugin_cfg["persona"] = V1_PERSONA
+    plugin_cfg["human"] = V1_HUMAN
     _write_openclaw_config(cfg)
 
 
