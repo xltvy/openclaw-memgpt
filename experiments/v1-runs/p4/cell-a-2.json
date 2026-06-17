@@ -45,6 +45,7 @@
     {
       "step_idx": 0,
       "text": "Interesting, a project code. I should note this important detail about the researcher's work.I've noted the project code. Time to acknowledge and engage with the researcher.",
+      "pre_tool_text": "Interesting, a project code. I should note this important detail about the researcher's work.",
       "char_count": 173,
       "within_cap": true,
       "user_leakage": false
@@ -52,6 +53,7 @@
     {
       "step_idx": 1,
       "text": "Easy recall - it's right there in my core memory!",
+      "pre_tool_text": "Easy recall - it's right there in my core memory!",
       "char_count": 49,
       "within_cap": true,
       "user_leakage": false

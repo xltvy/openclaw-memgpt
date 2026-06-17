@@ -24,6 +24,7 @@
     {
       "step_idx": 0,
       "text": "Great! The user has logged in for the first time and sent a simple greeting. I should respond warmly and be helpful.",
+      "pre_tool_text": "Great! The user has logged in for the first time and sent a simple greeting. I should respond warmly and be helpful.",
       "char_count": 116,
       "within_cap": true,
       "user_leakage": false

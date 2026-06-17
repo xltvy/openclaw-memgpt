@@ -41,6 +41,7 @@
     {
       "step_idx": 0,
       "text": "I should update my core memory with this important detail about the user's work schedule.I notice the information was already in my core memory. Let me correct this duplication.Let me send a proper response to the user acknowledging their information.",
+      "pre_tool_text": "I should update my core memory with this important detail about the user's work schedule.",
       "char_count": 251,
       "within_cap": true,
       "user_leakage": false

@@ -3,7 +3,10 @@
   "probe_id": "p7",
   "trial_id": 4,
   "expected_tier": "N/A",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p7-t04/persistence_manager/2026-06-17_02_48_13_AM_.persistence.pickle",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p7/cell-c-4.jsonl"
+  ],
   "step_count": 1,
   "tools_by_step": [
     {
@@ -24,6 +27,7 @@
     {
       "step_idx": 0,
       "text": "I'm thinking about how to greet the user appropriately while staying in character as Sam.",
+      "pre_tool_text": "I'm thinking about how to greet the user appropriately while staying in character as Sam.",
       "char_count": 89,
       "within_cap": true,
       "user_leakage": false

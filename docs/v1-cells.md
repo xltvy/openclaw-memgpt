@@ -311,7 +311,7 @@ dice differently on this trial."
 | **`send_message` discipline** | 100% — every user-facing utterance routes through `send_message`; zero raw-content leakage across all probe×trial cells | Categorical, architectural. The §4.3 turn-termination gate either works on every turn or doesn't. Any failure here is a real defect, not noise. Doubles as the §4.3 acceptance test (§7.3 dimension 3). |
 | **Tool invocation** | ≥95% — same set of tools called per probe, per-tool count within ±1, order may differ | Categorical, mostly architectural. The tool-name alignment and chain-yield structure either survive the prompt adaptation or don't. ≥95% allows occasional stochastic substitution of equivalent tools without flagging architectural failure. |
 | **Memory-tier reasoning** | ≥80% same tier chosen per probe (core / archival / recall), with manual review of misses | Semantic, requires rubric. Tier choice is stochastic at the margin (core vs archival for "remember this"); ≥80% with rubric review catches structural drift while tolerating LLM noise. Manual review distinguishes "wrong tier" from "defensible alternative." |
-| **Inner monologue (substantive)** | ≥70% of trials with Jaccard ≥0.5 over content-word tokens; below-threshold trials escalated to manual rubric review | Stochastic by nature. The categorical half (monologue present, within length cap, no user-channel leak) is checked separately as part of `send_message` discipline. The substantive half measures topical alignment, which is inherently noisier. |
+| **Inner monologue (substantive)** | ≥70% of trials with Jaccard ≥0.5 over content-word tokens of the **pre-first-tool monologue fragment**; below-threshold trials escalated to manual rubric review | Stochastic by nature. The categorical half (monologue present, within length cap, no user-channel leak) is checked separately as part of `send_message` discipline. The substantive half measures topical alignment, which is inherently noisier. **Comparison unit (V1.4 refinement):** the fragment compared is the monologue emitted *before the first tool call* in each step — "what the agent says before acting." This is invariant to the heartbeat-loop-vs-single-batched-turn structural deviation (§4.3): Cell A's heartbeat loop emits a fresh monologue on each post-tool-result round-trip, which `extract.py` concatenates, whereas Cell C emits one batched assistant message. Comparing the whole-step concatenation measured *how many LLM turns produced the content* (Cell A systematically 2–3× longer), not topical alignment, collapsing Jaccard independent of behaviour. See `methodology-bank.md` #22. |
 
 **Aggregate gate — A≈C holds when all of:**
 
@@ -521,6 +521,18 @@ above for Cell A.
 ---
 
 ## Changelog
+
+- 2026-06-17 — V1.4 measurement refinements (two Cell C rig artefacts, not
+  cell-definition changes). (1) **Inner-monologue comparison unit** narrowed to
+  the pre-first-tool fragment (§5 row + rationale), because the whole-step
+  concatenation measured Cell A's heartbeat-loop turn count rather than topical
+  alignment (`methodology-bank.md` #22). (2) **Cell C trial digests re-derived
+  from per-trial session JSONL** rather than the sidecar pickle: the pickle
+  duplicates replayed prior turns on multi-turn probes (p4/p5) via the per-turn
+  `agent_end` mirror (`methodology-bank.md` #21). Cell A is unchanged (pickle;
+  replay-free in-process loop). Neither touches the §1–§4 cell definitions,
+  controlled variables, or declared deviations — both are extractor-layer
+  corrections. Thresholds and aggregate gate (§5) unchanged.
 
 - 2026-06-07 — V1.0 initial freeze. Q1–Q5 resolved. Cell A = `f46cc3b` + F2
   (`109817c`); F1 omitted as pure refactor. Cell C = plugin at `462084c` in

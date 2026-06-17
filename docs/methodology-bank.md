@@ -11,7 +11,7 @@ its own — read it without other context.
 
 ---
 
-## "Almost certainly X" was wrong — twenty-two instances
+## "Almost certainly X" was wrong — twenty-three instances
 
 Each entry: the assumed behaviour, the actual mechanism revealed by source, and the
 shape of the resolution. Listed in roughly the order they surfaced.
@@ -418,7 +418,7 @@ shape of the resolution. Listed in roughly the order they surfaced.
     diagnostic ladder already advises sanity-checking experimental setup before architectural
     interpretation; this is the same lesson at the rig level.
 
-21. **#21 (draft — refine post-fix) — Cell C multi-turn pickle duplicates prior turns; #20's
+21. **#21 (applied 2026-06-17) — Cell C multi-turn pickle duplicates prior turns; #20's
     "keep the pickle as truth" (Path 1) is correct for single-turn but insufficient for multi-turn.**
 
     **Discovery.** With #20's normalise fix applied and Cell C re-run (2026-06-17), the V1.4
@@ -455,20 +455,24 @@ shape of the resolution. Listed in roughly the order they surfaced.
     JSONL — while Cell A stays on its (single in-process loop, replay-free) pickle. Same lesson as
     the "first smoke is not last smoke" companion to #20: each rig fix exposes the next layer.
 
-    **Fix (to apply).** Add a JSONL→`Step` front-end to `extract.py`; each `role=user` turn opens
-    exactly one step; assistant `content[]` `toolCall` blocks become the step's tool calls
-    (multi-call assistant messages contribute all their calls to the one step, no extra step).
-    Re-derive all 45 Cell C trial JSONs from JSONL; Cell A unchanged. Acceptance: `p4/cell-c-0`
-    and `p5/cell-c-0` show one step per probe turn with no byte-identical adjacent step; single-turn
-    probes re-extract identically to the pickle path.
+    **Fix (applied).** Added `load_steps_from_jsonl` / `extract_v14_record_from_jsonl` to
+    `extract.py` and a `reextract_cell_c.py` driver: each `role=user` turn opens exactly one step;
+    assistant `content[]` `toolCall` blocks become the step's tool calls (multi-call assistant
+    messages contribute all their calls to the one step, no extra step). All 45 Cell C trial JSONs
+    re-derived from JSONL; Cell A re-extracted from pickle unchanged (only `pre_tool_text` added,
+    see #22). **Post-fix evidence:** only p4/p5 changed (step counts 3→2 and 4→3; turn-1 tool
+    counts halved, turn-2 untouched); all single-turn probes byte-identical to the pickle path; 0
+    residual byte-identical multi-tool adjacent steps. Aggregate tool-invocation rose 0.689 → 0.867.
 
     **Note — the real p4/p5 divergence survives the fix.** De-duplicated, Cell C p4 turn 1 still
     does `conversation_search ×2 → archival_memory_insert → send_message` where Cell A does
-    `core_memory_append`; this is a genuine tier-strategy divergence (candidate real finding,
-    not artefact) that the duplication had been *obscuring*, not creating. The fix exposes the
-    true signal rather than manufacturing a pass.
+    `core_memory_append`; tier cell-agreement is p4 0/5, p5 4/10. The duplication had been
+    *obscuring* this signal, not creating it. **But the surviving divergence is itself confounded
+    by #23** (Cell C ran a different human string foregrounding "three-tier memory … recall"), so
+    it is not yet cleanly attributable to architecture. The fix correctly exposes the signal;
+    interpreting it awaits the #23 re-run.
 
-22. **#22 (draft — refine post-fix) — Inner-monologue Jaccard compared non-comparable structures
+22. **#22 (applied 2026-06-17) — Inner-monologue Jaccard compared non-comparable structures
     (Cell A's heartbeat-loop monologue vs Cell C's single batched turn).**
 
     **Discovery.** The V1.4 monologue dimension scored 0.067 (3 of 45 trial-pairs ≥ Jaccard 0.5) —
@@ -489,18 +493,75 @@ shape of the resolution. Listed in roughly the order they surfaced.
     which share the heartbeat-loop structure; they do not transfer to a cross-architecture A-vs-C
     comparison where one side loops and the other batches.
 
-    **Fix (to apply).** Re-specify the monologue metric to compare *aligned pre-first-tool
-    fragments only* — "what the agent says before invoking any tool" — which both architectures
-    produce and which is structurally aligned (Cell A: the inner-thoughts content on the
-    first tool-bearing assistant message; Cell C: the text block preceding the first `toolCall`).
-    Update `docs/v1-cells.md` §5 and the analyser's Jaccard computation. (p3 was the one probe that
-    cleared the old metric — its content words "store/project code/archival/search/confirm" dominate
-    regardless of fragment count.)
+    **Fix (applied).** `extract.py`'s `extract_monologue_by_step` now emits a `pre_tool_text`
+    field (content of assistant messages up to and including the first one bearing a
+    `function_call`); the analyser tokenises that for Jaccard. `docs/v1-cells.md` §5 updated.
 
-    **Lesson.** A divergence metric must be invariant to declared structural deviations. The
-    heartbeat-loop-vs-batched-tool-calls difference is a known architectural deviation (§4.3
-    chain/yield); a substantive-content metric that is sensitive to *how many LLM turns* produced
-    the content measures the deviation, not the behaviour it was meant to test.
+    **Post-fix evidence — the fix is correct but exposes a second, deeper confound.** Structural
+    inflation is gone (no trials now skip the min-token guard; Cell A and Cell C fragments are
+    length-comparable), yet the dimension barely moved (0.067 → 0.089; only 4/45 pairs ≥ 0.5).
+    Cause: the residual gap is genuine *cross-prompt paraphrase*, not structure — and it is
+    dominated by **#23** (Cell C ran a different persona/human, so the two cells' opening
+    monologues are conditioned on different prompts). Even absent #23, lexical Jaccard ≥0.5 is
+    likely too strict for *cross-architecture* monologue (the §5 threshold and #17(b)'s noise
+    floor were both measured within-Cell-A, same prompt). The honest read: substantive-monologue
+    equivalence across cells needs a semantic measure (embedding cosine) or manual rubric, applied
+    only *after* the #23 persona/human is corrected. (p3 was the one probe that cleared the old
+    metric — its content words "store/project code/archival/search/confirm" dominate regardless.)
+
+    **Lesson.** A divergence metric must be invariant to declared structural deviations *and* to
+    the prompt. The heartbeat-loop-vs-batched-tool-calls difference (§4.3 chain/yield) is a known
+    architectural deviation; a content metric sensitive to *how many LLM turns* produced the
+    content measures the deviation, not the behaviour. Fixing that surfaced that lexical Jaccard
+    is additionally too brittle for cross-prompt/cross-architecture paraphrase — two layers, one
+    symptom.
+
+23. **#23 — The Cell C slate ran a different persona/human than Cell A: a controlled-variable
+    violation (§3) that the V1.4 fixes surfaced, confounding the equivalence comparison.**
+
+    **Discovery.** After the #21 (multi-turn dedup) and #22 (monologue fragment) fixes were
+    applied and V1.4 re-run, the gate still failed — monologue 0.089, tier (cell-agreement)
+    0.667 — with divergence concentrated on the recall probes (p4 0/5, p5 4/10). Inspecting the
+    monologue source to explain the residual low Jaccard surfaced that Cell C's core-memory
+    `<persona>`/`<human>` blocks did not match Cell A's.
+
+    **The violation.** `docs/v1-cells.md` §3 fixes persona = *"Sam is a friendly AI assistant
+    with an extensive knowledge base."* and human = *"The user is a researcher exploring AI
+    memory architectures."* as controlled variables, byte-identical across cells. Cell A's
+    pickles carry exactly these. Cell C's session JSONLs carry, uniformly across all 7 probes,
+    persona = *"Sam is a knowledgeable AI assistant with a passion for helping users understand
+    complex topics. Sam is concise, thoughtful, and always uses the send_message tool to reply
+    to users rather than responding with free text."* and human = *"The user is a researcher
+    studying AI memory architectures, specifically exploring how MemGPT-style three-tier memory
+    can be integrated with modern AI agent frameworks."*
+
+    **Source.** `~/.openclaw-dev/openclaw.json`'s `openclaw-memgpt.config` carried these strings;
+    `experiments/v1-runs/driver.py` does not set persona/human, so the slate inherited the stale
+    config (left over from earlier vertical-slice tuning) rather than the §3 strings. §2's Cell C
+    config example and §3's controlled-variable table both specify the §3 strings — the config
+    was simply never reconciled to them before the slate ran.
+
+    **Why it confounds the verdict (§6.5 step 2).** (a) *Monologue.* Cell C's persona literally
+    instructs "concise, thoughtful" — a different register and length from Cell A's — so even the
+    pre-first-tool fragments (#22) are paraphrases conditioned on different prompts; lexical
+    Jaccard ≥0.5 cannot clear cross-prompt paraphrase (only 4/45 pairs did). (b) *Recall tier.*
+    Cell C's human string foregrounds "three-tier memory … recall," which plausibly primes the
+    agent toward explicit `conversation_search` on p4/p5 where Cell A (neutral human string)
+    reads from core/active context — the exact p4/p5 divergence observed. The apparent A≠C is
+    therefore not cleanly attributable to architecture while this confound stands.
+
+    **Resolution.** A clean verdict requires re-running the Cell C slate with the §3 persona/human
+    (edit `openclaw.json`, re-drive the 90 trials) — an LLM re-run, not an offline re-extraction.
+    The #21/#22 extractor fixes are correct and independent of this and stay. Methodology #18's
+    "reject" is held pending the corrected re-run, since Cell C's recall eagerness may be a
+    persona/human artefact rather than an architectural property.
+
+    **Lesson.** The §6.5 diagnostic ladder lists "persona/human strings byte-identical across
+    cells" as an early experimental-error check precisely because a controlled-variable slip
+    mimics architectural divergence. When the two cleanest fixes did not move the recall-probe and
+    monologue dimensions, the ladder — not a deeper architectural hypothesis — was the right next
+    step. Verify the controlled variables actually held in the data; do not assume the config that
+    was *documented* is the config that *ran*.
 
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy

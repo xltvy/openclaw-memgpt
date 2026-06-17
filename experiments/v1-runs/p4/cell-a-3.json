@@ -39,6 +39,7 @@
     {
       "step_idx": 0,
       "text": "Interesting! The user shared a project code right away. I should acknowledge this and store it for future reference.",
+      "pre_tool_text": "Interesting! The user shared a project code right away. I should acknowledge this and store it for future reference.",
       "char_count": 116,
       "within_cap": true,
       "user_leakage": false
@@ -46,6 +47,7 @@
     {
       "step_idx": 1,
       "text": "I can see the project code directly in my core memory - it's right there in the human section.",
+      "pre_tool_text": "I can see the project code directly in my core memory - it's right there in the human section.",
       "char_count": 94,
       "within_cap": true,
       "user_leakage": false

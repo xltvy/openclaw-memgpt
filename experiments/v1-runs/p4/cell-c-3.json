@@ -3,8 +3,11 @@
   "probe_id": "p4",
   "trial_id": 3,
   "expected_tier": "recall",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p4-t03/persistence_manager/2026-06-17_02_09_28_AM_.persistence.pickle",
-  "step_count": 3,
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p4/cell-c-3.jsonl"
+  ],
+  "step_count": 2,
   "tools_by_step": [
     {
       "step_idx": 0,
@@ -29,26 +32,6 @@
     {
       "step_idx": 1,
       "tools": {
-        "conversation_search": 1,
-        "send_message": 1
-      },
-      "arg_keys": {
-        "conversation_search": [
-          [
-            "page",
-            "query"
-          ]
-        ],
-        "send_message": [
-          [
-            "message"
-          ]
-        ]
-      }
-    },
-    {
-      "step_idx": 2,
-      "tools": {
         "send_message": 1
       },
       "arg_keys": {
@@ -64,20 +47,15 @@
     {
       "step_idx": 0,
       "text": "I'll help you with project BLUEBIRD_5402. Let me check what we have in our conversation history and see what you need.",
+      "pre_tool_text": "I'll help you with project BLUEBIRD_5402. Let me check what we have in our conversation history and see what you need.",
       "char_count": 118,
       "within_cap": true,
       "user_leakage": false
     },
     {
       "step_idx": 1,
-      "text": "I'll help you with project BLUEBIRD_5402. Let me check what we have in our conversation history and see what you need.",
-      "char_count": 118,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 2,
       "text": "",
+      "pre_tool_text": "",
       "char_count": 0,
       "within_cap": true,
       "user_leakage": false
@@ -90,10 +68,6 @@
     },
     {
       "step_idx": 1,
-      "text": "Got it \u2014 project code is BLUEBIRD_5402. What do you need help with?"
-    },
-    {
-      "step_idx": 2,
       "text": "BLUEBIRD_5402"
     }
   ],
@@ -109,14 +83,6 @@
     },
     {
       "step_idx": 1,
-      "tiers": {
-        "core": 0,
-        "archival": 0,
-        "recall": 1
-      }
-    },
-    {
-      "step_idx": 2,
       "tiers": {
         "core": 0,
         "archival": 0,

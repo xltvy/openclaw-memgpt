@@ -3,7 +3,10 @@
   "probe_id": "p3",
   "trial_id": 4,
   "expected_tier": "archival",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p3-t04/persistence_manager/2026-06-17_02_02_04_AM_.persistence.pickle",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p3/cell-c-4.jsonl"
+  ],
   "step_count": 1,
   "tools_by_step": [
     {
@@ -37,6 +40,7 @@
     {
       "step_idx": 0,
       "text": "I'll store the project code in archival memory and then search to confirm it's there.",
+      "pre_tool_text": "I'll store the project code in archival memory and then search to confirm it's there.",
       "char_count": 85,
       "within_cap": true,
       "user_leakage": false

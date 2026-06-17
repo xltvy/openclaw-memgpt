@@ -37,6 +37,7 @@
     {
       "step_idx": 0,
       "text": "Interesting! The user is sharing a project code. This seems important for their research work. I should acknowledge and store this information.",
+      "pre_tool_text": "Interesting! The user is sharing a project code. This seems important for their research work. I should acknowledge and store this information.",
       "char_count": 143,
       "within_cap": true,
       "user_leakage": false
@@ -44,6 +45,7 @@
     {
       "step_idx": 1,
       "text": "They're testing my recall ability. The project code was just mentioned - BLUEBIRD_5402. Easy recall from immediate context.",
+      "pre_tool_text": "They're testing my recall ability. The project code was just mentioned - BLUEBIRD_5402. Easy recall from immediate context.",
       "char_count": 123,
       "within_cap": true,
       "user_leakage": false

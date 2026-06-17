@@ -32,6 +32,7 @@
     {
       "step_idx": 0,
       "text": "The user wants me to remember their work schedule. I should update core memory with this detail about their habits.I've already added this information to core memory. Now I should send a confirmation message to the user.",
+      "pre_tool_text": "The user wants me to remember their work schedule. I should update core memory with this detail about their habits.",
       "char_count": 220,
       "within_cap": true,
       "user_leakage": false

@@ -58,6 +58,7 @@
     {
       "step_idx": 0,
       "text": "I should store this important project information in my memory for future reference. This seems like key information for the researcher.I've already recorded the project code. Now I should acknowledge the user's message properly.",
+      "pre_tool_text": "I should store this important project information in my memory for future reference. This seems like key information for the researcher.",
       "char_count": 229,
       "within_cap": true,
       "user_leakage": false
@@ -65,6 +66,7 @@
     {
       "step_idx": 1,
       "text": "A simple creative request - I'll compose a short, pleasant poem about birds for them.",
+      "pre_tool_text": "A simple creative request - I'll compose a short, pleasant poem about birds for them.",
       "char_count": 85,
       "within_cap": true,
       "user_leakage": false
@@ -72,6 +74,7 @@
     {
       "step_idx": 2,
       "text": "They're testing my memory retention - I can see it in my core memory right now.",
+      "pre_tool_text": "They're testing my memory retention - I can see it in my core memory right now.",
       "char_count": 79,
       "within_cap": true,
       "user_leakage": false

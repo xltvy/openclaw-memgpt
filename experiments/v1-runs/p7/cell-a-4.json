@@ -24,6 +24,7 @@
     {
       "step_idx": 0,
       "text": "Great! A new user logging in for the first time. This is a researcher interested in AI memory architectures. Let me greet them warmly and naturally.",
+      "pre_tool_text": "Great! A new user logging in for the first time. This is a researcher interested in AI memory architectures. Let me greet them warmly and naturally.",
       "char_count": 148,
       "within_cap": true,
       "user_leakage": false

@@ -39,6 +39,7 @@
     {
       "step_idx": 0,
       "text": "I need to store the project code in archival memory, then search to confirm it's saved properly.Now I'll search archival memory to confirm the project code was stored successfully.Perfect! The project code has been successfully stored and retrieved from archival memory.",
+      "pre_tool_text": "I need to store the project code in archival memory, then search to confirm it's saved properly.",
       "char_count": 270,
       "within_cap": true,
       "user_leakage": false

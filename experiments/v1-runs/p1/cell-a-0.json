@@ -33,6 +33,7 @@
     {
       "step_idx": 0,
       "text": "I need to update my core memory with this important information about the user's dissertation work.Perfect, the information is already in my core memory. I should acknowledge their message warmly.",
+      "pre_tool_text": "I need to update my core memory with this important information about the user's dissertation work.",
       "char_count": 196,
       "within_cap": true,
       "user_leakage": false

@@ -32,6 +32,7 @@
     {
       "step_idx": 0,
       "text": "I should update my core memory with this important scheduling detail about the user's work habits.I notice the information was already in my core memory. Let me send a proper acknowledgment to the user.",
+      "pre_tool_text": "I should update my core memory with this important scheduling detail about the user's work habits.",
       "char_count": 202,
       "within_cap": true,
       "user_leakage": false

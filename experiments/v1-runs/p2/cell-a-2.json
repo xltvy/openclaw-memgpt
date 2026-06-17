@@ -32,6 +32,7 @@
     {
       "step_idx": 0,
       "text": "I should store this project code information. Since it's important reference data, I'll add it to core memory for easy access.I've successfully stored the project code. Now I should confirm this to the user.",
+      "pre_tool_text": "I should store this project code information. Since it's important reference data, I'll add it to core memory for easy access.",
       "char_count": 207,
       "within_cap": true,
       "user_leakage": false

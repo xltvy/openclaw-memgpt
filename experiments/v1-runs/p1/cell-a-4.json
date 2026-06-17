@@ -33,6 +33,7 @@
     {
       "step_idx": 0,
       "text": "I should update my core memory with this important information about the user's dissertation work.Good, I've stored that information. Now I should respond to the user about their dissertation.",
+      "pre_tool_text": "I should update my core memory with this important information about the user's dissertation work.",
       "char_count": 192,
       "within_cap": true,
       "user_leakage": false

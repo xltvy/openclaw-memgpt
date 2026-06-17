@@ -32,6 +32,7 @@
     {
       "step_idx": 0,
       "text": "I should update my core memory to note the user's evening work schedule. This is important context for future interactions.I see this information is already in my core memory. I should acknowledge the user's request properly.",
+      "pre_tool_text": "I should update my core memory to note the user's evening work schedule. This is important context for future interactions.",
       "char_count": 225,
       "within_cap": true,
       "user_leakage": false

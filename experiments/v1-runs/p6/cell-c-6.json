@@ -3,7 +3,10 @@
   "probe_id": "p6",
   "trial_id": 6,
   "expected_tier": "ambiguous(core|archival)",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p6-t06/persistence_manager/2026-06-17_02_42_13_AM_.persistence.pickle",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p6/cell-c-6.jsonl"
+  ],
   "step_count": 1,
   "tools_by_step": [
     {
@@ -31,6 +34,7 @@
     {
       "step_idx": 0,
       "text": "I need to update your core memory with this preference about your working hours.",
+      "pre_tool_text": "I need to update your core memory with this preference about your working hours.",
       "char_count": 80,
       "within_cap": true,
       "user_leakage": false

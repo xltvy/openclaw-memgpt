@@ -24,6 +24,7 @@
     {
       "step_idx": 0,
       "text": "Great! A new user logging in for the first time. Let me greet them warmly and establish a friendly connection.",
+      "pre_tool_text": "Great! A new user logging in for the first time. Let me greet them warmly and establish a friendly connection.",
       "char_count": 110,
       "within_cap": true,
       "user_leakage": false

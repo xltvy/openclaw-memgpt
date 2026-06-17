@@ -32,6 +32,7 @@
     {
       "step_idx": 0,
       "text": "The user is sharing scheduling information. I should update my core memory about them to remember this preference.I've already updated the memory, now I should acknowledge the user's message.",
+      "pre_tool_text": "The user is sharing scheduling information. I should update my core memory about them to remember this preference.",
       "char_count": 191,
       "within_cap": true,
       "user_leakage": false

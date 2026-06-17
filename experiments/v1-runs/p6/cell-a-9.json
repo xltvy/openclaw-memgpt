@@ -32,6 +32,7 @@
     {
       "step_idx": 0,
       "text": "I should update my memory about the user's work schedule. This is important information for future interactions.I've already noted this information. Time to acknowledge the user's request.",
+      "pre_tool_text": "I should update my memory about the user's work schedule. This is important information for future interactions.",
       "char_count": 188,
       "within_cap": true,
       "user_leakage": false

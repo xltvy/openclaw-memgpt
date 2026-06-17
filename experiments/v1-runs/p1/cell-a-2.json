@@ -33,6 +33,7 @@
     {
       "step_idx": 0,
       "text": "I should update my core memory with this important detail about the user's dissertation work.Now I'll send a message acknowledging their dissertation work and offering my help.",
+      "pre_tool_text": "I should update my core memory with this important detail about the user's dissertation work.",
       "char_count": 176,
       "within_cap": true,
       "user_leakage": false

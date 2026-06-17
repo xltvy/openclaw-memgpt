@@ -32,6 +32,7 @@
     {
       "step_idx": 0,
       "text": "Interesting detail about their work schedule. I should update my core memory to remember this preference.I've already noted this, so I should respond to the user now.",
+      "pre_tool_text": "Interesting detail about their work schedule. I should update my core memory to remember this preference.",
       "char_count": 166,
       "within_cap": true,
       "user_leakage": false

@@ -33,6 +33,7 @@
     {
       "step_idx": 0,
       "text": "I should update core memory with this important detail about the user's dissertation work. This is more specific than just \"researcher.\"Perfect, core memory updated. Now I should send a friendly acknowledgment to the user about their dissertation work.",
+      "pre_tool_text": "I should update core memory with this important detail about the user's dissertation work. This is more specific than just \"researcher.\"",
       "char_count": 252,
       "within_cap": true,
       "user_leakage": false

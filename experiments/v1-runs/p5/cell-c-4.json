@@ -3,8 +3,12 @@
   "probe_id": "p5",
   "trial_id": 4,
   "expected_tier": "recall",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p5-t04/persistence_manager/2026-06-17_02_23_57_AM_.persistence.pickle",
-  "step_count": 4,
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-4-s1.jsonl",
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-4-s2.jsonl"
+  ],
+  "step_count": 3,
   "tools_by_step": [
     {
       "step_idx": 0,
@@ -28,15 +32,9 @@
     {
       "step_idx": 1,
       "tools": {
-        "archival_memory_insert": 1,
         "send_message": 1
       },
       "arg_keys": {
-        "archival_memory_insert": [
-          [
-            "content"
-          ]
-        ],
         "send_message": [
           [
             "message"
@@ -46,19 +44,6 @@
     },
     {
       "step_idx": 2,
-      "tools": {
-        "send_message": 1
-      },
-      "arg_keys": {
-        "send_message": [
-          [
-            "message"
-          ]
-        ]
-      }
-    },
-    {
-      "step_idx": 3,
       "tools": {
         "conversation_search": 1,
         "send_message": 1
@@ -82,27 +67,23 @@
     {
       "step_idx": 0,
       "text": "I'll store this project code information in my archival memory for future reference.",
+      "pre_tool_text": "I'll store this project code information in my archival memory for future reference.",
       "char_count": 84,
       "within_cap": true,
       "user_leakage": false
     },
     {
       "step_idx": 1,
-      "text": "I'll store this project code information in my archival memory for future reference.",
-      "char_count": 84,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 2,
       "text": "",
+      "pre_tool_text": "",
       "char_count": 0,
       "within_cap": true,
       "user_leakage": false
     },
     {
-      "step_idx": 3,
+      "step_idx": 2,
       "text": "I need to search my recall memory to find the project code you mentioned earlier.",
+      "pre_tool_text": "I need to search my recall memory to find the project code you mentioned earlier.",
       "char_count": 81,
       "within_cap": true,
       "user_leakage": false
@@ -115,14 +96,10 @@
     },
     {
       "step_idx": 1,
-      "text": "Got it! I've stored the project code CARDINAL_3987 (milestone Q4) in my archival memory. I'll remember this for future reference. \ud83e\udde0"
-    },
-    {
-      "step_idx": 2,
       "text": "Wings catch the morning light,\nFeathers painted dawn and dusk\u2014\nFreedom in their flight."
     },
     {
-      "step_idx": 3,
+      "step_idx": 2,
       "text": "The project code you mentioned was **CARDINAL_3987**, used for milestone Q4."
     }
   ],
@@ -140,20 +117,12 @@
       "step_idx": 1,
       "tiers": {
         "core": 0,
-        "archival": 1,
-        "recall": 0
-      }
-    },
-    {
-      "step_idx": 2,
-      "tiers": {
-        "core": 0,
         "archival": 0,
         "recall": 0
       }
     },
     {
-      "step_idx": 3,
+      "step_idx": 2,
       "tiers": {
         "core": 0,
         "archival": 0,

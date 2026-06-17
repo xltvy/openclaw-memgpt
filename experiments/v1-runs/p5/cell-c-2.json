@@ -3,8 +3,12 @@
   "probe_id": "p5",
   "trial_id": 2,
   "expected_tier": "recall",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p5-t02/persistence_manager/2026-06-17_02_18_47_AM_.persistence.pickle",
-  "step_count": 4,
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-2-s1.jsonl",
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-2-s2.jsonl"
+  ],
+  "step_count": 3,
   "tools_by_step": [
     {
       "step_idx": 0,
@@ -29,16 +33,9 @@
     {
       "step_idx": 1,
       "tools": {
-        "core_memory_append": 1,
         "send_message": 1
       },
       "arg_keys": {
-        "core_memory_append": [
-          [
-            "content",
-            "name"
-          ]
-        ],
         "send_message": [
           [
             "message"
@@ -48,19 +45,6 @@
     },
     {
       "step_idx": 2,
-      "tools": {
-        "send_message": 1
-      },
-      "arg_keys": {
-        "send_message": [
-          [
-            "message"
-          ]
-        ]
-      }
-    },
-    {
-      "step_idx": 3,
       "tools": {
         "conversation_search": 1,
         "send_message": 1
@@ -84,27 +68,23 @@
     {
       "step_idx": 0,
       "text": "I need to update my core memory with this new project information.",
+      "pre_tool_text": "I need to update my core memory with this new project information.",
       "char_count": 66,
       "within_cap": true,
       "user_leakage": false
     },
     {
       "step_idx": 1,
-      "text": "I need to update my core memory with this new project information.",
-      "char_count": 66,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 2,
       "text": "",
+      "pre_tool_text": "",
       "char_count": 0,
       "within_cap": true,
       "user_leakage": false
     },
     {
-      "step_idx": 3,
+      "step_idx": 2,
       "text": "I need to search through our conversation history to find the project code you mentioned.",
+      "pre_tool_text": "I need to search through our conversation history to find the project code you mentioned.",
       "char_count": 89,
       "within_cap": true,
       "user_leakage": false
@@ -117,14 +97,10 @@
     },
     {
       "step_idx": 1,
-      "text": "Got it! I've stored the project code CARDINAL_3987 and its Q4 milestone association in my core memory. I'll remember this for our future conversations about your research work."
-    },
-    {
-      "step_idx": 2,
       "text": "Wings catch the morning light,\nFeathers dance on currents high,\nSongs weave through the trees\u2014\nSmall hearts that know the sky."
     },
     {
-      "step_idx": 3,
+      "step_idx": 2,
       "text": "The project code you mentioned is **CARDINAL_3987**, which is used for milestone Q4. I can see it's already stored in your core memory under the human section."
     }
   ],
@@ -141,21 +117,13 @@
     {
       "step_idx": 1,
       "tiers": {
-        "core": 1,
-        "archival": 0,
-        "recall": 0
-      }
-    },
-    {
-      "step_idx": 2,
-      "tiers": {
         "core": 0,
         "archival": 0,
         "recall": 0
       }
     },
     {
-      "step_idx": 3,
+      "step_idx": 2,
       "tiers": {
         "core": 0,
         "archival": 0,

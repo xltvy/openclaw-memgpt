@@ -3,7 +3,10 @@
   "probe_id": "p1",
   "trial_id": 4,
   "expected_tier": "core",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p1-t04/persistence_manager/2026-06-17_01_54_15_AM_.persistence.pickle",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p1/cell-c-4.jsonl"
+  ],
   "step_count": 1,
   "tools_by_step": [
     {
@@ -32,6 +35,7 @@
     {
       "step_idx": 0,
       "text": "I'll remember that you're working on a dissertation about AI memory architectures.",
+      "pre_tool_text": "I'll remember that you're working on a dissertation about AI memory architectures.",
       "char_count": 82,
       "within_cap": true,
       "user_leakage": false

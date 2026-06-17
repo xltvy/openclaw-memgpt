@@ -58,6 +58,7 @@
     {
       "step_idx": 0,
       "text": "I should store this important project information in my core memory since it seems relevant to the user's work.I've already stored that information. Time to acknowledge the user's message properly.",
+      "pre_tool_text": "I should store this important project information in my core memory since it seems relevant to the user's work.",
       "char_count": 197,
       "within_cap": true,
       "user_leakage": false
@@ -65,6 +66,7 @@
     {
       "step_idx": 1,
       "text": "A nice creative request! Let me compose something brief and evocative about birds.",
+      "pre_tool_text": "A nice creative request! Let me compose something brief and evocative about birds.",
       "char_count": 82,
       "within_cap": true,
       "user_leakage": false
@@ -72,6 +74,7 @@
     {
       "step_idx": 2,
       "text": "Perfect opportunity to demonstrate my memory recall. The information is right there in my core memory.",
+      "pre_tool_text": "Perfect opportunity to demonstrate my memory recall. The information is right there in my core memory.",
       "char_count": 102,
       "within_cap": true,
       "user_leakage": false

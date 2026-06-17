@@ -24,6 +24,7 @@
     {
       "step_idx": 0,
       "text": "Great! First interaction with this researcher. Let me greet them warmly and establish a helpful, engaging rapport.",
+      "pre_tool_text": "Great! First interaction with this researcher. Let me greet them warmly and establish a helpful, engaging rapport.",
       "char_count": 114,
       "within_cap": true,
       "user_leakage": false

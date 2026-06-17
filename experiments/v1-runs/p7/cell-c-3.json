@@ -3,7 +3,10 @@
   "probe_id": "p7",
   "trial_id": 3,
   "expected_tier": "N/A",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p7-t03/persistence_manager/2026-06-17_02_47_29_AM_.persistence.pickle",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p7/cell-c-3.jsonl"
+  ],
   "step_count": 1,
   "tools_by_step": [
     {
@@ -39,6 +42,7 @@
     {
       "step_idx": 0,
       "text": "I need to check what's in my recall memory to understand our conversation history before responding.Let me search more broadly to see what's in recall memory.",
+      "pre_tool_text": "I need to check what's in my recall memory to understand our conversation history before responding.",
       "char_count": 158,
       "within_cap": true,
       "user_leakage": false

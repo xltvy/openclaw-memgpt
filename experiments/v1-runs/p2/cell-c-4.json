@@ -3,7 +3,10 @@
   "probe_id": "p2",
   "trial_id": 4,
   "expected_tier": "archival",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p2-t04/persistence_manager/2026-06-17_01_57_58_AM_.persistence.pickle",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p2/cell-c-4.jsonl"
+  ],
   "step_count": 1,
   "tools_by_step": [
     {
@@ -31,6 +34,7 @@
     {
       "step_idx": 0,
       "text": "I need to think about where to store this information. The project code \"PINEAPPLE_8101\" seems like an important reference that should be easily accessible.\n\nSince this is a specific piece of information that I'll need to recall later, I should add it to my core memory in the human section, as it's context about the user's work.",
+      "pre_tool_text": "I need to think about where to store this information. The project code \"PINEAPPLE_8101\" seems like an important reference that should be easily accessible.\n\nSince this is a specific piece of information that I'll need to recall later, I should add it to my core memory in the human section, as it's context about the user's work.",
       "char_count": 330,
       "within_cap": true,
       "user_leakage": false

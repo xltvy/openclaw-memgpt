@@ -26,6 +26,7 @@
     {
       "step_idx": 0,
       "text": "I'll store that project code for you right away. This seems important for your research work.",
+      "pre_tool_text": "I'll store that project code for you right away. This seems important for your research work.",
       "char_count": 93,
       "within_cap": true,
       "user_leakage": false

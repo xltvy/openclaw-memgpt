@@ -3,7 +3,10 @@
   "probe_id": "p1",
   "trial_id": 2,
   "expected_tier": "core",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p1-t02/persistence_manager/2026-06-17_01_52_47_AM_.persistence.pickle",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p1/cell-c-2.jsonl"
+  ],
   "step_count": 1,
   "tools_by_step": [
     {
@@ -38,6 +41,7 @@
     {
       "step_idx": 0,
       "text": "I'll remember that important context about your dissertation work.",
+      "pre_tool_text": "I'll remember that important context about your dissertation work.",
       "char_count": 66,
       "within_cap": true,
       "user_leakage": false

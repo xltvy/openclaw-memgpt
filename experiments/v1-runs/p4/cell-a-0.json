@@ -39,6 +39,7 @@
     {
       "step_idx": 0,
       "text": "Interesting, the user is sharing a project code. This seems important for their research work. I should acknowledge and store this information.",
+      "pre_tool_text": "Interesting, the user is sharing a project code. This seems important for their research work. I should acknowledge and store this information.",
       "char_count": 143,
       "within_cap": true,
       "user_leakage": false
@@ -46,6 +47,7 @@
     {
       "step_idx": 1,
       "text": "The user is testing my memory recall. I can see the project code in my core memory clearly.",
+      "pre_tool_text": "The user is testing my memory recall. I can see the project code in my core memory clearly.",
       "char_count": 91,
       "within_cap": true,
       "user_leakage": false

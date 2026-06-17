@@ -31,6 +31,7 @@
     {
       "step_idx": 0,
       "text": "I need to store this project code information. Since it's important reference information, I'll add it to archival memory for easy retrieval later.Perfect, stored successfully. Now I'll confirm with the user.",
+      "pre_tool_text": "I need to store this project code information. Since it's important reference information, I'll add it to archival memory for easy retrieval later.",
       "char_count": 208,
       "within_cap": true,
       "user_leakage": false

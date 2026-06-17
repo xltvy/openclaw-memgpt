@@ -3,8 +3,11 @@
   "probe_id": "p4",
   "trial_id": 1,
   "expected_tier": "recall",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p4-t01/persistence_manager/2026-06-17_02_06_05_AM_.persistence.pickle",
-  "step_count": 3,
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p4/cell-c-1.jsonl"
+  ],
+  "step_count": 2,
   "tools_by_step": [
     {
       "step_idx": 0,
@@ -44,41 +47,6 @@
     {
       "step_idx": 1,
       "tools": {
-        "conversation_search": 3,
-        "send_message": 1,
-        "core_memory_append": 1
-      },
-      "arg_keys": {
-        "conversation_search": [
-          [
-            "page",
-            "query"
-          ],
-          [
-            "page",
-            "query"
-          ],
-          [
-            "page",
-            "query"
-          ]
-        ],
-        "send_message": [
-          [
-            "message"
-          ]
-        ],
-        "core_memory_append": [
-          [
-            "content",
-            "name"
-          ]
-        ]
-      }
-    },
-    {
-      "step_idx": 2,
-      "tools": {
         "send_message": 1
       },
       "arg_keys": {
@@ -94,20 +62,15 @@
     {
       "step_idx": 0,
       "text": "I need to understand the context better. Let me check my recall memory to see our previous conversation.",
+      "pre_tool_text": "I need to understand the context better. Let me check my recall memory to see our previous conversation.",
       "char_count": 104,
       "within_cap": true,
       "user_leakage": false
     },
     {
       "step_idx": 1,
-      "text": "I need to understand the context better. Let me check my recall memory to see our previous conversation.",
-      "char_count": 104,
-      "within_cap": true,
-      "user_leakage": false
-    },
-    {
-      "step_idx": 2,
       "text": "",
+      "pre_tool_text": "",
       "char_count": 0,
       "within_cap": true,
       "user_leakage": false
@@ -120,10 +83,6 @@
     },
     {
       "step_idx": 1,
-      "text": "Got it \u2014 the project code is **BLUEBIRD_5402**. I've stored this in memory.\n\nIs this related to your dissertation research on AI memory architectures? Let me know if you need me to track anything specific about this project."
-    },
-    {
-      "step_idx": 2,
       "text": "The project code you mentioned is **BLUEBIRD_5402**."
     }
   ],
@@ -139,14 +98,6 @@
     },
     {
       "step_idx": 1,
-      "tiers": {
-        "core": 1,
-        "archival": 0,
-        "recall": 3
-      }
-    },
-    {
-      "step_idx": 2,
       "tiers": {
         "core": 0,
         "archival": 0,

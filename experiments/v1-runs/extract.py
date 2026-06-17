@@ -222,24 +222,47 @@ def extract_tools_by_step(steps: list[Step]) -> list[dict]:
 
 
 def extract_monologue_by_step(steps: list[Step], length_cap: int = 5000) -> list[dict]:
-    """§3.2 — per step, concatenate `content` of all assistant messages.
-    Categorical check: within cap, no user-leakage (assistant content
-    doesn't contain text that should live only in `send_message.arguments
-    .message`)."""
+    """§3.2 — per step, the assistant inner monologue.
+
+    Two fields:
+      - `text`: concatenation of *all* assistant `content` in the step (used
+        for the categorical checks: within cap, no user-leakage).
+      - `pre_tool_text`: the monologue emitted *before the first tool call* in
+        the step — `content` of assistant messages up to and including the
+        first one bearing a `function_call` (or all of them if the step calls
+        no tool). This is the §5 substantive-monologue comparison field
+        (methodology-bank #22): it is invariant to the heartbeat-loop vs
+        single-batched-turn structural deviation (§4.3), because Cell A's
+        post-tool-result reflection turns and Cell C's absence of them are
+        excluded on both sides. The whole-step `text` over-counts Cell A's
+        extra heartbeat-turn monologues and is not comparable cross-cell.
+
+    Categorical check: within cap, no user-leakage (assistant content doesn't
+    contain text that should live only in `send_message.arguments.message`)."""
     out: list[dict] = []
     for s in steps:
         parts: list[str] = []
+        pre_tool_parts: list[str] = []
+        seen_tool = False
         send_message_texts: list[str] = []
         for am in s.assistant_messages:
             content = am.get("content")
+            fc = am.get("function_call")
+            has_fc = isinstance(fc, dict) and fc.get("name")
             if isinstance(content, str) and content:
                 parts.append(content)
-            fc = am.get("function_call")
+                if not seen_tool:
+                    pre_tool_parts.append(content)
+            if has_fc and not seen_tool:
+                # This message issues the first tool call; its own monologue
+                # (added above) is the pre-tool fragment, nothing after counts.
+                seen_tool = True
             if isinstance(fc, dict) and fc.get("name") == "send_message":
                 args = _parse_function_arguments(fc.get("arguments"))
                 if isinstance(args.get("message"), str):
                     send_message_texts.append(args["message"])
         text = "".join(parts)
+        pre_tool_text = "".join(pre_tool_parts)
         # Leakage detector: any send_message payload that appears
         # verbatim in the monologue. Imprecise per docs/v1-observability.md
         # §3.3 — flagged cases route to manual rubric review.
@@ -248,6 +271,7 @@ def extract_monologue_by_step(steps: list[Step], length_cap: int = 5000) -> list
             {
                 "step_idx": s.step_idx,
                 "text": text,
+                "pre_tool_text": pre_tool_text,
                 "char_count": len(text),
                 "within_cap": len(text) <= length_cap,
                 "user_leakage": user_leakage,
@@ -338,6 +362,164 @@ def extract_v14_record(
         "trial_id": trial_id,
         "expected_tier": expected_tier,
         "pickle_path": str(pickle_path),
+        "step_count": len(steps),
+        "tools_by_step": extract_tools_by_step(steps),
+        "monologue_by_step": extract_monologue_by_step(steps),
+        "send_message_calls": send_message_calls,
+        "leakage_flags": leakage_flags,
+        "tiers_by_step": extract_tiers_by_step(steps),
+    }
+
+
+# ── Cell C JSONL projection (methodology-bank #21) ───────────────────────────
+#
+# Cell C's multi-turn *pickle* duplicates prior turns: OpenClaw replays the
+# session buffer into the agent on each new `openclaw agent` invocation, and the
+# per-turn `agent_end` mirror re-persists the whole replayed buffer. Single-turn
+# probes fire one `agent_end` and are unaffected; p4/p5 carry each prior turn
+# twice (byte-identical content, fresh timestamp — so timestamp-dedup misses it).
+# The per-trial session JSONL is OpenClaw's append-only event truth and contains
+# each turn exactly once, so Cell C is projected from JSONL. Cell A stays on its
+# (replay-free, single in-process loop) pickle via `extract_v14_record`.
+#
+# The projector emits the same `Step` shape the pickle path produces — one step
+# per `role=user` turn, assistant `content[]` `toolCall` blocks fanned out into
+# `function_call` entries (multi-call assistant → multiple entries in the *same*
+# step, monologue text on the first), `toolResult` → `function`. The downstream
+# `extract_*_by_step` functions are reused unchanged.
+
+
+def _flatten_blocks(content: object) -> str:
+    """Join the text of pi-ai content blocks (or pass through a plain string)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+    return ""
+
+
+def _jsonl_messages(path: str) -> list[dict]:
+    """Yield the `message`-typed entries from an OpenClaw session JSONL, in
+    order. Non-message events (session / model_change / custom / …) are skipped."""
+    out: list[dict] = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            if entry.get("type") != "message":
+                continue
+            out.append(entry.get("message", entry))
+    return out
+
+
+def load_steps_from_jsonl(paths: list[str]) -> list[Step]:
+    """Project one or more OpenClaw session JSONLs into `Step`s. Multiple paths
+    (p5's `-s1` + `-s2`) are walked in order and concatenated into one step
+    sequence — the cross-session boundary is not itself a step boundary.
+
+    A `role=user` entry opens a step. An assistant entry contributes its leading
+    text block as monologue and each `toolCall` block as a `function_call`
+    (arguments JSON-stringified to match the v0 pickle shape the extractors
+    expect). A `toolResult` becomes a `function`-role result. The trailing
+    empty assistant turn (no text, no toolCall) OpenClaw emits as a terminator
+    contributes nothing."""
+    steps: list[Step] = []
+    current: Step | None = None
+    step_idx = 0
+
+    for path in paths:
+        for m in _jsonl_messages(path):
+            role = m.get("role")
+            content = m.get("content")
+
+            if role == "user":
+                if current is not None:
+                    steps.append(current)
+                    step_idx += 1
+                current = Step(step_idx=step_idx, user_text=_flatten_blocks(content))
+                continue
+
+            if current is None:
+                # Anything before the first user turn (there is no synthetic
+                # boot/welcome in the JSONL — §6.6.1 Cell C has no welcome prefix).
+                continue
+
+            if role == "assistant":
+                if not isinstance(content, list):
+                    text = content if isinstance(content, str) else ""
+                    if text:
+                        current.assistant_messages.append(
+                            {"role": "assistant", "content": text, "function_call": None}
+                        )
+                    continue
+                text = "".join(
+                    b.get("text", "")
+                    for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+                tool_calls = [
+                    b for b in content
+                    if isinstance(b, dict) and b.get("type") == "toolCall"
+                ]
+                if not tool_calls:
+                    if text:
+                        current.assistant_messages.append(
+                            {"role": "assistant", "content": text, "function_call": None}
+                        )
+                    continue
+                for i, tc in enumerate(tool_calls):
+                    args = tc.get("arguments")
+                    if args is None:
+                        args = tc.get("args") or {}
+                    fc = {
+                        "name": tc.get("name") or tc.get("toolName"),
+                        "arguments": json.dumps(args),
+                    }
+                    current.assistant_messages.append(
+                        {
+                            "role": "assistant",
+                            # Monologue belongs to the turn, not each split call —
+                            # attach to the first only so it is not double-counted.
+                            "content": text if i == 0 else "",
+                            "function_call": fc,
+                        }
+                    )
+            elif role == "toolResult":
+                current.function_results.append(
+                    {"role": "function", "content": _flatten_blocks(content)}
+                )
+
+    if current is not None:
+        steps.append(current)
+
+    return steps
+
+
+def extract_v14_record_from_jsonl(
+    jsonl_paths: list[str],
+    cell: str,
+    probe_id: str,
+    trial_id: int,
+    expected_tier: str | None = None,
+) -> dict:
+    """Cell C counterpart of `extract_v14_record` — same output shape, sourced
+    from the per-trial session JSONL(s) rather than the (replay-duplicated)
+    pickle. See `load_steps_from_jsonl` and methodology-bank #21."""
+    steps = load_steps_from_jsonl(jsonl_paths)
+    send_message_calls, leakage_flags = extract_send_message_calls(steps)
+    return {
+        "cell": cell,
+        "probe_id": probe_id,
+        "trial_id": trial_id,
+        "expected_tier": expected_tier,
+        "source": "jsonl",
+        "source_jsonl": [str(p) for p in jsonl_paths],
         "step_count": len(steps),
         "tools_by_step": extract_tools_by_step(steps),
         "monologue_by_step": extract_monologue_by_step(steps),

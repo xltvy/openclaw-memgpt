@@ -3,7 +3,10 @@
   "probe_id": "p6",
   "trial_id": 2,
   "expected_tier": "ambiguous(core|archival)",
-  "pickle_path": "/Users/altayacar/.openclaw-dev/memgpt-data/agents/v1-cell-c-p6-t02/persistence_manager/2026-06-17_02_39_15_AM_.persistence.pickle",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p6/cell-c-2.jsonl"
+  ],
   "step_count": 1,
   "tools_by_step": [
     {
@@ -31,6 +34,7 @@
     {
       "step_idx": 0,
       "text": "I'll remember that you typically work in the evening.",
+      "pre_tool_text": "I'll remember that you typically work in the evening.",
       "char_count": 53,
       "within_cap": true,
       "user_leakage": false
