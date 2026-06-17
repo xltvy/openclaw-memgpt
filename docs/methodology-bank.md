@@ -11,7 +11,7 @@ its own — read it without other context.
 
 ---
 
-## "Almost certainly X" was wrong — twenty instances
+## "Almost certainly X" was wrong — twenty-two instances
 
 Each entry: the assumed behaviour, the actual mechanism revealed by source, and the
 shape of the resolution. Listed in roughly the order they surfaced.
@@ -417,6 +417,90 @@ shape of the resolution. Listed in roughly the order they surfaced.
     still-broken rig — twice. The dissertation's V1.0 §6.5 "multiple dimensions fail simultaneously"
     diagnostic ladder already advises sanity-checking experimental setup before architectural
     interpretation; this is the same lesson at the rig level.
+
+21. **#21 (draft — refine post-fix) — Cell C multi-turn pickle duplicates prior turns; #20's
+    "keep the pickle as truth" (Path 1) is correct for single-turn but insufficient for multi-turn.**
+
+    **Discovery.** With #20's normalise fix applied and Cell C re-run (2026-06-17), the V1.4
+    analyser still reported `gate_pass: false`, with the failures concentrated on the two
+    multi-turn probes (p4 cross-turn, p5 cross-session): tool-invocation p4 0/5, p5 0.2;
+    tier p4 0/5, p5 0/10. Single-turn probes (p1/p2/p3/p6/p7) were strong. The shape of the
+    failure — adjacent steps *byte-identical* in tools AND monologue — pointed at duplication,
+    not divergence.
+
+    **Root cause (pickle data, not extractor logic).** Cell C's `all_messages` carries each
+    prior turn a second time. In `p4/cell-c-0`'s pickle, turn 1's full assistant/function chain
+    appears at entries 4–13 (timestamp `02:03:05`) and again, byte-identical in content, at
+    entries 14–23 (timestamp `02:04:09` — turn 2's time), before turn 2's real answer at 24–29.
+    Mechanism: OpenClaw replays the prior session buffer into the agent context on each new
+    `openclaw agent` invocation, and the plugin's per-turn `agent_end` mirror persists the
+    *whole* replayed buffer again. Single-turn probes fire only one `agent_end`, so they never
+    duplicate — which is exactly why #20's single-turn-only verification (and the 6c.9 slice)
+    never surfaced this. The `extract.py` step-grouper then splits the duplicated turn into a
+    second step (compounded by `_is_probe_user_message` treating OpenClaw's `### Memory …`
+    user-turn preamble as a probe boundary), doubling per-tool counts past the ±1 tolerance.
+
+    **Why pickle-level dedup was rejected.** The replayed copy carries a *new* timestamp, so
+    `(timestamp, message)`-identity dedup misses it; content-identity dedup would risk masking
+    legitimately-repeated tool calls. The per-trial JSONL captured by the driver (#20 companion
+    fix) is OpenClaw's append-only event truth and contains each turn exactly once
+    (`p4/cell-c-0.jsonl`: 4 metadata entries, turn-1 chain, turn-2 chain — no replay copy).
+
+    **Relationship to #20.** #20 deliberately chose Path 1 (fix `normalise.ts`, keep the sidecar
+    pickle as the extractor's source) over Path 2 (project from JSONL), on the grounds that Path 1
+    "fixes the persistence-layer truth." #21 shows that judgement was right for *structure* (the
+    pickle now carries tool calls, args, monologue) but wrong as a blanket claim: the pickle's
+    multi-turn *sequence* is not faithful because the mirror re-appends replayed turns. The
+    adopted remedy is therefore Path 2 *for Cell C* — project the Cell C digest from the per-trial
+    JSONL — while Cell A stays on its (single in-process loop, replay-free) pickle. Same lesson as
+    the "first smoke is not last smoke" companion to #20: each rig fix exposes the next layer.
+
+    **Fix (to apply).** Add a JSONL→`Step` front-end to `extract.py`; each `role=user` turn opens
+    exactly one step; assistant `content[]` `toolCall` blocks become the step's tool calls
+    (multi-call assistant messages contribute all their calls to the one step, no extra step).
+    Re-derive all 45 Cell C trial JSONs from JSONL; Cell A unchanged. Acceptance: `p4/cell-c-0`
+    and `p5/cell-c-0` show one step per probe turn with no byte-identical adjacent step; single-turn
+    probes re-extract identically to the pickle path.
+
+    **Note — the real p4/p5 divergence survives the fix.** De-duplicated, Cell C p4 turn 1 still
+    does `conversation_search ×2 → archival_memory_insert → send_message` where Cell A does
+    `core_memory_append`; this is a genuine tier-strategy divergence (candidate real finding,
+    not artefact) that the duplication had been *obscuring*, not creating. The fix exposes the
+    true signal rather than manufacturing a pass.
+
+22. **#22 (draft — refine post-fix) — Inner-monologue Jaccard compared non-comparable structures
+    (Cell A's heartbeat-loop monologue vs Cell C's single batched turn).**
+
+    **Discovery.** The V1.4 monologue dimension scored 0.067 (3 of 45 trial-pairs ≥ Jaccard 0.5) —
+    a near-total fail that contradicted #17(b)'s measured temp-0 noise floor ("comfortably above
+    0.5"). It failed even on p6, where tool invocation and tier agreed 10/10 in both cells: identical
+    behaviour cannot produce a genuine monologue divergence, so the metric, not the behaviour, was
+    suspect.
+
+    **Root cause.** Cell A runs MemGPT's heartbeat loop — multiple LLM round-trips per probe, each
+    emitting its own inner monologue, which `extract.py` concatenates across the step. Cell C emits
+    its tool chain as a *single* batched assistant message (the #20 "Sonnet 4.5 emits 2–3 toolCalls
+    in one message" finding), so it produces *one* monologue fragment. Cell A monologue is
+    systematically 2–3× the Cell C token count across every probe (e.g. `p6/cell-c-0`: Cell A
+    "I should update my core memory … I've noted that information already exists … Let me
+    acknowledge" — two heartbeat-turn fragments — vs Cell C "I'll remember that you typically work
+    in the evening." — one). Jaccard collapses on the length/structure mismatch, not on meaning.
+    The §5 threshold and #17(b)'s noise floor were both calibrated on *within-Cell-A* trial pairs,
+    which share the heartbeat-loop structure; they do not transfer to a cross-architecture A-vs-C
+    comparison where one side loops and the other batches.
+
+    **Fix (to apply).** Re-specify the monologue metric to compare *aligned pre-first-tool
+    fragments only* — "what the agent says before invoking any tool" — which both architectures
+    produce and which is structurally aligned (Cell A: the inner-thoughts content on the
+    first tool-bearing assistant message; Cell C: the text block preceding the first `toolCall`).
+    Update `docs/v1-cells.md` §5 and the analyser's Jaccard computation. (p3 was the one probe that
+    cleared the old metric — its content words "store/project code/archival/search/confirm" dominate
+    regardless of fragment count.)
+
+    **Lesson.** A divergence metric must be invariant to declared structural deviations. The
+    heartbeat-loop-vs-batched-tool-calls difference is a known architectural deviation (§4.3
+    chain/yield); a substantive-content metric that is sensitive to *how many LLM turns* produced
+    the content measures the deviation, not the behaviour it was meant to test.
 
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy
