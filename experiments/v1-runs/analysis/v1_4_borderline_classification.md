@@ -1,5 +1,12 @@
 # V1.4 — Borderline / miss classification log (post-fix)
 
+> **Update (2026-06-17):** the verdict is now written — `docs/v1-results.md`
+> (A≈C qualified pass). The #23 confound was tested by a corrected-persona pilot
+> (`pilot_compare_results.txt`): on p5 it is **confirmed** (tier-agreement with
+> Cell A 4/10 → 6/6); p4's corrected run was #19-contaminated and is inconclusive.
+> The "no clean verdict / not written" notes below reflect the pre-pilot state and
+> are superseded by `docs/v1-results.md`.
+
 Companion to `v1_4_analysis.json`. Classifies every sub-threshold result as one
 of: **true divergence** / **declared deviation** / **acceptable variance** /
 **measurement artefact** / **experimental error (controlled-variable violation)**.

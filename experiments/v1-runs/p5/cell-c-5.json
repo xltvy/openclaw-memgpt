@@ -46,16 +46,9 @@
     {
       "step_idx": 2,
       "tools": {
-        "conversation_search": 1,
         "send_message": 1
       },
       "arg_keys": {
-        "conversation_search": [
-          [
-            "page",
-            "query"
-          ]
-        ],
         "send_message": [
           [
             "message"
@@ -67,9 +60,9 @@
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "I need to update my core memory with this important project information.",
-      "pre_tool_text": "I need to update my core memory with this important project information.",
-      "char_count": 72,
+      "text": "I'll store that project information in my core memory so I can reference it in future conversations.",
+      "pre_tool_text": "I'll store that project information in my core memory so I can reference it in future conversations.",
+      "char_count": 100,
       "within_cap": true,
       "user_leakage": false
     },
@@ -83,9 +76,9 @@
     },
     {
       "step_idx": 2,
-      "text": "I need to search my conversation history to find the project code you mentioned.",
-      "pre_tool_text": "I need to search my conversation history to find the project code you mentioned.",
-      "char_count": 80,
+      "text": "Looking at your core memory, the project code you mentioned is **CARDINAL_3987** (for milestone Q4).",
+      "pre_tool_text": "Looking at your core memory, the project code you mentioned is **CARDINAL_3987** (for milestone Q4).",
+      "char_count": 100,
       "within_cap": true,
       "user_leakage": false
     }
@@ -93,15 +86,15 @@
   "send_message_calls": [
     {
       "step_idx": 0,
-      "text": "Got it! I've stored the project code CARDINAL_3987 for milestone Q4 in my core memory. I'll remember this for our future conversations about your research work."
+      "text": "Got it! I've stored the project code CARDINAL_3987 for milestone Q4 in my memory. I'll remember this for our future conversations."
     },
     {
       "step_idx": 1,
-      "text": "Wings catch morning light,\nMelodies drift through the trees\u2014\nFreedom takes its flight."
+      "text": "Wings catch morning light,\nFeathers trace the sky's blue arc\u2014\nFreedom in their song."
     },
     {
       "step_idx": 2,
-      "text": "The project code you mentioned is **CARDINAL_3987**, which is used for milestone Q4. I can see it's now stored in my core memory in the human section."
+      "text": "The project code you mentioned is **CARDINAL_3987** (for milestone Q4). It's stored in my core memory under the human section."
     }
   ],
   "leakage_flags": [],
@@ -127,7 +120,7 @@
       "tiers": {
         "core": 0,
         "archival": 0,
-        "recall": 1
+        "recall": 0
       }
     }
   ]

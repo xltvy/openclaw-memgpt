@@ -244,14 +244,23 @@ shape of the resolution. Listed in roughly the order they surfaced.
     Jaccard ≥0.5 (per V1.1 §3.2) for monologue substantive equivalence, which is calibrated
     comfortably above this measured noise floor.
 
-18. **(candidate, hold until Cell C completes) — p4 cross-turn observed behaviour at Sonnet 4.5.**
+18. **(superseded by #23 — held unresolved for p4) — p4 cross-turn observed behaviour at Sonnet 4.5.**
     Across 5 Cell A trials, turn 1 (codename fact) elicited `core_memory_append` without chained
     `send_message` (similar pattern to methodology #15 for Haiku 4.5, but emerging here on Sonnet 4.5).
     Turn 2 (codename recall) read from active context rather than invoking `conversation_search`.
     The path-agnostic design of p4 (V1.2 §refinement) tolerates this; V1.4 measures cell-to-cell
-    agreement on the chosen path, not a specific path. Worth noting that the "send_message after
-    memory tools" chaining isn't universally present even at flagship models — a research-relevant
-    observation for the dissertation's methodology chapter on MemGPT-Anthropic compatibility.
+    agreement on the chosen path, not a specific path.
+
+    **Disposition (2026-06-17, post-pilot).** #18 cannot graduate as a "Sonnet-4.5-at-temp-0
+    architectural property reproduced by Cell C," and is not cleanly rejected either. The V1.3
+    apparent p4 divergence (Cell A core/active-context vs Cell C recall-heavy) is now attributed to
+    **#23** — a persona/human controlled-variable violation, the same confound that demonstrably
+    drove p5's divergence (see #23 pilot evidence: p5 tier-agreement with Cell A rose from ~4/10 to
+    6/6 once the §3 strings were restored). The corrected-persona p4 pilot could **not** validate
+    convergence because that run was contaminated by #19 (lazy-init stock-tool coexistence: the
+    agent called stock `exec` and replied in free text without `send_message` on 4 of 5 trials).
+    #18 therefore remains open for p4 pending a clean, uncontaminated, full-budget p4 re-run; the
+    behaviour it described is most likely a #23 artefact, not an architectural property.
 
 19. **OpenClaw SDK `--local` mode does not fire `services.start`.** Plugin's `register()` runs
     (tools/hooks/ContextEngine all wire up, "lifecycle service registered" logs cleanly) but
@@ -516,9 +525,9 @@ shape of the resolution. Listed in roughly the order they surfaced.
     is additionally too brittle for cross-prompt/cross-architecture paraphrase — two layers, one
     symptom.
 
-23. **#23 (draft — refine post-pilot) — The Cell C slate ran a different persona/human than
-    Cell A: a controlled-variable violation (§3) that the V1.4 fixes surfaced, confounding the
-    equivalence comparison.**
+23. **#23 (confirmed on p5; p4 pending clean re-run) — The Cell C slate ran a different
+    persona/human than Cell A: a controlled-variable violation (§3) that the V1.4 fixes surfaced,
+    confounding the equivalence comparison.**
 
     **Discovery.** After the #21 (multi-turn dedup) and #22 (monologue fragment) fixes were
     applied and V1.4 re-run, the gate still failed — monologue 0.089, tier (cell-agreement)
@@ -559,6 +568,19 @@ shape of the resolution. Listed in roughly the order they surfaced.
     the persona/human correction collapses the observed divergence before committing to the full
     90-trial re-run. The #21/#22 extractor fixes are correct and independent and stay. Methodology
     #18's "reject" is held pending the corrected p4 data.
+
+    **Pilot evidence (2026-06-17).** A partial corrected-persona re-run (institutional budget
+    depleted mid-pilot: p4 5/5, p5 6/10, p6 0/10) tested the claim. On **p5 — the load-bearing
+    cross-session recall probe — #23 is confirmed:** with the §3 strings restored, all 6 corrected
+    trials chose `core` (tier-agreement with Cell A rose from ~4/10 stale to **6/6**; 3 trials
+    flipped archival→core), kept clean MemGPT tools + `send_message` discipline, and recovered
+    `CARDINAL_3987` across the restart in all 6. The stale human string ("…MemGPT-style three-tier
+    memory … recall…") had been priming Cell C's archival/recall eagerness; the neutral §3 string
+    removes it. **p4 is inconclusive:** the corrected p4 run was contaminated by #19 (lazy-init
+    stock-tool coexistence — the agent called stock `exec` and replied in free text on 4/5 trials),
+    so convergence could not be measured there. Monologue stayed low even on p5 corrected (lexical
+    Jaccard ≤0.25, 0/6 ≥0.5) *while* p5 tools/tier matched Cell A exactly — isolating that residual
+    to the metric (#22: lexical Jaccard cannot clear cross-architecture paraphrase), not behaviour.
 
     **Lesson.** Two layers. (1) The §6.5 ladder lists "persona/human byte-identical across cells"
     as an early experimental-error check precisely because a controlled-variable slip mimics
