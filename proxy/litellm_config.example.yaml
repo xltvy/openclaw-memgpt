@@ -1,0 +1,52 @@
+# LiteLLM proxy configuration template
+#
+# Copy to litellm_config.yaml and fill in operator-specific values.
+# litellm_config.yaml is gitignored to keep operator-local routing
+# decisions and credentials out of git history.
+#
+# Required environment variables (set in ~/.secrets or similar):
+#   - ANTHROPIC_API_KEY (sk-ant-api03-...) for direct Anthropic chain
+#   OR
+#   - Institutional Bedrock credentials forwarded via shim:4100
+#
+# See docs/methodology-bank.md #24 for the provider-switch decision.
+#
+# ---------------------------------------------------------------------------
+# Two serving chains are shown below. Enable whichever your access provides;
+# both serve the SAME model snapshot (claude-sonnet-4-5-20250929), so the
+# choice is non-material for the V1 §7.3 dimensions (methodology-bank #24).
+#
+#   A) Direct Anthropic  : OpenClaw -> LiteLLM -> api.anthropic.com
+#                          (V1.4 personal-key completion chain)
+#   B) Institutional     : OpenClaw -> LiteLLM -> proxy_shim:4100 -> Bedrock
+#                          (V1.3 institutional chain; the shim normalises four
+#                           LiteLLM<->upstream mismatches, see CLAUDE.md)
+# ---------------------------------------------------------------------------
+
+model_list:
+  # --- Chain A: direct Anthropic ------------------------------------------
+  # The model id OpenClaw requests (its models.json points gpt-5.4 here).
+  - model_name: "gpt-5.4"
+    litellm_params:
+      # LiteLLM's anthropic provider hits api.anthropic.com directly; omit
+      # api_base so no shim is involved.
+      model: "anthropic/claude-sonnet-4-5-20250929"
+      # Resolved from the environment at request time — never inline the key.
+      api_key: "os.environ/<YOUR_ANTHROPIC_KEY_ENV_VAR>"   # e.g. os.environ/ANTHROPIC_API_KEY
+      # Pin temperature 0 for the equivalence protocol (V1 controlled variable).
+      temperature: 0
+
+  # --- Chain B: institutional Bedrock via the proxy shim ------------------
+  # Only needed if your access has the quirks the shim handles (path / auth /
+  # missing stop_reason / camelCase usage). The shim (proxy_shim.py) listens on
+  # :4100 and forwards to the real upstream configured via SHIM_UPSTREAM_* env
+  # vars — so no institutional endpoint URL appears in this file.
+  - model_name: "<institutional-bedrock-model-id>"        # e.g. anthropic.claude-sonnet-4-5-20250929-v1:0
+    litellm_params:
+      model: "anthropic/<institutional-bedrock-model-id>"
+      api_base: "http://localhost:4100"              # local proxy_shim; forwards to SHIM_UPSTREAM_URL
+      api_key: "dummy-shim-handles-real-auth"         # real auth is injected by the shim, not here
+      temperature: 0
+
+litellm_settings:
+  drop_params: true
