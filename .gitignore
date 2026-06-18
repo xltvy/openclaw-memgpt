@@ -157,6 +157,11 @@ sidecar/.python-version
 litellm_config.yaml
 litellm.log
 
+# V1.4 institutional-slate safety backup (redundant — institutional p4/p5/p6 data
+# is recoverable from git history; the curated #24 comparison set lives in
+# analysis/institutional_p5_jsonl/). Local safety net only.
+experiments/v1-runs/analysis/institutional_backup/
+
 __pycache__/
 *.py[cod]
 *.egg-info/

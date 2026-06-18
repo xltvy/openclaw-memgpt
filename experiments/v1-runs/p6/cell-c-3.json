@@ -33,9 +33,9 @@
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "I'll remember that you typically work in the evening.",
-      "pre_tool_text": "I'll remember that you typically work in the evening.",
-      "char_count": 53,
+      "text": "I'll update my core memory to note your typical work schedule.",
+      "pre_tool_text": "I'll update my core memory to note your typical work schedule.",
+      "char_count": 62,
       "within_cap": true,
       "user_leakage": false
     }
@@ -43,7 +43,7 @@
   "send_message_calls": [
     {
       "step_idx": 0,
-      "text": "Got it \u2014 I've noted that you usually work in the evening. \ud83e\udde0"
+      "text": "Got it \u2014 I've noted that you usually work in the evening. That helps me understand your schedule better."
     }
   ],
   "leakage_flags": [],

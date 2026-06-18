@@ -23,9 +23,9 @@
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "I need to understand what you're asking me to do with the project code BLUEBIRD_5402. Could you provide more context about what you'd like me to help you with?",
-      "pre_tool_text": "I need to understand what you're asking me to do with the project code BLUEBIRD_5402. Could you provide more context about what you'd like me to help you with?",
-      "char_count": 159,
+      "text": "I need to understand what you're asking about. Could you please provide more details about what you'd like help with regarding project BLUEBIRD_5402?",
+      "pre_tool_text": "I need to understand what you're asking about. Could you please provide more details about what you'd like help with regarding project BLUEBIRD_5402?",
+      "char_count": 149,
       "within_cap": true,
       "user_leakage": false
     },

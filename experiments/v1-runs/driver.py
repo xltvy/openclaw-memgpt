@@ -151,12 +151,20 @@ def _http_ok(url: str, timeout: float = 3.0) -> tuple[bool, str]:
 
 def health_checks(cell: str) -> list[HealthCheckResult]:
     """Stack prechecks per `CLAUDE.md` RUNNING THE STACK. Both cells need
-    the proxy shim + LiteLLM running; Cell C additionally needs OpenClaw
-    accessible (we just probe `--help` to confirm the binary runs)."""
+    LiteLLM running; Cell C additionally needs OpenClaw accessible (we just
+    probe `--help` to confirm the binary runs).
+
+    Provider switch (methodology-bank #24, V1.4 completion): the proxy_shim
+    (port 4100) was only required for the institutional Bedrock chain. The
+    direct-Anthropic chain (`proxy/litellm_config.yaml` → api.anthropic.com
+    via `os.environ/ANTHROPIC_API_KEY`) has no shim, so the 4100 check is no
+    longer a fatal precondition. Set `V1_REQUIRE_SHIM=1` to re-enable it for
+    institutional-chain runs."""
     results: list[HealthCheckResult] = []
 
-    ok, detail = _http_ok("http://127.0.0.1:4100/healthz")
-    results.append(HealthCheckResult("proxy_shim:4100/healthz", ok, detail))
+    if os.environ.get("V1_REQUIRE_SHIM") == "1":
+        ok, detail = _http_ok("http://127.0.0.1:4100/healthz")
+        results.append(HealthCheckResult("proxy_shim:4100/healthz", ok, detail))
 
     # LiteLLM proxy: try `/health/liveliness` (LiteLLM's idiomatic endpoint).
     # Fall back to a chat-completions OPTIONS probe if liveliness is gated.

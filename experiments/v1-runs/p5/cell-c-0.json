@@ -13,13 +13,12 @@
     {
       "step_idx": 0,
       "tools": {
-        "core_memory_append": 1
+        "archival_memory_insert": 1
       },
       "arg_keys": {
-        "core_memory_append": [
+        "archival_memory_insert": [
           [
-            "content",
-            "name"
+            "content"
           ]
         ]
       }
@@ -39,16 +38,31 @@
     },
     {
       "step_idx": 2,
-      "tools": {},
-      "arg_keys": {}
+      "tools": {
+        "conversation_search": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "conversation_search": [
+          [
+            "page",
+            "query"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
     }
   ],
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "I'll update my core memory with the project code information you've shared.Got it! I've stored the project code CARDINAL_3987 in my core memory, linked to your Q4 milestone. This will persist across our conversations so I can reference it whenever needed. \ud83e\udde0",
-      "pre_tool_text": "I'll update my core memory with the project code information you've shared.",
-      "char_count": 257,
+      "text": "I'll help you remember that. Let me store this project information in my memory.Perfect! I've stored the project code CARDINAL_3987 and its association with milestone Q4 in my archival memory. This information will persist across our conversations, so I can reference it whenever needed.",
+      "pre_tool_text": "I'll help you remember that. Let me store this project information in my memory.",
+      "char_count": 287,
       "within_cap": true,
       "user_leakage": false
     },
@@ -62,9 +76,9 @@
     },
     {
       "step_idx": 2,
-      "text": "Looking at my core memory, the project code you mentioned earlier is **CARDINAL_3987**, which is used for milestone Q4.",
-      "pre_tool_text": "Looking at my core memory, the project code you mentioned earlier is **CARDINAL_3987**, which is used for milestone Q4.",
-      "char_count": 119,
+      "text": "I need to search my recall memory to find what project code you mentioned earlier.",
+      "pre_tool_text": "I need to search my recall memory to find what project code you mentioned earlier.",
+      "char_count": 82,
       "within_cap": true,
       "user_leakage": false
     }
@@ -72,16 +86,16 @@
   "send_message_calls": [
     {
       "step_idx": 1,
-      "text": "Wings catch the morning light,\nFeathers painted dawn and dusk\u2014\nThey write the sky in flight."
+      "text": "Wings trace circles in the sky,\nFeathered dancers soaring high,\nMorning songs and twilight calls,\nFreedom written in their squalls."
+    },
+    {
+      "step_idx": 2,
+      "text": "The project code you mentioned earlier was **CARDINAL_3987**, which is used for milestone Q4."
     }
   ],
   "leakage_flags": [
     {
       "step_idx": 0,
-      "reason": "no send_message at chain terminus"
-    },
-    {
-      "step_idx": 2,
       "reason": "no send_message at chain terminus"
     }
   ],
@@ -89,8 +103,8 @@
     {
       "step_idx": 0,
       "tiers": {
-        "core": 1,
-        "archival": 0,
+        "core": 0,
+        "archival": 1,
         "recall": 0
       }
     },
@@ -107,7 +121,7 @@
       "tiers": {
         "core": 0,
         "archival": 0,
-        "recall": 0
+        "recall": 1
       }
     }
   ]

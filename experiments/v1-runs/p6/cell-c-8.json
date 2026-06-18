@@ -12,19 +12,13 @@
     {
       "step_idx": 0,
       "tools": {
-        "core_memory_append": 1,
-        "send_message": 1
+        "core_memory_append": 1
       },
       "arg_keys": {
         "core_memory_append": [
           [
             "content",
             "name"
-          ]
-        ],
-        "send_message": [
-          [
-            "message"
           ]
         ]
       }
@@ -33,20 +27,20 @@
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "I'll remember that you usually work in the evening.",
-      "pre_tool_text": "I'll remember that you usually work in the evening.",
-      "char_count": 51,
+      "text": "I've updated your core memory to note that you usually work in the evening. This will help me be more contextually aware of your schedule.",
+      "pre_tool_text": "I've updated your core memory to note that you usually work in the evening. This will help me be more contextually aware of your schedule.",
+      "char_count": 138,
       "within_cap": true,
       "user_leakage": false
     }
   ],
-  "send_message_calls": [
+  "send_message_calls": [],
+  "leakage_flags": [
     {
       "step_idx": 0,
-      "text": "Got it! I've noted that you typically work in the evening. This helps me understand your schedule and when you're likely to be active."
+      "reason": "no send_message at chain terminus"
     }
   ],
-  "leakage_flags": [],
   "tiers_by_step": [
     {
       "step_idx": 0,

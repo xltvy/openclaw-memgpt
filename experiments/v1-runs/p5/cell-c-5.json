@@ -13,8 +13,7 @@
     {
       "step_idx": 0,
       "tools": {
-        "core_memory_append": 1,
-        "send_message": 1
+        "core_memory_append": 1
       },
       "arg_keys": {
         "core_memory_append": [
@@ -22,82 +21,61 @@
             "content",
             "name"
           ]
-        ],
-        "send_message": [
-          [
-            "message"
-          ]
         ]
       }
     },
     {
       "step_idx": 1,
-      "tools": {
-        "send_message": 1
-      },
-      "arg_keys": {
-        "send_message": [
-          [
-            "message"
-          ]
-        ]
-      }
+      "tools": {},
+      "arg_keys": {}
     },
     {
       "step_idx": 2,
-      "tools": {
-        "send_message": 1
-      },
-      "arg_keys": {
-        "send_message": [
-          [
-            "message"
-          ]
-        ]
-      }
+      "tools": {},
+      "arg_keys": {}
     }
   ],
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "I'll store that project information in my core memory so I can reference it in future conversations.",
-      "pre_tool_text": "I'll store that project information in my core memory so I can reference it in future conversations.",
-      "char_count": 100,
+      "text": "I'll update my core memory to store this important project information.Perfect! I've added the project code CARDINAL_3987 and its Q4 milestone association to my core memory about you. This information will persist across our conversations so I can reference it whenever needed.",
+      "pre_tool_text": "I'll update my core memory to store this important project information.",
+      "char_count": 277,
       "within_cap": true,
       "user_leakage": false
     },
     {
       "step_idx": 1,
-      "text": "",
-      "pre_tool_text": "",
-      "char_count": 0,
+      "text": "Here's a short poem about birds:\n\nWings catch morning light,\nFeathers dance on winds unseen,\nSong fills empty sky.",
+      "pre_tool_text": "Here's a short poem about birds:\n\nWings catch morning light,\nFeathers dance on winds unseen,\nSong fills empty sky.",
+      "char_count": 114,
       "within_cap": true,
       "user_leakage": false
     },
     {
       "step_idx": 2,
-      "text": "Looking at your core memory, the project code you mentioned is **CARDINAL_3987** (for milestone Q4).",
-      "pre_tool_text": "Looking at your core memory, the project code you mentioned is **CARDINAL_3987** (for milestone Q4).",
-      "char_count": 100,
+      "text": "Looking at your core memory, I can see the project code is **CARDINAL_3987** with milestone Q4.",
+      "pre_tool_text": "Looking at your core memory, I can see the project code is **CARDINAL_3987** with milestone Q4.",
+      "char_count": 95,
       "within_cap": true,
       "user_leakage": false
     }
   ],
-  "send_message_calls": [
+  "send_message_calls": [],
+  "leakage_flags": [
     {
       "step_idx": 0,
-      "text": "Got it! I've stored the project code CARDINAL_3987 for milestone Q4 in my memory. I'll remember this for our future conversations."
+      "reason": "no send_message at chain terminus"
     },
     {
       "step_idx": 1,
-      "text": "Wings catch morning light,\nFeathers trace the sky's blue arc\u2014\nFreedom in their song."
+      "reason": "no send_message at chain terminus"
     },
     {
       "step_idx": 2,
-      "text": "The project code you mentioned is **CARDINAL_3987** (for milestone Q4). It's stored in my core memory under the human section."
+      "reason": "no send_message at chain terminus"
     }
   ],
-  "leakage_flags": [],
   "tiers_by_step": [
     {
       "step_idx": 0,

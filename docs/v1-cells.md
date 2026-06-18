@@ -322,6 +322,25 @@ dice differently on this trial."
 Conditions 2 and 3 are sanity checks layered on top of the per-dimension
 gates; either firing means investigate before counting the run.
 
+> **⚠ V1.5 refinement marker (added 2026-06-18, per V1.4 results).** This unified
+> four-dimension gate **conflates two layers** that V1.4 showed should be scored
+> separately:
+> - **Memory-architecture dimensions** — tier reasoning, recall/cross-session
+>   persistence, archival, chain/yield — which the plugin preserves *architecturally*
+>   (Sense 3, structurally guaranteed by the sidecar).
+> - **I/O-layer dimensions** — `send_message` delivery discipline — which OpenClaw does
+>   **not** enforce the way MemGPT's CLI does (`handle_ai_response` content-as-monologue +
+>   `verify_first_message_correctness`), so the plugin preserves it only at Sense 1
+>   (behavioural-under-coaching). See `docs/v1-results.md` §4–§5 and `methodology-bank.md` #25.
+>
+> Condition 1 (all four thresholds met) therefore fails for a *layer* reason, not a single
+> architectural defect, and condition 2's "zero `send_message` failures" is a Sense-3
+> criterion the I/O layer cannot meet under the MemGPT-faithful (uncoached) §3 persona. **V1.5
+> will (a) split the gate into a memory-architecture cluster and an I/O-layer cluster with
+> distinct pass criteria, and (b) re-specify the inner-monologue dimension on a semantic
+> measure** (lexical Jaccard is not valid cross-architecture — `methodology-bank.md` #22).
+> Until then, read the V1.4 verdict by cluster, not by the unified gate.
+
 ---
 
 ## 6. Failure-mode diagnostic ladder

@@ -17,9 +17,16 @@
     {
       "step_idx": 1,
       "tools": {
+        "conversation_search": 1,
         "send_message": 1
       },
       "arg_keys": {
+        "conversation_search": [
+          [
+            "page",
+            "query"
+          ]
+        ],
         "send_message": [
           [
             "message"
@@ -31,9 +38,9 @@
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "I'll help you with the project code BLUEBIRD_5402. Could you tell me more about what you'd like to do with this project code? For example:\n\n- Are you looking to store or retrieve information related to this code?\n- Is this a reference code for a specific research project or experiment?\n- Would you like me to remember this code for future reference?\n\nLet me know how I can assist you with BLUEBIRD_5402.",
-      "pre_tool_text": "I'll help you with the project code BLUEBIRD_5402. Could you tell me more about what you'd like to do with this project code? For example:\n\n- Are you looking to store or retrieve information related to this code?\n- Is this a reference code for a specific research project or experiment?\n- Would you like me to remember this code for future reference?\n\nLet me know how I can assist you with BLUEBIRD_5402.",
-      "char_count": 404,
+      "text": "I understand! The project code is **BLUEBIRD_5402**. I've noted this important detail.\n\nIs there anything specific you'd like me to help you with regarding this project, or should I store any additional context about what BLUEBIRD_5402 entails?",
+      "pre_tool_text": "I understand! The project code is **BLUEBIRD_5402**. I've noted this important detail.\n\nIs there anything specific you'd like me to help you with regarding this project, or should I store any additional context about what BLUEBIRD_5402 entails?",
+      "char_count": 244,
       "within_cap": true,
       "user_leakage": false
     },
@@ -49,7 +56,7 @@
   "send_message_calls": [
     {
       "step_idx": 1,
-      "text": "The project code you mentioned was BLUEBIRD_5402."
+      "text": "The project code you mentioned is **BLUEBIRD_5402**."
     }
   ],
   "leakage_flags": [
@@ -72,7 +79,7 @@
       "tiers": {
         "core": 0,
         "archival": 0,
-        "recall": 0
+        "recall": 1
       }
     }
   ]

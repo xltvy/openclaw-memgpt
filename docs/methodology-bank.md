@@ -262,6 +262,21 @@ shape of the resolution. Listed in roughly the order they surfaced.
     #18 therefore remains open for p4 pending a clean, uncontaminated, full-budget p4 re-run; the
     behaviour it described is most likely a #23 artefact, not an architectural property.
 
+    **Disposition (2026-06-18, V1.4 final — REJECT).** The clean, full-budget p4 re-run is now in hand
+    (5 trials, corrected §3 persona, direct chain; the run was *not* #19-contaminated — the sidecar
+    spawned and the MemGPT prompt was injected on every turn, confirmed in the trial logs). The analyser
+    scores Cell A matching its own dominant p4 pattern **3/5** and **Cell C matching it 0/5** →
+    `graduation_verdict: reject`. The p4 divergence is **real and reproduced across both providers**
+    (institutional and direct, see #24), so it is *not* the #23 persona confound (unlike p5). But it is
+    **not** a memory-architecture difference either: Cell C's p4 misses are free-text acknowledgments
+    (`other([]) | other([])`, 2/5) and stock-tool reaches (`read`/`write`/`exec`, 1/5) on the
+    bare-declarative turn-1 ("The project code is BLUEBIRD_5402.") that does not compel a memory op.
+    That is the **same I/O-layer gap as #25** (OpenClaw permits free-text replies and exposes stock
+    tools MemGPT never had), surfacing on the one probe whose phrasing gives the model an out. #18 is
+    therefore **rejected as a memory-architecture property and re-attributed to the #25 I/O-layer
+    divergence**; Cell C's *recall* behaviour on p4 turn-2 (active-context read, no `conversation_search`)
+    does match Cell A on the trials that reach it.
+
 19. **OpenClaw SDK `--local` mode does not fire `services.start`.** Plugin's `register()` runs
     (tools/hooks/ContextEngine all wire up, "lifecycle service registered" logs cleanly) but
     the SDK's service runner never invokes `LifecycleManager.start`. First tool/hook call
@@ -525,7 +540,16 @@ shape of the resolution. Listed in roughly the order they surfaced.
     is additionally too brittle for cross-prompt/cross-architecture paraphrase — two layers, one
     symptom.
 
-23. **#23 (confirmed on p5; p4 pending clean re-run) — The Cell C slate ran a different
+    **Disposition (2026-06-18, V1.4 final — confirmed metric failure).** p6 is the decisive control:
+    with the §3 persona corrected, p6 tier-agreement is 10/10 (`core` in both cells) — *identical*
+    memory behaviour — yet monologue Jaccard stays ≈0 (dimension rate 0.089, only p3 clears, on content
+    words). Identical behaviour cannot produce a real monologue divergence, so the residual is purely
+    the metric. The persona correction did **not** lift lexical Jaccard, ruling out persona drift as the
+    driver. Lexical Jaccard ≥0.5 is not a valid cross-architecture monologue measure; a semantic measure
+    (embedding cosine) or manual rubric is required. The dimension is **not scorable** as specified and
+    is excluded from the V1.4 verdict pending re-specification (V1.5).
+
+23. **(confirmed on p5; p4 pending clean re-run) — The Cell C slate ran a different
     persona/human than Cell A: a controlled-variable violation (§3) that the V1.4 fixes surfaced,
     confounding the equivalence comparison.**
 
@@ -590,6 +614,112 @@ shape of the resolution. Listed in roughly the order they surfaced.
     variable that lives only in documentation and ambient config (here, openclaw.json the operator
     edits by hand) will eventually drift; the harness should assert it on every run. "The config
     that was documented" is not "the config that ran" unless the rig makes them the same.
+
+    **Disposition (2026-06-18, V1.4 final — confirmed, with a twist).** The full corrected slate
+    (p4/p5/p6, direct chain) confirms #23 as a genuine controlled-variable violation that was driving
+    the recall-probe divergence: p5 recovers `CARDINAL_3987` 10/10 and converges toward Cell A's `core`
+    tier; p6 tier-agreement is 10/10. The correction was **necessary and MemGPT-faithful** (MemGPT's
+    default personas carry no send_message coaching — see #25). The twist: removing the non-canonical
+    coaching **unmasked a previously-hidden I/O-layer architectural divergence** (send_message
+    discipline), banked as #25. So #23's resolution is two-sided — it fixed the persona confound on the
+    memory dimensions *and* revealed that the prior slate's send_message discipline had been an artefact
+    of the coaching. Both halves stand. — Provider switch (institutional Bedrock → direct Anthropic) is
+    behaviourally non-material for the §7.3 dimensions.** When the institutional Bedrock budget was
+    depleted mid-pilot, the V1.4 corrected Cell C slate (p4/p5/p6) was completed on a personal
+    Anthropic key via a direct chain (`proxy/litellm_config.yaml` → `api.anthropic.com`,
+    `os.environ/ANTHROPIC_API_KEY`), dropping the institutional `proxy_shim` (Bedrock path) entirely.
+    Both chains serve the *same* model snapshot — `claude-sonnet-4-5-20250929` — so the only variable
+    is the serving gateway. Before trusting cross-chain comparison, the switch was validated three ways:
+
+    - **Wire-format canary (p2 / PINEAPPLE_8101).** One p2 trial through the direct chain produced a
+      byte-structurally identical digest to the institutional baseline: `archival_memory_insert` +
+      `send_message`, archival tier, identical `arg_keys`, marker stored, send_message held. The
+      production extractor (`extract_v14_record_from_jsonl`) parsed the direct-chain tool-call wire
+      shape with no change — the §3.7 normalise boundary is provider-agnostic. (Evidence:
+      `experiments/v1-runs/analysis/wire_check_p2_direct/`.) This is the §-level analogue of #12: the
+      tool-call wire shape is the same regardless of which gateway fronts the model.
+    - **p5 provider-equivalence (`analysis/provider_compare.py`).** Institutional corrected trials
+      0–5 (preserved at `analysis/institutional_p5_jsonl/`) vs direct trials 0–5: **CARDINAL_3987
+      recovered across the sidecar restart 6/6 on both chains** (the load-bearing property is
+      provider-invariant); dominant-tier agreement INST==ANTH 4/6, with 2 stochastic core↔archival/recall
+      flips — within the same band as within-provider trial-to-trial variance at temperature 0.
+    - **p4 divergence reproduces on both chains.** The p4 stock-tool / free-text divergence (see #18,
+      #25) appears on the institutional *and* direct chains in the same modes (free-text ack,
+      archival/recall eagerness, stock `exec`/`write`). A divergence that is identical across providers
+      is, by construction, not a provider artefact.
+
+    **Conclusion.** The provider switch does not move the §7.3 dimensions; Cell A (Bedrock reference)
+    remains a valid comparator for direct-chain Cell C. This is what licenses the mixed-chain V1.4
+    slate — p1/p2/p3/p7 institutional, p4/p5/p6 direct — to be analysed as one dataset. The driver's
+    `health_checks` was updated to drop the now-absent shim from its fatal preconditions (re-enable via
+    `V1_REQUIRE_SHIM=1` for institutional runs).
+
+25. **(primary V1.4 finding, banked 2026-06-18) — Stale persona's send_message coaching masked an
+    I/O-layer architectural divergence; the corrected V1.0 §3 persona surfaced it.**
+    V1.4's first Cell C slate ran with a stale `~/.openclaw-dev/openclaw.json` persona containing
+    send_message coaching ("...always uses the send_message tool to reply to users rather
+    than responding with free text...") — a non-canonical addition **not present in MemGPT's default
+    personas**. Source check (`memgpt-service/memgpt/personas/examples/`): `sam.txt` and `sam_pov.txt`
+    contain no send_message instruction; only the gpt-3.5 crutch `sam_simple_pov_gpt35.txt` does
+    ("I should remember to use 'send_message'… that's the only way for them to hear me!"). So the §3
+    correction (#23) — a neutral persona with no send_message coaching — is *more* MemGPT-faithful for
+    a capable model, not less.
+
+    **Why Cell A's ~1.0 send_message discipline is architectural, not behavioural.** Source-confirmed
+    in the fork (`memgpt/agent.py`, `memgpt/interface.py`):
+    - **Belt (prompt).** The base system prompt (`prompts/system/memgpt_base.txt:18-19`,
+      `memgpt_chat.txt:27-28`): *"'send_message' is the ONLY action that sends a notification to the
+      user, the user does not see anything else you do."*
+    - **Suspenders (rendering).** `Agent.handle_ai_response` renders the assistant turn's `content`
+      with `self.interface.internal_monologue(...)` under an explicit comment *"The content is then
+      internal monologue, not chat."* The only path to a user-facing `assistant_message` is the
+      `send_message` function → `send_ai_message` → `interface.assistant_message`. There is **no
+      free-text-to-user path** in MemGPT: assistant `content` is *always* monologue.
+    - **Bouncer (verification).** `verify_first_message_correctness(require_send_message=True)`
+      (`agent.py:526`) returns `False` — forcing a re-prompt — if the first turn is not a
+      `send_message` call.
+
+    Cell C (the plugin in OpenClaw) inherits the **belt** (the base prompt is injected via
+    `system_prompt_section`; `send_message`/`heartbeat` markers verified present in the live prompt)
+    but lacks the **suspenders** (OpenClaw renders assistant `content` *as the user-facing reply*, not
+    as monologue) and the **bouncer** (no first-message send_message verification). Under the coached
+    persona, the model's instruction-following overrode the missing enforcement (Sense 1 preservation —
+    behaviour holds because it is explicitly told to). Under the §3 persona, the gap surfaced: capable
+    Sonnet 4.5 emits a free-text acknowledgment directly and OpenClaw renders it, skipping the
+    now-redundant `send_message`.
+
+    **Empirical signature (V1.4 corrected, direct chain).** Aggregate send_message 0.856 (13/90
+    failures: 1 Cell-A stochastic, 12 Cell-C). Concentrated on the simple-acknowledgment and
+    bare-declarative probes: **p6 8/10 Cell C trials called `core_memory_append` (faithful tier) then
+    replied in free text with no `send_message`**; p4 2/5 replied in free text on both turns. The
+    memory-tier choice is faithful in these very trials — only the *delivery* diverges, isolating the
+    finding to the I/O layer, not the memory layer.
+
+    **Three senses of "preservation" (V1.4 vocabulary).**
+    - *Sense 1 — behavioural-under-coaching:* the property holds when the prompt explicitly elicits it.
+    - *Sense 2 — behavioural-by-default:* the property holds from the model's default behaviour given
+      the faithful (uncoached) prompt.
+    - *Sense 3 — architectural:* the property is structurally guaranteed regardless of model behaviour.
+
+    MemGPT's **memory architecture** (tiering, recall, archival, cross-session persistence) is preserved
+    by the plugin at **Sense 3** — the sidecar/`LocalStateManager`/`EmbeddingArchivalMemory` structurally
+    enforce it. MemGPT's **send_message discipline** is preserved at **Sense 1 only** (it held under
+    coaching) and fails at Sense 2/3 — the original V1 measurement was conflating Sense 1 with Sense 3.
+    The V1.4 correction isolated them.
+
+    **Disposition.** Documented as a bounded **I/O-layer architectural divergence** (not a memory-layer
+    finding, not a measurement artefact, not the #23 persona confound). It does not affect MINJA, whose
+    vectors target memory *contents* (Sense-3-preserved). **V1.5 (optional Track 2):** OpenClaw-side
+    send_message enforcement at the §4.3 `reply_dispatch` boundary — suppress free-text trailing
+    `content` and/or enforce a send_message terminator, the plugin-side analogue of MemGPT's
+    suspenders+bouncer — then re-run p4/p6 to test whether Sense 3 is recoverable. Optional for the
+    dissertation (the thesis is memory-architecture preservation) but strengthens the contribution.
+
+    **Methodology lesson.** A controlled-variable violation can mask not just *measurement* findings
+    but *architectural* ones: the stale persona's coaching hid a structural gap for an entire slate.
+    "Does the system do X?" must be qualified by "at which sense of preservation?" — a property that
+    holds only under coaching (Sense 1) is not the same claim as one the architecture guarantees
+    (Sense 3), and an undocumented system's faithful reproduction has to state which it is.
 
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy

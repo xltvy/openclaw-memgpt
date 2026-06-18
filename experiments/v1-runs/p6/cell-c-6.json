@@ -33,9 +33,9 @@
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "I need to update your core memory with this preference about your working hours.",
-      "pre_tool_text": "I need to update your core memory with this preference about your working hours.",
-      "char_count": 80,
+      "text": "I've noted your preference for evening work. Let me update your core memory to reflect this.",
+      "pre_tool_text": "I've noted your preference for evening work. Let me update your core memory to reflect this.",
+      "char_count": 92,
       "within_cap": true,
       "user_leakage": false
     }
@@ -43,7 +43,7 @@
   "send_message_calls": [
     {
       "step_idx": 0,
-      "text": "Got it, Altay \u2014 I've noted that you usually work in the evening. I'll keep that in mind for timing any proactive checks or updates."
+      "text": "Got it! I've updated my memory to note that you usually work in the evening. This helps me understand your schedule better."
     }
   ],
   "leakage_flags": [],

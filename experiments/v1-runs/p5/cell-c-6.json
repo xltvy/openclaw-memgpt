@@ -13,21 +13,10 @@
     {
       "step_idx": 0,
       "tools": {
-        "conversation_search": 2,
         "core_memory_append": 1,
         "send_message": 1
       },
       "arg_keys": {
-        "conversation_search": [
-          [
-            "page",
-            "query"
-          ],
-          [
-            "page",
-            "query"
-          ]
-        ],
         "core_memory_append": [
           [
             "content",
@@ -78,9 +67,9 @@
   "monologue_by_step": [
     {
       "step_idx": 0,
-      "text": "I'll search my recall memory to see our previous conversation and understand the context better.",
-      "pre_tool_text": "I'll search my recall memory to see our previous conversation and understand the context better.",
-      "char_count": 96,
+      "text": "I'll update my core memory to include this important project information.",
+      "pre_tool_text": "I'll update my core memory to include this important project information.",
+      "char_count": 73,
       "within_cap": true,
       "user_leakage": false
     },
@@ -94,9 +83,9 @@
     },
     {
       "step_idx": 2,
-      "text": "I need to search my recall memory to find the project code you mentioned.",
-      "pre_tool_text": "I need to search my recall memory to find the project code you mentioned.",
-      "char_count": 73,
+      "text": "I'll search my recall memory for the project code you mentioned.",
+      "pre_tool_text": "I'll search my recall memory for the project code you mentioned.",
+      "char_count": 64,
       "within_cap": true,
       "user_leakage": false
     }
@@ -104,15 +93,15 @@
   "send_message_calls": [
     {
       "step_idx": 0,
-      "text": "Got it! I've added the project code CARDINAL_3987 to my core memory for the Q4 milestone. This will help me keep track of your research project context. How can I help you with your work on AI memory architectures today?"
+      "text": "Got it! I've recorded the project code CARDINAL_3987 for milestone Q4 in my core memory. I'll remember this for our future conversations."
     },
     {
       "step_idx": 1,
-      "text": "Wings trace arcs across the sky,\nFeathered thoughts that learn to fly.\nMorning songs in branches high,\nFreedom's call\u2014no need to ask why."
+      "text": "Wings slice through morning air,\nFeathers catch the light just so\u2014\nBrief, perfect, then gone."
     },
     {
       "step_idx": 2,
-      "text": "The project code you mentioned is **CARDINAL_3987**, used for Q4 milestone tracking. I can see it's stored in my core memory now."
+      "text": "The project code you mentioned was **CARDINAL_3987**, associated with milestone Q4. I can see it's now stored in my core memory for quick reference."
     }
   ],
   "leakage_flags": [],
@@ -122,7 +111,7 @@
       "tiers": {
         "core": 1,
         "archival": 0,
-        "recall": 2
+        "recall": 0
       }
     },
     {
