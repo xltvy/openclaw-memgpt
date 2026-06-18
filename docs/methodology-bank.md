@@ -167,7 +167,10 @@ shape of the resolution. Listed in roughly the order they surfaced.
     that names a variable as "controlled" needs the same empirical check as
     code that names a behaviour as "the path is via X" (instance #11) —
     intuition-level controlled-variable claims fail the same way as
-    intuition-level mechanism claims.
+    intuition-level mechanism claims. **See #24** — the same controlled-variable
+    lesson recurs at the V1.4 provider switch (Bedrock → direct Anthropic), where
+    the served model is again the controlled variable and the serving chain is
+    shown non-material by the same kind of single-probe wire-format check.
 
 13. **`OPENAI_API_BASE` is load-bearing on `v1-cell-a`; `~/.memgpt/config`'s
     `model_endpoint` is decorative.** `memgpt configure` writes the value and
@@ -211,6 +214,14 @@ shape of the resolution. Listed in roughly the order they surfaced.
     This is a finding about Haiku 4.5's prompt-following at this specific multi-step discipline,
     not a finding about MemGPT's design. Sonnet 4.5 and other Claude models (presumably) maintain
     the chain; that question is left for a future cross-model robustness study.
+
+    **Forward-link (added with #25).** This is the *model-layer* appearance of send_message-discipline
+    fragility — a capable-enough model declining to chain `send_message`. **#25** records the
+    *architecture-layer* appearance of the same fragility: even with Sonnet 4.5 (which does maintain the
+    chain in reference MemGPT), Cell C drops send_message discipline because OpenClaw renders free-text
+    content as the reply, lacking MemGPT's content-as-monologue rendering and first-message enforcement.
+    The thread is continuous: send_message discipline is the dimension most exposed to both model
+    capability (#15) and host-framework architecture (#25).
 
 16. **Manual `memgpt run` fires a boot turn; programmatic wrapper does not.** Manual CLI invokes
     `agent.step()` once at startup (before user input) to surface MemGPT's "first login" welcome
