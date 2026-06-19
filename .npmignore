@@ -1,0 +1,27 @@
+# Fallback only — NOT the primary pruning mechanism.
+#
+# Finding: when package.json `files` lists a directory (e.g. "sidecar/"), npm
+# includes that directory wholesale and does NOT re-apply .npmignore to its
+# contents. So the actual pruning of sidecar/tests, __pycache__, *.pyc, etc. is
+# done by negated globs in package.json `files` ("!sidecar/tests/**", …) — see
+# there. This file only takes effect if `files` ever stops using directory
+# entries; it's kept as belt-and-suspenders. Patterns use .gitignore semantics.
+
+# Python tests bundled under the shipped sidecar/ server
+tests/
+
+# Python build / venv / cache cruft (untracked, present on dev machines)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+.python-version
+
+# Local, gitignored runtime config (never published)
+litellm_config.yaml
+
+# Editor / OS / build cruft
+.DS_Store
+*.map
+dist/

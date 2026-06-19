@@ -5,6 +5,17 @@
   "description": "MemGPT memory backend for OpenClaw — three-tier memory architecture via pymemgpt sidecar",
   "license": "Apache-2.0",
   "main": "./src/index.ts",
+  "files": [
+    "src/",
+    "sidecar/",
+    "!sidecar/tests/**",
+    "!**/__pycache__/**",
+    "!**/*.py[cod]",
+    "!sidecar/.python-version",
+    "!sidecar/litellm_config.yaml",
+    "openclaw.plugin.json",
+    "openclaw-plugin-sdk.d.ts"
+  ],
   "openclaw": {
     "extensions": [
       "./src/index.ts"
