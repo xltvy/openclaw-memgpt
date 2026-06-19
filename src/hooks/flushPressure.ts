@@ -236,6 +236,10 @@ export function registerFlushPressureHook(
             summaryLength: result.summaryLength,
             hiddenMessageCount: result.hiddenMessageCount,
           },
+          content: {
+            summary: result.summary,
+            summarised: v0Messages.slice(0, result.cutoff),
+          },
         });
 
         // ── Flush metadata write (§4.4 — 6c.6.3) ────────────────────────
@@ -305,6 +309,7 @@ export function registerFlushPressureHook(
               summaryLength: result.summaryLength,
               hiddenMessageCount: result.hiddenMessageCount,
             },
+            content: { summary: result.packagedMessage.content },
           });
         } catch (mirrorErr) {
           // Mirror failure: session metadata is already written. The next

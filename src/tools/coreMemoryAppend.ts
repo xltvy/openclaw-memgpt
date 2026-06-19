@@ -30,6 +30,7 @@ export const coreMemoryAppend =
         kind: "core_memory_append",
         namespace: deps.namespace,
         meta: { name },
+        content: { text: content },
       });
       return { content: [] };
     } catch (err) {

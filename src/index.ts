@@ -25,8 +25,29 @@ import { registerAgentEndHook } from "./hooks/mirror.ts";
 import { registerPromptSectionHook } from "./hooks/promptSection.ts";
 import { registerReplyDispatchHook } from "./hooks/replyDispatch.ts";
 import { LifecycleManager } from "./lifecycle/lifecycleManager.ts";
+import { ObservabilityEmitter } from "./observability/events.ts";
 import { makeToolDeps } from "./tools/deps.ts";
 import { registerTools } from "./tools/index.ts";
+
+/**
+ * Live observability bus (§6.2). Consumers attach listeners without holding the
+ * plugin instance:
+ *
+ * ```ts
+ * import { memoryEvents, MEMORY_EVENT_CHANNEL } from "openclaw-memgpt";
+ * memoryEvents.on(MEMORY_EVENT_CHANNEL, (e) => …);   // every event
+ * memoryEvents.on("archival_search", (e) => …);      // one kind
+ * ```
+ *
+ * Events are already level-qualified before they reach the bus. The JSONL sink
+ * under the OpenClaw state dir is the authoritative research record.
+ */
+export {
+  memoryEvents,
+  MEMORY_EVENT_CHANNEL,
+  type MemoryEvent,
+  type MemoryEventKind,
+} from "./observability/events.ts";
 
 const memgptPlugin = definePluginEntry({
   id: "openclaw-memgpt",
@@ -36,14 +57,19 @@ const memgptPlugin = definePluginEntry({
 
   register(api: OpenClawPluginApi): void {
     const config = parseConfig(api);
-    const lifecycle = new LifecycleManager(config, api.logger);
+
+    // §6.2 observability emitter — constructed with the level now; its JSONL
+    // sink is activate()d by LifecycleManager.start once the state dir is known
+    // (two-phase init). Shared by tools/hooks (via deps.emit) and lifecycle.
+    const emitter = new ObservabilityEmitter(config.observability, api.logger);
+    const lifecycle = new LifecycleManager(config, api.logger, { emitter });
 
     // Resolver closure: SidecarClient calls this once in doInit (at first
     // tool/hook fire — well after registerService.start has resolved the URL).
     const client = new SidecarClientImpl(config, async () =>
       lifecycle.resolveBaseUrl(),
     );
-    const deps = makeToolDeps(client, config, api, lifecycle);
+    const deps = makeToolDeps(client, config, api, lifecycle, emitter);
 
     registerTools(api, deps);
     registerPromptSectionHook(api, deps);

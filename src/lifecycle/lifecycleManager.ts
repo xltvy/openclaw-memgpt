@@ -30,6 +30,10 @@ import { fileURLToPath } from "node:url";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import type { PluginConfig } from "../config.ts";
+import type {
+  ActivatableEventSink,
+  MemoryEventKind,
+} from "../observability/events.ts";
 
 // ============================================================================
 // Dependency-injection seams (default to Node globals; tests pass fakes)
@@ -83,6 +87,12 @@ export interface LifecycleManagerOptions {
   stderrRingSize?: number;
   sidecarDir?: string;
   stateDirOverride?: string;
+  /**
+   * §6.2 observability sink. When supplied, `start` activates it (resolving the
+   * state dir) and the manager emits process-lifecycle events
+   * (`sidecar_spawned` / `sidecar_exited` / `health_failed`) through it.
+   */
+  emitter?: ActivatableEventSink;
   /** DI for testing. */
   spawn?: SpawnFn;
   createServer?: CreateServerFn;
@@ -102,12 +112,16 @@ export class LifecycleManager {
   private readonly config: PluginConfig;
   private readonly logger: OpenClawPluginApi["logger"];
   private readonly opts: Required<
-    Omit<LifecycleManagerOptions, "spawn" | "createServer" | "fetch" | "stateDirOverride">
+    Omit<
+      LifecycleManagerOptions,
+      "spawn" | "createServer" | "fetch" | "stateDirOverride" | "emitter"
+    >
   > & {
     spawn: SpawnFn;
     createServer: CreateServerFn;
     fetch: FetchFn;
     stateDirOverride?: string;
+    emitter?: ActivatableEventSink;
   };
 
   private child?: ChildProcess;
@@ -160,6 +174,7 @@ export class LifecycleManager {
       stderrRingSize: options.stderrRingSize ?? DEFAULT_STDERR_RING_SIZE,
       sidecarDir: options.sidecarDir ?? DEFAULT_SIDECAR_DIR,
       stateDirOverride: options.stateDirOverride,
+      emitter: options.emitter,
       spawn: options.spawn ?? nodeSpawn,
       createServer: options.createServer ?? nodeCreateServer,
       fetch: options.fetch ?? globalThis.fetch.bind(globalThis),
@@ -191,6 +206,20 @@ export class LifecycleManager {
       );
     }
 
+    // §6.2 two-phase init: activate the observability sink now that the state
+    // dir is resolvable. Covers both the gateway start path and the `--local`
+    // lazy-init path (both route through here). Before this, lifecycle/tool
+    // emits still hit the EventEmitter + logger; only JSONL is buffered out.
+    if (this.opts.emitter !== undefined) {
+      await this.opts.emitter
+        .activate(this.resolveStateDir(ctx))
+        .catch((err) => {
+          this.logger.warn(
+            `openclaw-memgpt: observability sink activate failed: ${stringifyError(err)}`,
+          );
+        });
+    }
+
     // 6c.10a Q5 precedence — config field > env var > spawn.
     this.attachUrl =
       this.config.sidecarUrl ??
@@ -212,6 +241,10 @@ export class LifecycleManager {
         return;
       } catch (err) {
         this._dead = true;
+        this.emitLifecycle("health_failed", {
+          mode: "attach",
+          timeoutMs: this.opts.attachTimeoutMs,
+        });
         throw new Error(
           `openclaw-memgpt: attach-mode healthz failed for ${this.attachUrl}: ${stringifyError(err)}`,
         );
@@ -285,6 +318,11 @@ export class LifecycleManager {
       // start failed; child is alive but unresponsive. Tear it down so we
       // don't leak the process when the SDK swallows our throw.
       this._dead = true;
+      this.emitLifecycle("health_failed", {
+        mode: "spawn",
+        port,
+        timeoutMs: this.opts.spawnTimeoutMs,
+      });
       await this.terminateChild().catch(() => undefined);
       throw new Error(
         `openclaw-memgpt: sidecar healthz timed out after ${this.opts.spawnTimeoutMs}ms — last stderr lines:\n${this.stderrTail()}\nCause: ${stringifyError(err)}`,
@@ -292,6 +330,7 @@ export class LifecycleManager {
     }
 
     this.started = true;
+    this.emitLifecycle("sidecar_spawned", { port });
     this.logger.info(`openclaw-memgpt: sidecar ready on ${url}`);
   }
 
@@ -443,6 +482,19 @@ export class LifecycleManager {
 
   // ── internals ────────────────────────────────────────────────────────────
 
+  /** Emit a process-lifecycle event (§6.2) if an emitter is wired. */
+  private emitLifecycle(
+    kind: MemoryEventKind,
+    meta: Record<string, number | string | boolean>,
+  ): void {
+    this.opts.emitter?.emit({
+      kind,
+      namespace: this.config.namespace,
+      ts: new Date().toISOString(),
+      meta,
+    });
+  }
+
   private resolveStateDir(ctx: Record<string, unknown>): string {
     if (this.opts.stateDirOverride !== undefined) {
       return this.opts.stateDirOverride;
@@ -557,6 +609,10 @@ export class LifecycleManager {
       this.logger.error(
         `openclaw-memgpt: sidecar process died (code=${code}, signal=${signal ?? "none"}). Last stderr lines:\n${this.stderrTail()}`,
       );
+      this.emitLifecycle("sidecar_exited", {
+        code: code ?? -1,
+        signal: signal ?? "none",
+      });
     });
   }
 

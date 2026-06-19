@@ -26,6 +26,7 @@ export const archivalInsert =
       kind: "archival_insert",
       namespace: deps.namespace,
       meta: { passages: r.passages },
+      content: { text: content },
     });
     return { content: [] };
   };

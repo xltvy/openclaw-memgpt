@@ -30,6 +30,10 @@ import {
   SIDECAR_DEAD_MESSAGE,
 } from "../../src/lifecycle/lifecycleManager.ts";
 import type { PluginConfig } from "../../src/config.ts";
+import type {
+  ActivatableEventSink,
+  MemoryEvent,
+} from "../../src/observability/events.ts";
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -134,6 +138,23 @@ function fetchReturning(
 
 function spawnReturning(child: FakeChild): (...args: unknown[]) => FakeChild {
   return () => child;
+}
+
+/** Capturing emitter — records §6.2 lifecycle events + the activate state dir. */
+function makeFakeEmitter(): ActivatableEventSink & {
+  events: MemoryEvent[];
+  activatedWith: string[];
+} {
+  const events: MemoryEvent[] = [];
+  const activatedWith: string[] = [];
+  return {
+    events,
+    activatedWith,
+    emit: (e: MemoryEvent) => events.push(e),
+    activate: async (stateDir: string) => {
+      activatedWith.push(stateDir);
+    },
+  };
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────
@@ -637,4 +658,71 @@ test("SIDECAR_DEAD_MESSAGE matches the canonical 6c.10a Q4 string", () => {
     SIDECAR_DEAD_MESSAGE,
     "openclaw-memgpt: sidecar process died; restart OpenClaw to recover",
   );
+});
+
+// §6.2 — lifecycle event emission + sink activation
+test("spawn success: activates the sink (state dir) and emits sidecar_spawned", async () => {
+  const fakeChild = new FakeChild();
+  const emitter = makeFakeEmitter();
+  const lc = new LifecycleManager(makeConfig({ namespace: "ns-life" }), makeLogger(), {
+    spawnTimeoutMs: 200,
+    pollIntervalMs: 10,
+    sidecarDir: "/tmp/fake-sidecar",
+    stateDirOverride: "/tmp/oc-state",
+    emitter,
+    fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+    spawn: spawnReturning(fakeChild) as never,
+  });
+
+  await lc.start({});
+
+  assert.deepEqual(emitter.activatedWith, ["/tmp/oc-state"]);
+  const spawned = emitter.events.find((e) => e.kind === "sidecar_spawned");
+  assert.ok(spawned, "sidecar_spawned must be emitted on successful spawn");
+  assert.equal(spawned!.namespace, "ns-life");
+  assert.equal(typeof spawned!.meta?.port, "number");
+});
+
+test("crash after start: child exit emits sidecar_exited with code/signal", async () => {
+  const fakeChild = new FakeChild();
+  const emitter = makeFakeEmitter();
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 200,
+    pollIntervalMs: 10,
+    sidecarDir: "/tmp/fake-sidecar",
+    stateDirOverride: "/tmp/oc-state",
+    emitter,
+    fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+    spawn: spawnReturning(fakeChild) as never,
+  });
+
+  await lc.start({});
+  // Simulate an unexpected crash (not a teardown SIGTERM).
+  fakeChild.emitExit(1, null);
+
+  assert.equal(lc.isDead, true);
+  const exited = emitter.events.find((e) => e.kind === "sidecar_exited");
+  assert.ok(exited, "sidecar_exited must be emitted on unexpected child exit");
+  assert.equal(exited!.meta?.code, 1);
+  assert.equal(exited!.meta?.signal, "none");
+});
+
+test("spawn healthz timeout emits health_failed", async () => {
+  const fakeChild = new FakeChild();
+  fakeChild.exitOnSigterm = true;
+  const emitter = makeFakeEmitter();
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 60,
+    pollIntervalMs: 10,
+    sidecarDir: "/tmp/fake-sidecar",
+    stateDirOverride: "/tmp/oc-state",
+    emitter,
+    fetch: fetchReturning(async () => ({ ok: false, status: 503 })),
+    spawn: spawnReturning(fakeChild) as never,
+  });
+
+  await assert.rejects(() => lc.start({}), /healthz timed out/);
+  const failed = emitter.events.find((e) => e.kind === "health_failed");
+  assert.ok(failed, "health_failed must be emitted on spawn healthz timeout");
+  assert.equal(failed!.meta?.mode, "spawn");
 });

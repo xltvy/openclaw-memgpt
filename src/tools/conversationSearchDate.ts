@@ -24,6 +24,7 @@ export const conversationSearchDate =
       kind: "conversation_search_date",
       namespace: deps.namespace,
       meta: { total: r.total, page, numPages: r.numPages },
+      content: { query: `${startDate}..${endDate}`, results: r.results },
     });
     return { content: [{ type: "text", text: r.formatted }] };
   };

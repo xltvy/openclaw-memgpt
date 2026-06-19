@@ -27,6 +27,7 @@ export const conversationSearch =
       kind: "conversation_search",
       namespace: deps.namespace,
       meta: { total: r.total, page, numPages: r.numPages },
+      content: { query, results: r.results },
     });
     return { content: [{ type: "text", text: r.formatted }] };
   };

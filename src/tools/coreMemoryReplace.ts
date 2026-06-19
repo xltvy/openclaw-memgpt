@@ -27,6 +27,7 @@ export const coreMemoryReplace =
         kind: "core_memory_replace",
         namespace: deps.namespace,
         meta: { name },
+        content: { text: newContent },
       });
       return { content: [] };
     } catch (err) {
