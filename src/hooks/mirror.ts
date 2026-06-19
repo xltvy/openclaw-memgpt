@@ -7,9 +7,9 @@
  * within-turn `conversation_search` can find an earlier same-turn message.
  * Here the turn's messages land in `pm.all_messages` atomically at turn end
  * — within-turn recall of same-turn messages is unavailable. Cross-session
- * recall (the property Persival tests) is unaffected because `agent_end`
+ * recall (the load-bearing property) is unaffected because `agent_end`
  * fires well before the next session. The gap is documented in §4.5 as the
- * first suspect if V1 A≈C diverges on the memory-tier-reasoning dimension.
+ * first suspect if cross-session recall behaviour diverges from native MemGPT.
  *
  * Wired via `api.on("agent_end")`, NOT via `MemoryCapabilityConfig.runtime`
  * — the `.d.ts` declares runtime as a plain key/value bag with no declared

@@ -464,12 +464,12 @@ export class LifecycleManager {
    * already awaited `start()` by the time this fires, so the happy path is
    * a synchronous URL return through the `spawnedUrl`/`attachUrl` branches.
    *
-   * **Lazy-init fallback (post-V1.3).** `openclaw agent --local` skips
+   * **Lazy-init fallback.** `openclaw agent --local` skips
    * `startPluginServices` entirely — `server.impl-DLF59fRo.js:21287` only
    * fires it inside the gateway startup path — so on the `--local` route
    * `start()` is never called and both URLs are undefined when tools fire.
-   * Before V1.3 that threw `"lifecycle not started"` and the trial was a
-   * silent no-op (the agent fell through to stock OpenClaw tools).
+   * Without the fallback that threw `"lifecycle not started"` and the agent
+   * fell through to stock OpenClaw tools.
    *
    * The fallback below detects the "neither url set, not dead" condition,
    * triggers `start({})` once, and awaits it. `resolveStateDir`'s env +
@@ -478,8 +478,6 @@ export class LifecycleManager {
    * the second branch returns the real URL. The 120 s spawn-mode healthz
    * block therefore moves from gateway-startup to first-turn — a property
    * of attach-style entry, not a regression.
-   *
-   * See `docs/methodology-bank.md` #18 for the bug write-up.
    */
   async resolveBaseUrl(): Promise<string> {
     if (this._dead) {
@@ -493,7 +491,7 @@ export class LifecycleManager {
     // Lazy-init: SDK service runner never fired (likely --local mode).
     if (this.lazyStartPromise === undefined) {
       this.logger.info(
-        "openclaw-memgpt: lazy lifecycle init triggered (SDK services.start did not fire — likely `openclaw agent --local`; see methodology-bank #18)",
+        "openclaw-memgpt: lazy lifecycle init triggered (SDK services.start did not fire — likely `openclaw agent --local`)",
       );
       this.lazyStartPromise = this.start({}).catch((err) => {
         // Clear so a later call can retry if the operator fixes the cause

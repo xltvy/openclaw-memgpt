@@ -9,12 +9,10 @@
 #   OR
 #   - Institutional Bedrock credentials forwarded via shim:4100
 #
-# See docs/methodology-bank.md #24 for the provider-switch decision.
-#
 # ---------------------------------------------------------------------------
 # Two serving chains are shown below. Enable whichever your access provides;
 # both serve the SAME model snapshot (claude-sonnet-4-5-20250929), so the
-# choice is non-material for the V1 §7.3 dimensions (methodology-bank #24).
+# choice is non-material to the model's behaviour.
 #
 #   A) Direct Anthropic  : OpenClaw -> LiteLLM -> api.anthropic.com
 #                          (V1.4 personal-key completion chain)

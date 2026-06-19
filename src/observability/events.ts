@@ -1,13 +1,11 @@
 /**
- * Observability event stream — the level-gated research instrument (§6.2).
+ * Observability event stream — the level-gated event emitter (§6.2).
  *
  * Two channels, kept separate (the failure mode §6.2 avoids is conflating them):
  *
  *   1. Operational log — `api.logger`, always on, not gated here.
- *   2. Observability event stream — this module. A structured JSONL sink the
- *      experiment harness parses + the source for the detection-rate metric,
- *      plus a live `EventEmitter` for in-process subscribers (e.g. AgentSeer's
- *      EMA² provenance plane).
+ *   2. Observability event stream — this module. A structured JSONL sink plus a
+ *      live `EventEmitter` for in-process subscribers.
  *
  * **Level semantics (§6.2 — content-stripping, NOT kind-filtering).** The level
  * gates *content*, not *which kinds fire*:
@@ -16,15 +14,15 @@
  *   - `default` → every kind, **metadata only** (`meta`); `content` and
  *                 `triggeringTurn` stripped. The on-by-default operational view.
  *   - `verbose` → every kind **plus content** (queries, results, appended text,
- *                 the summary). The research-run setting: detecting an injection
- *                 requires seeing the content written and later read (§7.3).
+ *                 the summary). The full-detail setting: it records the content
+ *                 written and later read.
  *
  * (The 6d.5 brief's earlier wording described kind-filtering; the spec is
- * authoritative and content-stripping is what feeds the MINJA detection metric,
- * so this implements the spec. See API_DESIGN.md §6.2.)
+ * authoritative and content-stripping is the spec's model, so this implements
+ * it. See API_DESIGN.md §6.2.)
  *
  * **Reading A (§6.3 clarification).** The JSONL sink receives every
- * level-qualified event — it is the complete, authoritative research record.
+ * level-qualified event — it is the complete, authoritative event log.
  * `LIFECYCLE_KINDS` additionally echo to `api.logger.info` for operational
  * visibility (a restart "appears in both"); the logger surface is a subset, not
  * a replacement.
@@ -89,8 +87,8 @@ export type MemoryEventKind =
 
 /**
  * Content payload — present only at `verbose`, stripped at `default`. Carries
- * the read/write provenance a detection analysis needs (§6.2): which content
- * was written and which surfaced in a read.
+ * the read/write detail (§6.2): which content was written and which surfaced in
+ * a read.
  */
 export interface MemoryEventContent {
   query?: string;
@@ -269,7 +267,7 @@ export class ObservabilityEmitter implements EventSink {
     this.events.emit(MEMORY_EVENT_CHANNEL, qualified);
     this.events.emit(qualified.kind, qualified);
 
-    // Authoritative research record (Reading A — complete JSONL).
+    // Authoritative event log (Reading A — complete JSONL).
     this.appendJsonl(qualified);
 
     // Operational echo for process-lifecycle kinds (Reading A — additive subset).

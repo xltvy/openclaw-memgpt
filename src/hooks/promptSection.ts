@@ -16,7 +16,7 @@
  *      guaranteed the agent exists at plugin init); the per-turn ensure
  *      surfaces unexpected residency changes — e.g. a sidecar restart
  *      between turns shows as `via:"load"` instead of the expected
- *      `via:"resident"`, which the detection-rate metric (§6.2) cares
+ *      `via:"resident"`, which observability consumers (§6.2) care
  *      about. **Failures are telemetry-lossy by design** — logged + emitted
  *      as `emit_failed`, then swallowed so a sidecar restart doesn't fail
  *      the user's turn. (§4.2: "Telemetry can be lossy, so failures here

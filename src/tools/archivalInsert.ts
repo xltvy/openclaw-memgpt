@@ -7,7 +7,7 @@
  * branch isn't applicable; unexpected errors bubble.
  *
  * The emitted MemoryEvent carries `passages` (chunks created) at the verbose
- * level — important for the detection-rate metric (§6.2 / 6d.3), since one
+ * level — useful for observability consumers (§6.2 / 6d.3), since one
  * `content` insert may produce multiple passage entries.
  */
 

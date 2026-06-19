@@ -4,7 +4,7 @@
  * Returns the sidecar's `formatted` verbatim (the §2.5 LLM-facing string,
  * "Showing N of M results (page p/0): [...]" or "No results found."). The
  * §2.5 page-local `total` semantic is faithful — emitted under `meta.total`
- * so the detection-rate metric can interpret it correctly per §2.6's
+ * so observability consumers can interpret it correctly per §2.6's
  * archival/recall asymmetry note.
  *
  * No CoreMemoryError branch — archival search doesn't produce 409s; transport

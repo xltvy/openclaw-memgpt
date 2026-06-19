@@ -43,7 +43,7 @@ import { notifyIfUnconfigured } from "./wizard/detect.ts";
  * ```
  *
  * Events are already level-qualified before they reach the bus. The JSONL sink
- * under the OpenClaw state dir is the authoritative research record.
+ * under the OpenClaw state dir is the authoritative event log.
  */
 export {
   memoryEvents,

@@ -7,8 +7,8 @@
  * (architecture name vs LLM-facing name).
  *
  * `total` here is the *true grand total* per §2.6 (recall paginates correctly,
- * unlike archival which returns page-local). Emitted under meta so the
- * detection-rate metric doesn't conflate the two semantics.
+ * unlike archival which returns page-local). Emitted under meta so observability
+ * consumers don't conflate the two semantics.
  */
 
 import { SIDECAR_DEAD_MESSAGE } from "../lifecycle/lifecycleManager.ts";
