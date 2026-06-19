@@ -28,6 +28,9 @@ import { LifecycleManager } from "./lifecycle/lifecycleManager.ts";
 import { ObservabilityEmitter } from "./observability/events.ts";
 import { makeToolDeps } from "./tools/deps.ts";
 import { registerTools } from "./tools/index.ts";
+import { resolveCredentialKey } from "./wizard/credentialStore.ts";
+import { registerWizardCli } from "./wizard/cli.ts";
+import { notifyIfUnconfigured } from "./wizard/detect.ts";
 
 /**
  * Live observability bus (§6.2). Consumers attach listeners without holding the
@@ -62,7 +65,34 @@ const memgptPlugin = definePluginEntry({
     // sink is activate()d by LifecycleManager.start once the state dir is known
     // (two-phase init). Shared by tools/hooks (via deps.emit) and lifecycle.
     const emitter = new ObservabilityEmitter(config.observability, api.logger);
-    const lifecycle = new LifecycleManager(config, api.logger, { emitter });
+
+    // §6d.6 — resolve the wizard-stored credential into the sidecar's LLM env
+    // (OPENAI_API_KEY / OPENAI_API_BASE) at spawn time. Closes over the
+    // resolved state dir supplied by LifecycleManager.start. Absent credential
+    // ⇒ no contributor ⇒ sidecar inherits the shell env (pre-6d.6 behaviour).
+    const credential = config.credential;
+    const baseUrl = config.baseUrl;
+    const credentialEnv =
+      credential === undefined
+        ? undefined
+        : async (stateDir: string): Promise<Record<string, string>> => {
+            const env: Record<string, string> = {};
+            const key = await resolveCredentialKey(credential, stateDir);
+            if (key !== undefined) env.OPENAI_API_KEY = key;
+            if (baseUrl !== undefined) env.OPENAI_API_BASE = baseUrl;
+            return env;
+          };
+
+    const lifecycle = new LifecycleManager(config, api.logger, {
+      emitter,
+      credentialEnv,
+    });
+
+    // §6d.6 — register the `openclaw memgpt setup` wizard command and surface a
+    // one-time pointer to it when the plugin is unconfigured (auto-detection;
+    // see notifyIfUnconfigured for why this notifies rather than auto-launches).
+    registerWizardCli(api);
+    notifyIfUnconfigured(api.logger, config);
 
     // Resolver closure: SidecarClient calls this once in doInit (at first
     // tool/hook fire — well after registerService.start has resolved the URL).

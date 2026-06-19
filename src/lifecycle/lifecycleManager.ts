@@ -93,6 +93,15 @@ export interface LifecycleManagerOptions {
    * (`sidecar_spawned` / `sidecar_exited` / `health_failed`) through it.
    */
   emitter?: ActivatableEventSink;
+  /**
+   * §6d.6 — async contributor of LLM credential env vars
+   * (`OPENAI_API_KEY` / `OPENAI_API_BASE`) for the spawned sidecar, resolved
+   * from the wizard's stored credential reference. Receives the resolved state
+   * dir (the secret-file root). Merged over inherited `process.env` but under
+   * the plugin-managed pins. Absent ⇒ the sidecar inherits credentials from the
+   * shell env verbatim (pre-6d.6 behaviour).
+   */
+  credentialEnv?: (stateDir: string) => Promise<Record<string, string>>;
   /** DI for testing. */
   spawn?: SpawnFn;
   createServer?: CreateServerFn;
@@ -114,7 +123,12 @@ export class LifecycleManager {
   private readonly opts: Required<
     Omit<
       LifecycleManagerOptions,
-      "spawn" | "createServer" | "fetch" | "stateDirOverride" | "emitter"
+      | "spawn"
+      | "createServer"
+      | "fetch"
+      | "stateDirOverride"
+      | "emitter"
+      | "credentialEnv"
     >
   > & {
     spawn: SpawnFn;
@@ -122,6 +136,7 @@ export class LifecycleManager {
     fetch: FetchFn;
     stateDirOverride?: string;
     emitter?: ActivatableEventSink;
+    credentialEnv?: (stateDir: string) => Promise<Record<string, string>>;
   };
 
   private child?: ChildProcess;
@@ -175,6 +190,7 @@ export class LifecycleManager {
       sidecarDir: options.sidecarDir ?? DEFAULT_SIDECAR_DIR,
       stateDirOverride: options.stateDirOverride,
       emitter: options.emitter,
+      credentialEnv: options.credentialEnv,
       spawn: options.spawn ?? nodeSpawn,
       createServer: options.createServer ?? nodeCreateServer,
       fetch: options.fetch ?? globalThis.fetch.bind(globalThis),
@@ -261,8 +277,24 @@ export class LifecycleManager {
       `openclaw-memgpt: sidecar spawning on 127.0.0.1:${port} (data_dir=${dataDir}, sidecarDir=${this.opts.sidecarDir})`,
     );
 
+    // §6d.6 — resolve the wizard's stored credential into LLM env vars. Merged
+    // over inherited process.env (the resolved key is authoritative) but under
+    // the plugin-managed pins below. Failures are logged, not fatal — the
+    // sidecar then falls back to whatever the shell env carries.
+    let credEnv: Record<string, string> = {};
+    if (this.opts.credentialEnv !== undefined) {
+      try {
+        credEnv = await this.opts.credentialEnv(stateDir);
+      } catch (err) {
+        this.logger.warn(
+          `openclaw-memgpt: credential resolution failed; sidecar will use shell env: ${stringifyError(err)}`,
+        );
+      }
+    }
+
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...credEnv,
       OPENCLAW_MEMGPT_DATA_DIR: dataDir,
       OPENCLAW_MEMGPT_HOST: "127.0.0.1",
       OPENCLAW_MEMGPT_PORT: String(port),

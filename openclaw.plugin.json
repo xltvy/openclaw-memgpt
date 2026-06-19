@@ -45,6 +45,28 @@
         "enum": ["off", "default", "verbose"],
         "default": "default",
         "description": "Observability event detail level."
+      },
+      "provider": {
+        "type": "string",
+        "enum": ["anthropic", "openai", "openai-compatible"],
+        "description": "LLM provider for the sidecar. Set by `openclaw memgpt setup`."
+      },
+      "baseUrl": {
+        "type": "string",
+        "description": "Sidecar LLM base URL (→ OPENAI_API_BASE). Required for openai-compatible; preset default otherwise."
+      },
+      "credential": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Credential reference (never the secret). Set by `openclaw memgpt setup`.",
+        "properties": {
+          "source": { "type": "string", "enum": ["file", "env"] },
+          "var": {
+            "type": "string",
+            "description": "Env var holding the API key (source=env only)."
+          }
+        },
+        "required": ["source"]
       }
     }
   }
