@@ -25,6 +25,17 @@ function scripted(queue: unknown[]): { p: Prompter; notes: string[] } {
   let i = 0;
   const notes: string[] = [];
   const next = () => queue[i++];
+  // Mimic @clack: validate is invoked with `undefined` (empty field) and with
+  // the entered value on keypress. Exercising it here reproduces the empty-field
+  // crash class that the original scripted fake (which never called validate)
+  // missed — a validator that throws on undefined fails the test naturally.
+  const runValidate = (
+    opts: { validate?: (v: string | undefined) => string | undefined },
+    v: unknown,
+  ) => {
+    opts.validate?.(undefined);
+    if (typeof v === "string") opts.validate?.(v);
+  };
   const p: Prompter = {
     intro() {},
     outro() {},
@@ -36,11 +47,15 @@ function scripted(queue: unknown[]): { p: Prompter; notes: string[] } {
     async select() {
       return next() as never;
     },
-    async text() {
-      return next() as string;
+    async text(opts) {
+      const v = next();
+      runValidate(opts, v);
+      return v as string;
     },
-    async password() {
-      return next() as string;
+    async password(opts) {
+      const v = next();
+      runValidate(opts, v);
+      return v as string;
     },
     async confirm() {
       return next() as boolean;
@@ -212,4 +227,34 @@ test("validateUrl: accepts http(s), rejects junk", () => {
   assert.equal(validateUrl("https://api.openai.com/v1"), undefined);
   assert.ok(validateUrl("not a url"));
   assert.ok(validateUrl("ftp://x"));
+});
+
+test("validators tolerate undefined (@clack empty-field contract)", () => {
+  // @clack calls validate(undefined) for an empty field — these must not throw.
+  assert.doesNotThrow(() => validateUrl(undefined));
+  assert.doesNotThrow(() => validateEnvVarName(undefined));
+  assert.doesNotThrow(() =>
+    validateKeyFormat(undefined, PROVIDER_PRESETS.anthropic),
+  );
+  // and each treats "empty" as invalid (returns an error string)
+  assert.ok(validateUrl(undefined));
+  assert.ok(validateEnvVarName(undefined));
+  assert.ok(validateKeyFormat(undefined, PROVIDER_PRESETS.anthropic));
+});
+
+test("blank optional sidecar returned as undefined → sidecarUrl undefined (no throw)", async () => {
+  // The TTY crash: an empty optional text field resolves to `undefined`, and
+  // the post-prompt `.trim()` must not throw. Script `undefined` for sidecar.
+  const { p } = scripted([
+    "anthropic",
+    "paste",
+    "sk-ant-key",
+    "claude-x",
+    "off",
+    undefined, // sidecar: empty field → @clack returns undefined
+    true,
+  ]);
+  const a = await collectAnswers(p);
+  assert.ok(a);
+  assert.equal(a!.sidecarUrl, undefined);
 });

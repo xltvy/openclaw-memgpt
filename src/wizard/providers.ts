@@ -78,10 +78,10 @@ export const PROVIDER_ORDER: ReadonlyArray<ProviderId> = [
  * reject on clear mismatch so typos surface early.
  */
 export function validateKeyFormat(
-  key: string,
+  key: string | undefined,
   preset: ProviderPreset,
 ): string | undefined {
-  const trimmed = key.trim();
+  const trimmed = (key ?? "").trim();
   if (trimmed.length === 0) return "API key must not be empty";
   if (preset.keyPrefix && !trimmed.startsWith(preset.keyPrefix)) {
     return `Expected an ${preset.label} key starting with "${preset.keyPrefix}"`;
@@ -92,16 +92,16 @@ export function validateKeyFormat(
 const ENV_VAR_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 
 /** Validate an env-var name shape ([A-Z_][A-Z0-9_]*). */
-export function validateEnvVarName(name: string): string | undefined {
-  if (!ENV_VAR_NAME_RE.test(name.trim())) {
+export function validateEnvVarName(name: string | undefined): string | undefined {
+  if (!ENV_VAR_NAME_RE.test((name ?? "").trim())) {
     return "Must be a valid environment variable name (A–Z, 0–9, _; not starting with a digit)";
   }
   return undefined;
 }
 
 /** Validate an http(s) URL shape for the base-url / sidecar-url prompts. */
-export function validateUrl(url: string): string | undefined {
-  const trimmed = url.trim();
+export function validateUrl(url: string | undefined): string | undefined {
+  const trimmed = (url ?? "").trim();
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {

@@ -50,11 +50,13 @@ export interface Prompter {
     placeholder?: string;
     initialValue?: string;
     defaultValue?: string;
-    validate?: (value: string) => string | undefined;
+    // @clack passes `undefined` (not "") for an empty field — validators must
+    // tolerate it. See `asText` and the validate* helpers in providers.ts.
+    validate?: (value: string | undefined) => string | undefined;
   }): Promise<string | symbol>;
   password(opts: {
     message: string;
-    validate?: (value: string) => string | undefined;
+    validate?: (value: string | undefined) => string | undefined;
   }): Promise<string | symbol>;
   confirm(opts: { message: string; initialValue?: boolean }): Promise<
     boolean | symbol
@@ -165,7 +167,7 @@ export async function collectAnswers(
       validate: (v) => validateUrl(v),
     });
     if (p.isCancel(entered)) return cancelled(p);
-    baseUrl = (entered as string).trim();
+    baseUrl = asText(entered).trim();
   }
 
   // ── Required: credential ─────────────────────────────────────────────────
@@ -178,7 +180,7 @@ export async function collectAnswers(
     placeholder: preset.defaultModel,
     initialValue: existingModel ?? preset.defaultModel,
     validate: (v) =>
-      v.trim().length === 0 ? "Model name is required" : undefined,
+      (v ?? "").trim().length === 0 ? "Model name is required" : undefined,
   });
   if (p.isCancel(model)) return cancelled(p);
 
@@ -195,18 +197,16 @@ export async function collectAnswers(
     message: "Override sidecar URL? (optional — blank lets the plugin spawn it)",
     placeholder: "leave blank to auto-spawn",
     initialValue: existingSidecar,
-    validate: (v) => (v.trim().length === 0 ? undefined : validateUrl(v)),
+    validate: (v) => ((v ?? "").trim().length === 0 ? undefined : validateUrl(v)),
   });
   if (p.isCancel(sidecarEntered)) return cancelled(p);
-  const sidecarUrl =
-    (sidecarEntered as string).trim().length > 0
-      ? (sidecarEntered as string).trim()
-      : undefined;
+  const sidecarTrimmed = asText(sidecarEntered).trim();
+  const sidecarUrl = sidecarTrimmed.length > 0 ? sidecarTrimmed : undefined;
 
   const answers: WizardAnswers = {
     provider: provider as ProviderId,
     baseUrl,
-    model: (model as string).trim(),
+    model: asText(model).trim(),
     credential: credResult.credential,
     pastedKey: credResult.pastedKey,
     removeOldSecretFile: credResult.removeOldSecretFile,
@@ -329,7 +329,7 @@ async function promptPastedKey(
     validate: (v) => validateKeyFormat(v, preset),
   });
   if (p.isCancel(key)) return null;
-  return (key as string).trim();
+  return asText(key).trim();
 }
 
 async function promptEnvVar(
@@ -344,7 +344,17 @@ async function promptEnvVar(
     validate: (v) => validateEnvVarName(v),
   });
   if (p.isCancel(name)) return null;
-  return { source: "env", var: (name as string).trim() };
+  return { source: "env", var: asText(name).trim() };
+}
+
+/**
+ * Coerce a non-cancelled prompt result to a string. @clack's `text`/`password`
+ * resolve to `undefined` (not `""`) for an empty field, so every post-prompt
+ * read must guard against it; this centralises that. (Symbols are filtered by
+ * the preceding `isCancel` checks, but coercing them too keeps this total.)
+ */
+function asText(value: string | symbol | undefined): string {
+  return typeof value === "string" ? value : "";
 }
 
 function cancelled(p: Prompter): null {

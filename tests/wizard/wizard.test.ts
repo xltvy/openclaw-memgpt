@@ -62,6 +62,13 @@ const CANCEL = Symbol("cancel");
 function scripted(queue: unknown[]): Prompter {
   let i = 0;
   const next = () => queue[i++];
+  const runValidate = (
+    opts: { validate?: (v: string | undefined) => string | undefined },
+    v: unknown,
+  ) => {
+    opts.validate?.(undefined);
+    if (typeof v === "string") opts.validate?.(v);
+  };
   return {
     intro() {},
     outro() {},
@@ -71,11 +78,15 @@ function scripted(queue: unknown[]): Prompter {
     async select() {
       return next() as never;
     },
-    async text() {
-      return next() as string;
+    async text(opts) {
+      const v = next();
+      runValidate(opts, v);
+      return v as string;
     },
-    async password() {
-      return next() as string;
+    async password(opts) {
+      const v = next();
+      runValidate(opts, v);
+      return v as string;
     },
     async confirm() {
       return next() as boolean;
