@@ -114,6 +114,7 @@ test("paste path: writes secret file BEFORE config; stores file credential", asy
     configIO: h.configIO,
     secretIO: h.secretIO,
     stateDir: "/state",
+    reachable: async () => true, // stub: don't hit the network in unit tests
   });
   assert.equal(res.status, "applied");
   assert.deepEqual(h.order, ["secret:write", "config:update"]);
@@ -142,6 +143,7 @@ test("env path: no secret file written; stores env credential", async () => {
     configIO: h.configIO,
     secretIO: h.secretIO,
     stateDir: "/state",
+    reachable: async () => true, // stub: don't hit the network in unit tests
   });
   assert.equal(res.status, "applied");
   assert.deepEqual(h.order, ["config:update"]);
@@ -173,6 +175,7 @@ test("file→env switch: config written BEFORE secret removal", async () => {
     configIO: h.configIO,
     secretIO: h.secretIO,
     stateDir: "/state",
+    reachable: async () => true, // stub: don't hit the network in unit tests
   });
   assert.equal(res.status, "applied");
   assert.deepEqual(h.order, ["config:update", "secret:remove"]);
@@ -187,6 +190,7 @@ test("cancelled wizard writes nothing", async () => {
     configIO: h.configIO,
     secretIO: h.secretIO,
     stateDir: "/state",
+    reachable: async () => true, // stub: don't hit the network in unit tests
   });
   assert.equal(res.status, "cancelled");
   assert.deepEqual(h.order, []);
@@ -212,6 +216,7 @@ test("spawn mode + uv missing → warns about uv and notes cold-start", async ()
     configIO: h.configIO,
     secretIO: h.secretIO,
     stateDir: "/state",
+    reachable: async () => true, // stub: don't hit the network in unit tests
     checkUv: async () => false,
   });
   assert.ok(
@@ -232,6 +237,7 @@ test("spawn mode + uv present → no uv warning, still notes cold-start", async 
     configIO: h.configIO,
     secretIO: h.secretIO,
     stateDir: "/state",
+    reachable: async () => true, // stub: don't hit the network in unit tests
     checkUv: async () => true,
   });
   assert.ok(!prompter.notes.some((n) => n.includes("install uv") || n.includes("`uv`")));
@@ -255,6 +261,7 @@ test("attach mode (sidecarUrl set) → skips uv check + spawn guidance", async (
     configIO: h.configIO,
     secretIO: h.secretIO,
     stateDir: "/state",
+    reachable: async () => true, // stub: don't hit the network in unit tests
     checkUv: async () => {
       uvChecked = true;
       return true;
@@ -266,6 +273,39 @@ test("attach mode (sidecarUrl set) → skips uv check + spawn guidance", async (
     !prompter.notes.some((n) => /uv|60.?90s|embedding model/.test(n)),
     "no uv / cold-start guidance in attach mode",
   );
+});
+
+// ── endpoint reachability ────────────────────────────────────────────────────
+
+test("unreachable LLM endpoint → 'Endpoint not reachable' note", async () => {
+  const h = harness();
+  const prompter = scripted([...SPAWN_PASTE_FLOW]);
+  await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    checkUv: async () => true,
+    reachable: async () => false,
+  });
+  assert.ok(
+    prompter.notes.some((n) => /reach/i.test(n)),
+    "must warn when the configured LLM endpoint is unreachable",
+  );
+});
+
+test("reachable LLM endpoint → no reachability warning", async () => {
+  const h = harness();
+  const prompter = scripted([...SPAWN_PASTE_FLOW]);
+  await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    checkUv: async () => true,
+    reachable: async () => true,
+  });
+  assert.ok(!prompter.notes.some((n) => /reach/i.test(n)));
 });
 
 // ── notifyIfUnconfigured ─────────────────────────────────────────────────────

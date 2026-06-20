@@ -30,6 +30,7 @@ import { fileURLToPath } from "node:url";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import { isConfigComplete, type PluginConfig } from "../config.ts";
+import { isEndpointReachable, isLocalUrl } from "../reachability.ts";
 import type {
   ActivatableEventSink,
   MemoryEventKind,
@@ -286,6 +287,7 @@ export class LifecycleManager {
         );
         this.started = true;
         this.logger.info("openclaw-memgpt: attach mode ready");
+        await this.warnIfLlmEndpointUnreachable();
         return;
       } catch (err) {
         this._dead = true;
@@ -439,6 +441,31 @@ export class LifecycleManager {
     this.started = true;
     this.emitLifecycle("sidecar_spawned", { port });
     this.logger.info(`openclaw-memgpt: sidecar ready on ${url}`);
+    await this.warnIfLlmEndpointUnreachable();
+  }
+
+  /**
+   * §6d.6 — after the sidecar is up, probe the configured LLM endpoint
+   * (config.baseUrl). The sidecar boots fine without it (only summarisation
+   * calls the LLM), so an unreachable endpoint would otherwise stay silent
+   * until an overflow turn. Warn loudly + actionably instead. Non-fatal;
+   * connection-level only (any HTTP response = reachable).
+   */
+  private async warnIfLlmEndpointUnreachable(): Promise<void> {
+    const base = this.config.baseUrl;
+    if (base === undefined) return;
+    const reachable = await isEndpointReachable(base, {
+      fetch: this.opts.fetch,
+      timeoutMs: 4000,
+    });
+    if (reachable) return;
+    this.logger.warn(
+      `openclaw-memgpt: configured LLM endpoint ${base} is not reachable — memory's LLM step (summarisation on context overflow) will fail until it's up.${
+        isLocalUrl(base)
+          ? " If it's a local server (LiteLLM/Ollama/…), start it; the plugin does not launch it."
+          : ""
+      }`,
+    );
   }
 
   /** Already-registered exit handler closure (kept for test cleanup). */

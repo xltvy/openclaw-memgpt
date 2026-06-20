@@ -16,6 +16,7 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
 
+import { isEndpointReachable, isLocalUrl } from "../reachability.ts";
 import {
   type ConfigIO,
   mergePluginConfig,
@@ -55,6 +56,11 @@ export interface RunWizardDeps {
    * Injected in tests. Only consulted in spawn mode (no `sidecarUrl`).
    */
   checkUv?: () => Promise<boolean>;
+  /**
+   * Connection-level reachability probe for the configured LLM endpoint.
+   * Defaults to a real fetch (`isEndpointReachable`). Injected in tests.
+   */
+  reachable?: (url: string) => Promise<boolean>;
 }
 
 export interface RunWizardResult {
@@ -123,6 +129,25 @@ export async function runWizard(
     } catch (err) {
       logger.warn(
         `openclaw-memgpt: could not remove old secret file (harmless — config no longer references it): ${String(err)}`,
+      );
+    }
+  }
+
+  // Reachability of the LLM endpoint (all modes — the sidecar always uses
+  // config.baseUrl). Warn at setup if it's not answering now, so an unstarted
+  // local server (LiteLLM/Ollama/…) or a typo'd URL surfaces here rather than
+  // only when summarisation later fails. Connection-level only (any HTTP
+  // response = reachable), so an auth-gated endpoint doesn't false-warn.
+  if (baseUrl !== undefined) {
+    const reachable = deps.reachable ?? ((u: string) => isEndpointReachable(u));
+    if (!(await reachable(baseUrl))) {
+      prompter.note(
+        `Couldn't reach the LLM endpoint ${baseUrl} right now.${
+          isLocalUrl(baseUrl)
+            ? " If this is a local server (LiteLLM, Ollama, LM Studio, …), start it before running an agent — the plugin does not launch it for you."
+            : " Double-check the URL; the sidecar uses it for the LLM."
+        }`,
+        "Endpoint not reachable",
       );
     }
   }
