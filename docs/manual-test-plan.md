@@ -128,10 +128,18 @@ mv "$UV.bak" "$UV"                            # restore
 wizard still completes and saves config; `uv` is still absent afterward (no
 auto-install).
 
-**Bonus (runtime, uv missing):** with `uv` still renamed, configure then run an
-agent turn → the sidecar spawn fails, the plugin marks itself dead, and memory
-tools return `sidecar process died; restart OpenClaw` — the agent itself keeps
-working. Confirms graceful degradation, not a crash.
+**Bonus (runtime, uv missing) — fail-fast:** with `uv` still renamed, configure
+then run an agent turn → `spawn("uv")` emits `ENOENT` and the plugin **aborts
+the healthz wait immediately** (it does *not* sit through the 120s timeout),
+marks itself dead, and tools degrade with the sidecar-unavailable message — the
+agent itself keeps working. Watch the timing: the failure should land within a
+second or two of `sidecar spawning…`, not after ~120s. (Regression guard for
+the original 120s hang, fixed in `fix(lifecycle): fail fast when sidecar spawn
+errors`.)
+
+> **Heads-up:** while `uv` is renamed, the **integration test suite will fail**
+> (those tests spawn a real sidecar via `uv run`). Restore uv
+> (`mv ~/.local/bin/uv.bak ~/.local/bin/uv`) before running `node --test`.
 
 ## Test 3 — Correct installs across credential modes
 
