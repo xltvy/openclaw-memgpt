@@ -77,13 +77,11 @@ This check has **two independent parts** — keep them separate:
 
 - If `plugins disable` errors on the config-write guard, set
   `entries.openclaw-memgpt.enabled=false` by hand instead.
-- Full-uninstall variant: copy the `.rejected` payload OpenClaw computes (the CLI
-  uninstall trips the size-drop guard on a small dev config — see
-  `docs/methodology-bank.md` if recorded):
+- **Full-uninstall variant — use the plugin's own command** (removes artifacts
+  + de-registers in one go, and bypasses the size-drop guard that blocks generic
+  `plugins uninstall` on a minimal config):
   ```bash
-  R=$(ls -t ~/.openclaw-dev/openclaw.json.rejected.* | head -1)
-  cp "$R" ~/.openclaw-dev/openclaw.json
-  rm -rf ~/.openclaw-dev/plugins/openclaw-memgpt
+  openclaw --dev memgpt uninstall --force
   ```
 
 ## Test 1b — Installed but *unconfigured* → loaded yet fully inert (the gate)
@@ -243,6 +241,13 @@ turns. A sidecar restart is the real "cross-session" boundary, not a new
   entries with content; `off` → stays empty/absent.
 - **Secret-file security:** paste path → `stat -f '%Lp' …/api-key` is `600`; the
   key never appears in terminal output or logs.
+- **Uninstall command:** `openclaw --dev memgpt uninstall --dry-run` lists the
+  artifacts (secret dir, `memgpt-data`, observability log) + the config path,
+  changing nothing. Then `… uninstall --force` removes them and de-registers the
+  plugin (`plugins list` no longer shows it; an agent run shows no registration
+  line). `--keep-data` preserves `memgpt-data`; without `--force` it confirms
+  first (and errors in a non-interactive shell). The linked source repo is
+  untouched.
 - **Package boundary:** `npm pack --dry-run` → 48 files, no `tests/`,
   `__pycache__`, or dissertation dirs (`docs/`, `experiments/`, …).
 - **First-run cold-start:** first configured turn blocks ~60–90s (embedder
