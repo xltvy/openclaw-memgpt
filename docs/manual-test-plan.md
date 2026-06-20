@@ -182,17 +182,36 @@ source ~/.secrets && openclaw --dev agent --local --agent main --message "Rememb
 
 ### Verify (all three), via ground truth
 
-```bash
-# PORT from the gateway/CLI log: "sidecar ready on http://127.0.0.1:<port>"
-curl -s -XPOST "http://127.0.0.1:$PORT/agents/<namespace>/recall:search" \
-  -H 'content-type: application/json' -d '{"query":"espresso"}'
-# OR run a 2nd turn and confirm finalPromptText "N previous messages in recall memory" grew.
-```
+**Primary signal in `--local` mode: `finalPromptText`.** Each turn's prompt
+carries the MemGPT section the sidecar injected — e.g. *"N previous messages …
+in recall memory, M … in archival"* plus the `<human>`/`<persona>` core-memory
+blocks. Success looks like:
+- a stored fact appears in the `<human>` block on a *later* turn (e.g. after a
+  `core_memory_append`, the next run's prompt shows "Favourite drink is
+  espresso" — and that string is in **no** workspace file, so it's genuine
+  memgpt core memory, not injected markdown), and
+- the recall count grows across turns.
 
-**Cross-session (load-bearing):** kill the sidecar PID, run another turn with the
-same `OPENCLAW_MEMGPT_DATA_DIR` → recall still finds "espresso" (exercises the
-`:load` rehydration path). A sidecar restart is the real "cross-session"
-boundary, not a new `--session-id`.
+> **Why not curl the sidecar after the turn?** In `--local` mode the plugin
+> tears the sidecar down when the CLI process exits, so a port from the spawn
+> log is dead by the time the prompt returns. To curl `recall:search`/`archival
+> :search` directly, either run it *while a turn is in flight*, or use **attach
+> mode** (start the sidecar by hand on a fixed port, set `config.sidecarUrl`),
+> which keeps it alive:
+> ```bash
+> PORT=8765   # your manually-started attach-mode sidecar
+> NS=v1-cell-c-p5-t00   # your config.namespace (see the registration log line)
+> curl -s -XPOST "http://127.0.0.1:${PORT}/agents/${NS}/recall:search" \
+>   -H 'content-type: application/json' -d '{"query":"espresso"}'
+> ```
+
+**Cross-session (load-bearing) — already exercised by `--local`.** Because each
+`--local` turn spawns a *fresh* sidecar that `:load`s from `OPENCLAW_MEMGPT_DATA_DIR`,
+a fact written in one turn's process and surfaced in a *later* turn's prompt
+(different sidecar process) already proves the `:load` rehydration path. In
+gateway/attach mode, force it explicitly by killing the sidecar PID between
+turns. A sidecar restart is the real "cross-session" boundary, not a new
+`--session-id`.
 
 ## Test 4+ — Other manual checks
 
