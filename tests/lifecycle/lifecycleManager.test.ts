@@ -121,6 +121,11 @@ class FakeChild extends EventEmitter {
     this.emit("exit", code, signal);
   }
 
+  /** Simulate an async spawn failure (e.g. `spawn uv ENOENT`). */
+  emitError(err: Error): void {
+    this.emit("error", err);
+  }
+
   emitStderr(line: string): void {
     this.stderr.push(`${line}\n`);
   }
@@ -360,7 +365,7 @@ test("spawn-mode healthz timeout — start throws; isDead set; child terminated"
   });
   await assert.rejects(
     lc.start({ stateDir: "/tmp/oc-test" }),
-    /healthz timed out/,
+    /did not become ready/,
   );
   assert.equal(lc.isDead, true);
   assert.ok(
@@ -726,10 +731,46 @@ test("spawn healthz timeout emits health_failed", async () => {
     spawn: spawnReturning(fakeChild) as never,
   });
 
-  await assert.rejects(() => lc.start({}), /healthz timed out/);
+  await assert.rejects(() => lc.start({}), /did not become ready/);
   const failed = emitter.events.find((e) => e.kind === "health_failed");
   assert.ok(failed, "health_failed must be emitted on spawn healthz timeout");
   assert.equal(failed!.meta?.mode, "spawn");
+});
+
+test("spawn error (uv ENOENT) fails fast — does not wait the healthz timeout", async () => {
+  const fakeChild = new FakeChild();
+  const emitter = makeFakeEmitter();
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 30_000, // large: a regression (waiting it out) makes this test slow + fail the timing assert
+    pollIntervalMs: 20,
+    sidecarDir: "/tmp/fake-sidecar",
+    stateDirOverride: "/tmp/oc-state",
+    emitter,
+    // healthz never succeeds, so without fast-fail start() would poll for 30s
+    fetch: fetchReturning(async () => {
+      throw new Error("ECONNREFUSED");
+    }),
+    spawn: spawnReturning(fakeChild) as never,
+  });
+
+  const t0 = Date.now();
+  const startP = lc.start({});
+  // emit the async ENOENT spawn error just after start begins polling
+  setImmediate(() =>
+    fakeChild.emitError(
+      Object.assign(new Error("spawn uv ENOENT"), { code: "ENOENT" }),
+    ),
+  );
+  await assert.rejects(startP, /uv installed and on PATH/);
+  assert.ok(
+    Date.now() - t0 < 3_000,
+    "must fail fast on ENOENT, not wait the 30s healthz timeout",
+  );
+  assert.equal(lc.isDead, true);
+  assert.ok(
+    emitter.events.some((e) => e.kind === "health_failed"),
+    "health_failed emitted on spawn error",
+  );
 });
 
 // ── §6d.6 config gate ────────────────────────────────────────────────────────

@@ -376,11 +376,45 @@ export class LifecycleManager {
     this.installExitHandler();
     this.spawnedUrl = url;
 
+    // Fast-fail: a missing `uv` surfaces as an async `spawn uv ENOENT` *error*
+    // event (not a synchronous throw), and a sidecar that boots then crashes
+    // emits an early `exit`. Race both against the healthz poll so we abort
+    // immediately instead of polling for the full 120 s timeout. `settled`
+    // makes the listeners no-ops once the race is decided (so the legitimate
+    // teardown `exit` later doesn't reject an unawaited promise).
+    const child = this.child;
+    let settled = false;
+    const startupFailed = new Promise<never>((_, reject) => {
+      child.once("error", (err) => {
+        if (settled) return;
+        settled = true;
+        reject(
+          new Error(
+            `failed to launch sidecar via \`uv run\` — is uv installed and on PATH? (${stringifyError(err)})`,
+          ),
+        );
+      });
+      child.once("exit", (code, signal) => {
+        if (settled) return;
+        settled = true;
+        reject(
+          new Error(
+            `sidecar exited during startup (code=${code}, signal=${signal ?? "none"})`,
+          ),
+        );
+      });
+    });
+
     try {
-      await this.pollHealthz(url, this.opts.spawnTimeoutMs, "spawn");
+      await Promise.race([
+        this.pollHealthz(url, this.opts.spawnTimeoutMs, "spawn"),
+        startupFailed,
+      ]);
+      settled = true;
     } catch (err) {
-      // start failed; child is alive but unresponsive. Tear it down so we
+      // Spawn error / early exit / healthz timeout — tear the child down so we
       // don't leak the process when the SDK swallows our throw.
+      settled = true;
       this._dead = true;
       this.emitLifecycle("health_failed", {
         mode: "spawn",
@@ -388,8 +422,9 @@ export class LifecycleManager {
         timeoutMs: this.opts.spawnTimeoutMs,
       });
       await this.terminateChild().catch(() => undefined);
+      const tail = this.stderrTail();
       throw new Error(
-        `openclaw-memgpt: sidecar healthz timed out after ${this.opts.spawnTimeoutMs}ms — last stderr lines:\n${this.stderrTail()}\nCause: ${stringifyError(err)}`,
+        `openclaw-memgpt: sidecar did not become ready: ${stringifyError(err)}${tail ? `\nLast stderr lines:\n${tail}` : ""}`,
       );
     }
 
