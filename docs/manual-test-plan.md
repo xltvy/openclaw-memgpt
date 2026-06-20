@@ -8,9 +8,23 @@ from the published package via the `files` whitelist in `package.json`.
 
 ## Conventions that apply to every test
 
-- **The agent's own model is separate.** Every agent turn needs OpenClaw's own
-  LLM configured (the "brain", in `~/.openclaw-dev/agents/main/agent/models.json`)
-  — independent of the wizard, which configures only the memory **sidecar**.
+- **The agent's own model is separate, and must be reachable + funded.** Every
+  agent turn needs OpenClaw's own LLM (the "brain", in
+  `~/.openclaw-dev/agents/main/agent/models.json`) — independent of the wizard,
+  which configures only the memory **sidecar**. If the brain's endpoint is
+  unreachable or out of budget, *every* turn fails regardless of memgpt. In this
+  repo's dev setup the brain is `gpt-5.4` routed through a local LiteLLM
+  (`http://127.0.0.1:4000/v1`) → proxy shim (`:4100`) → institutional endpoint,
+  so that stack must be up before any agent turn (see CLAUDE.md "RUNNING THE
+  STACK"). Quick diagnosis of an agent turn that errors:
+  - `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4000/v1/models` →
+    `000` means LiteLLM is **down** (start the stack);
+  - a `500 … "Budget exceeded"` means the **upstream account hit its cap** (raise
+    budget / switch model group / use a funded provider) — not a plugin or
+    OpenClaw bug;
+  - a normal reply means the brain is fine and you can exercise memory.
+  A fresh OpenClaw install does *not* need LiteLLM — this dependency comes only
+  from this repo's `models.json` pointing the brain at the local proxy.
 - **Verify "memory works" by ground truth, not the CLI summary.** The CLI prints
   `livenessState:"abandoned"` + `⚠️ Agent couldn't generate a response` on every
   `send_message` turn by design (send_message isn't in OpenClaw's
@@ -31,14 +45,28 @@ The plugin must not touch OpenClaw when it isn't active.
 ```bash
 openclaw --dev plugins disable openclaw-memgpt        # "not used" without a full uninstall
 openclaw --dev agent --local --agent main --message "Hello, who are you?" --json 2>&1 | tee /tmp/t1.log
-grep -i "openclaw-memgpt" /tmp/t1.log && echo "FAIL: plugin still involved" || echo "PASS: no memgpt log lines"
+grep -i "openclaw-memgpt: 7 tools" /tmp/t1.log && echo "FAIL: plugin loaded in agent run" || echo "PASS: plugin absent from agent run"
 pgrep -f "uvicorn main:app" && echo "FAIL: sidecar spawned" || echo "PASS: no sidecar"
 openclaw --dev plugins enable openclaw-memgpt          # restore
 ```
 
-**Expect:** agent replies normally; **no** `openclaw-memgpt: … registered` line, no
-"not configured" notice, no sidecar process, no `send_message`/`abandoned`
-artifact.
+This check has **two independent parts** — keep them separate:
+
+1. **Plugin isolation (the actual assertion, works even with the brain down):**
+   the `agent` run's log must contain **no** `openclaw-memgpt: 7 tools … registered`
+   line, no "not configured" notice, no sidecar, no `send_message`/`abandoned`
+   artifact. This passes regardless of whether the LLM call succeeds.
+2. **Agent replies normally (needs the brain up + funded):** a successful reply
+   requires the host LLM to be reachable and in budget (see the prerequisites
+   above). If the turn ends in `network connection error` (LiteLLM down) or
+   `Budget exceeded` (account cap), that's the **brain**, not the plugin — and it
+   still satisfies part 1, since the failure has zero memgpt involvement.
+
+> **Gotcha:** the `openclaw-memgpt: … registered` line you'll see printed by the
+> `plugins disable` command *itself* is expected — that command loads the plugin
+> once to operate on it. Only the **`agent` run's** output (`/tmp/t1.log`) counts
+> for part 1; that's why the grep targets the log file, not the disable command's
+> stdout.
 
 - If `plugins disable` errors on the config-write guard, set
   `entries.openclaw-memgpt.enabled=false` by hand instead.
