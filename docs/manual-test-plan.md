@@ -224,6 +224,18 @@ turns. A sidecar restart is the real "cross-session" boundary, not a new
   `openclaw.json` sha256 is unchanged. Also test declining at the summary confirm.
 - **Invalid key rejected:** paste a wrong-prefix key (Anthropic/OpenAI) → wizard
   rejects inline (format-only; never tests the key against the network).
+- **Unreachable-endpoint notify (the plugin does NOT boot LiteLLM/Ollama for
+  you):** configure OpenAI-compatible with a *local* base URL (e.g.
+  `http://127.0.0.1:4000/v1`) while nothing is listening there →
+  - **wizard** shows an "Endpoint not reachable" note with a "start your local
+    server" hint, and still saves config;
+  - **runtime** — start an agent with that endpoint down → after the sidecar
+    comes up, a warning logs that the LLM endpoint is unreachable (summarisation
+    will fail until it's up); the turn still works for non-LLM memory ops.
+  Then start the endpoint and confirm no warning. A direct provider
+  (`api.anthropic.com`/`api.openai.com`) is reachable over the internet, so it
+  never warns. (Connection-level check: an auth-gated endpoint returning 401
+  counts as reachable — no false warning.)
 - **Attach mode skips spawn guidance:** set a `sidecarUrl` in the wizard → no
   `uv`/cold-start notes; start a manual sidecar and confirm the plugin attaches
   instead of spawning, and at teardown does **not** SIGTERM your sidecar.
