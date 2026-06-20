@@ -34,6 +34,13 @@ from the published package via the `files` whitelist in `package.json`.
   - recall-count growth in the next turn's `finalPromptText` (`--log-level trace`).
   See `CLAUDE.md` → "V1 PROTOCOL".
 - **Back up first:** `cp ~/.openclaw-dev/openclaw.json ~/.openclaw-dev/openclaw.json.bak`
+- **The plugin must be ENABLED for every wizard/gate test (1b onward).** The
+  `openclaw memgpt setup` command and the tools/hooks only exist when the plugin
+  is loaded — a **disabled** plugin registers nothing, so `memgpt setup` returns
+  `unknown command 'memgpt'`. Test 1 disables the plugin; **re-enable before
+  continuing:** `openclaw --dev plugins enable openclaw-memgpt`. (After install,
+  the plugin is enabled by default, so a real first-time user already has the
+  command.)
 - **Restore when done** (see the end of this file).
 
 ---
@@ -83,6 +90,10 @@ This check has **two independent parts** — keep them separate:
 
 Distinct from Test 1: the plugin loads, but does nothing until setup completes.
 
+> **Precondition:** the plugin must be **enabled** (`openclaw --dev plugins
+> enable openclaw-memgpt`). If you just ran Test 1, it's disabled — this test
+> would otherwise show no registration line and look (wrongly) like Test 1.
+
 ```bash
 # ensure unconfigured (soft reset of the wizard fields only)
 node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));const g=c.plugins.entries["openclaw-memgpt"].config;delete g.provider;delete g.baseUrl;delete g.credential;fs.writeFileSync(p,JSON.stringify(c,null,2));'
@@ -98,6 +109,11 @@ model calls a memory tool the result is the `openclaw memgpt setup` string;
 responds.
 
 ## Test 2 — `uv` missing → wizard detects, warns, does NOT install
+
+> **Precondition:** the plugin must be **enabled** so the `memgpt` command
+> exists — otherwise `openclaw --dev memgpt setup` returns
+> `unknown command 'memgpt'`. If you ran Test 1:
+> `openclaw --dev plugins enable openclaw-memgpt`.
 
 ```bash
 UV=$(which uv); mv "$UV" "$UV.bak"          # /opt/homebrew/bin is user-owned on Apple Silicon (no sudo); else use sudo
