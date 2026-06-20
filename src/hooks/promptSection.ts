@@ -125,6 +125,11 @@ export function registerPromptSectionHook(
   deps: ToolDeps,
 ): void {
   api.on("before_prompt_build", async (_event, ctx) => {
+    // §6d.6 config gate — contribute nothing (silently) when unconfigured. The
+    // register-time notice already told the user to run setup; no per-turn log.
+    if (deps.lifecycle?.isConfigured === false) {
+      return { prependSystemContext: "" };
+    }
     // §6.1 lifecycle — if the sidecar died, return an empty contribution and
     // log once per turn. Letting the turn proceed without a MemGPT prompt
     // section is the lesser harm vs throwing here (which would block every

@@ -66,6 +66,8 @@ export function registerAgentEndHook(
   deps: ToolDeps,
 ): void {
   api.on("agent_end", async (event: AgentEndEvent, ctx: AgentEndCtx) => {
+    // §6d.6 config gate — skip mirror+save (silently) when unconfigured.
+    if (deps.lifecycle?.isConfigured === false) return;
     // §6.1 lifecycle — if the sidecar died, skip mirror+save entirely. The
     // previous turn's save (if any) is the last good on-disk state; trying
     // to mirror to a dead sidecar would only produce a noisy error.
