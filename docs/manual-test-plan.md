@@ -275,10 +275,23 @@ inspect() {
 }
 reinstall() {
   cd ~/Workspace/UCL/dissertation/openclaw-memgpt
+  # OpenClaw's install scan aborts past 10k directories. `uv run` used to drop a
+  # torch-heavy .venv (~6.5k dirs) here; the plugin now relocates it under the
+  # state dir, but delete any stale in-repo one before a --link reinstall:
+  rm -rf sidecar/.venv
   openclaw --dev plugins install --link --dangerously-force-unsafe-install .
   openclaw --dev memgpt setup   # paste path, to recreate the secret file
 }
 ```
+
+> **Install-scan note (dev `--link` only).** OpenClaw blocks an install whose
+> source tree exceeds 10,000 directories (`manifest dependency scan exceeded max
+> directories`), and `--dangerously-force-unsafe-install` does **not** bypass it.
+> The plugin keeps its own tree small (the heavy uv venv now lives under the
+> state dir, not the plugin), but this repo also carries `experiments/` (~5.6k
+> dirs) and a stale `sidecar/.venv` can re-appear if you run an old build — so
+> `rm -rf sidecar/.venv` before reinstalling. A published (npm) install ships
+> only the 48-file tarball, so it never hits this.
 
 **U1 — `--dry-run` (non-destructive).**
 ```bash
