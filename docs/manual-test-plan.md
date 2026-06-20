@@ -365,6 +365,22 @@ here and is exactly why the command exists (generic `plugins uninstall` just
 fails on this config). On a normal-sized config the SDK path is used and there's
 no warning.
 
+**Note — a *full* uninstall resets namespace/persona/human (not data loss).**
+Uninstall removes the entire `plugins.entries.openclaw-memgpt` block, including
+`namespace`/`persona`/`human` (the wizard doesn't collect those — they're config
+fields, out of wizard scope). After reinstall + `setup` the agent therefore runs
+with the **default** namespace (`default`) and persona, i.e. a *fresh* agent —
+the previous namespace's memory is still on disk under `memgpt-data` but isn't
+loaded (it's keyed by namespace). To resume a specific agent after reinstall,
+re-add `namespace` (and persona/human) to the config block, e.g.:
+```bash
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";
+const c=JSON.parse(fs.readFileSync(p,"utf8"));
+Object.assign(c.plugins.entries["openclaw-memgpt"].config,{namespace:"vs-agent-01"});
+fs.writeFileSync(p,JSON.stringify(c,null,2))'
+```
+(Use `--keep-data` if you intend to reattach to that namespace's memory.)
+
 ---
 
 ## Restore
