@@ -384,6 +384,11 @@ export class LifecycleManager {
     // teardown `exit` later doesn't reject an unawaited promise).
     const child = this.child;
     let settled = false;
+    // Abort the losing race branch: when `startupFailed` wins, `pollHealthz`
+    // would otherwise keep looping + logging for the full timeout (Promise.race
+    // doesn't cancel the loser) and its un-unref'd sleep timers would keep the
+    // process alive. The signal stops it within one poll interval.
+    const pollAbort = new AbortController();
     const startupFailed = new Promise<never>((_, reject) => {
       child.once("error", (err) => {
         if (settled) return;
@@ -407,7 +412,7 @@ export class LifecycleManager {
 
     try {
       await Promise.race([
-        this.pollHealthz(url, this.opts.spawnTimeoutMs, "spawn"),
+        this.pollHealthz(url, this.opts.spawnTimeoutMs, "spawn", pollAbort.signal),
         startupFailed,
       ]);
       settled = true;
@@ -426,6 +431,9 @@ export class LifecycleManager {
       throw new Error(
         `openclaw-memgpt: sidecar did not become ready: ${stringifyError(err)}${tail ? `\nLast stderr lines:\n${tail}` : ""}`,
       );
+    } finally {
+      // Stop the losing pollHealthz (no-op if it already won/finished).
+      pollAbort.abort();
     }
 
     this.started = true;
@@ -644,6 +652,7 @@ export class LifecycleManager {
     baseUrl: string,
     timeoutMs: number,
     modeLabel: "spawn" | "attach",
+    signal?: AbortSignal,
   ): Promise<void> {
     const url = baseUrl.endsWith("/") ? `${baseUrl}healthz` : `${baseUrl}/healthz`;
     const deadline = Date.now() + timeoutMs;
@@ -652,6 +661,10 @@ export class LifecycleManager {
     let lastError: unknown;
 
     while (Date.now() < deadline) {
+      // Aborted because a competing condition (spawn error / early exit) already
+      // decided startup — stop quietly so we don't keep polling + logging for
+      // the full timeout, and so un-unref'd sleep timers stop holding the loop.
+      if (signal?.aborted) return;
       try {
         const resp = await this.opts.fetch(url);
         if (resp.ok) return;

@@ -740,6 +740,7 @@ test("spawn healthz timeout emits health_failed", async () => {
 test("spawn error (uv ENOENT) fails fast — does not wait the healthz timeout", async () => {
   const fakeChild = new FakeChild();
   const emitter = makeFakeEmitter();
+  let fetchCalls = 0;
   const lc = new LifecycleManager(makeConfig(), makeLogger(), {
     spawnTimeoutMs: 30_000, // large: a regression (waiting it out) makes this test slow + fail the timing assert
     pollIntervalMs: 20,
@@ -748,6 +749,7 @@ test("spawn error (uv ENOENT) fails fast — does not wait the healthz timeout",
     emitter,
     // healthz never succeeds, so without fast-fail start() would poll for 30s
     fetch: fetchReturning(async () => {
+      fetchCalls += 1;
       throw new Error("ECONNREFUSED");
     }),
     spawn: spawnReturning(fakeChild) as never,
@@ -770,6 +772,16 @@ test("spawn error (uv ENOENT) fails fast — does not wait the healthz timeout",
   assert.ok(
     emitter.events.some((e) => e.kind === "health_failed"),
     "health_failed emitted on spawn error",
+  );
+
+  // The losing pollHealthz must be aborted: no further healthz fetches after
+  // start() rejects (otherwise it keeps polling + logging for the full timeout).
+  const callsAtFailure = fetchCalls;
+  await new Promise((r) => setTimeout(r, 100)); // several poll intervals
+  assert.equal(
+    fetchCalls,
+    callsAtFailure,
+    "pollHealthz must stop after fast-fail (race loser aborted)",
   );
 });
 
