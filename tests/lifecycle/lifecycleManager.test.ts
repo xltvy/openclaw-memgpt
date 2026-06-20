@@ -837,3 +837,28 @@ test("config gate: resolveBaseUrl throws NOT_CONFIGURED when unconfigured", asyn
     new RegExp(NOT_CONFIGURED_MESSAGE.replace(/[.*+?^${}()|[\]\\`]/g, "\\$&")),
   );
 });
+
+// §6d.6 — sidecar venv relocated out of the plugin dir (install-scan bloat fix)
+
+test("spawn env: UV_PROJECT_ENVIRONMENT points under the state dir, not the plugin dir", async () => {
+  const fakeChild = new FakeChild();
+  let capturedEnv: NodeJS.ProcessEnv | undefined;
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 500,
+    pollIntervalMs: 10,
+    sidecarDir: "/plugin/sidecar",
+    stateDirOverride: "/state",
+    fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+    spawn: ((_cmd: string, _args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
+      capturedEnv = opts?.env;
+      return fakeChild;
+    }) as never,
+  });
+
+  await lc.start({});
+  assert.equal(capturedEnv?.UV_PROJECT_ENVIRONMENT, "/state/memgpt-sidecar-venv");
+  assert.ok(
+    !capturedEnv?.UV_PROJECT_ENVIRONMENT?.includes("/plugin/sidecar"),
+    "venv must not live under the plugin/sidecar dir",
+  );
+});

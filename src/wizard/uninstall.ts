@@ -70,6 +70,7 @@ export function artifactPaths(
   const paths = [
     path.join(stateDir, "plugins", "openclaw-memgpt"), // secret dir (api-key)
     path.join(stateDir, "memgpt-observability.jsonl"), // observability log
+    path.join(stateDir, "memgpt-sidecar-venv"), // uv venv (torch/embedder) relocated here
   ];
   if (!opts.keepData) {
     paths.push(path.join(stateDir, "memgpt-data")); // MemGPT agent state / pickles

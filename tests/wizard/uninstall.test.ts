@@ -63,14 +63,16 @@ test("applyUninstallMutation: leaves a foreign memory slot alone", () => {
   assert.equal(next.plugins.slots.memory, "memory-lancedb");
 });
 
-test("artifactPaths: includes data dir by default, excludes with keepData", () => {
+test("artifactPaths: includes data dir + venv by default, excludes data with keepData", () => {
   const all = artifactPaths("/state");
   assert.ok(all.some((p) => p.endsWith("/plugins/openclaw-memgpt")));
   assert.ok(all.some((p) => p.endsWith("/memgpt-observability.jsonl")));
+  assert.ok(all.some((p) => p.endsWith("/memgpt-sidecar-venv")));
   assert.ok(all.some((p) => p.endsWith("/memgpt-data")));
 
   const kept = artifactPaths("/state", { keepData: true });
   assert.ok(!kept.some((p) => p.endsWith("/memgpt-data")), "data dir kept");
+  assert.ok(kept.some((p) => p.endsWith("/memgpt-sidecar-venv")), "venv still removed");
   assert.equal(kept.length, all.length - 1);
 });
 
@@ -134,7 +136,7 @@ test("runUninstall --force: removes artifacts and de-registers via SDK update", 
     stateDir: "/state",
   });
   assert.equal(res.status, "removed");
-  assert.equal(removed.length, 3, "secret dir + observability + data dir");
+  assert.equal(removed.length, 4, "secret dir + observability + venv + data dir");
   assert.equal(get().plugins.entries[PLUGIN_ID], undefined, "de-registered via update");
 });
 
@@ -149,8 +151,9 @@ test("runUninstall --keep-data: does not remove the data dir", async () => {
     fs,
     stateDir: "/state",
   });
-  assert.equal(removed.length, 2);
+  assert.equal(removed.length, 3);
   assert.ok(!removed.some((p) => p.endsWith("/memgpt-data")));
+  assert.ok(removed.some((p) => p.endsWith("/memgpt-sidecar-venv")));
 });
 
 test("runUninstall: falls back to direct atomic write when SDK update is rejected", async () => {

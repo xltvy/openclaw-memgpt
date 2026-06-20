@@ -306,9 +306,11 @@ export class LifecycleManager {
     const url = `http://127.0.0.1:${port}`;
     const stateDir = this.resolveStateDir(ctx);
     const dataDir = path.join(stateDir, "memgpt-data");
+    // uv venv relocated out of the plugin dir (see env block below).
+    const venvDir = path.join(stateDir, "memgpt-sidecar-venv");
 
     this.logger.info(
-      `openclaw-memgpt: sidecar spawning on 127.0.0.1:${port} (data_dir=${dataDir}, sidecarDir=${this.opts.sidecarDir})`,
+      `openclaw-memgpt: sidecar spawning on 127.0.0.1:${port} (data_dir=${dataDir}, venv=${venvDir}, sidecarDir=${this.opts.sidecarDir})`,
     );
 
     // §6d.6 — resolve the wizard's stored credential into LLM env vars. Merged
@@ -326,12 +328,20 @@ export class LifecycleManager {
       }
     }
 
+    // `UV_PROJECT_ENVIRONMENT` puts `uv run`'s virtualenv at `venvDir` (under
+    // the state dir) instead of the default `<sidecarDir>/.venv`. That default
+    // pulls in torch/transformers/scipy for the embedder (~6.5k directories);
+    // inside the installed plugin it bloats the tree past OpenClaw's 10k-dir
+    // install/update safety-scan limit (and bloats a dev `--link` source tree
+    // the same way). Relocating keeps the plugin tree small and lets the venv
+    // persist across reinstalls (no torch re-download). `uninstall` removes it.
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       ...credEnv,
       OPENCLAW_MEMGPT_DATA_DIR: dataDir,
       OPENCLAW_MEMGPT_HOST: "127.0.0.1",
       OPENCLAW_MEMGPT_PORT: String(port),
+      UV_PROJECT_ENVIRONMENT: venvDir,
     };
 
     try {
