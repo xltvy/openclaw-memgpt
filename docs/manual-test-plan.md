@@ -241,17 +241,116 @@ turns. A sidecar restart is the real "cross-session" boundary, not a new
   entries with content; `off` → stays empty/absent.
 - **Secret-file security:** paste path → `stat -f '%Lp' …/api-key` is `600`; the
   key never appears in terminal output or logs.
-- **Uninstall command:** `openclaw --dev memgpt uninstall --dry-run` lists the
-  artifacts (secret dir, `memgpt-data`, observability log) + the config path,
-  changing nothing. Then `… uninstall --force` removes them and de-registers the
-  plugin (`plugins list` no longer shows it; an agent run shows no registration
-  line). `--keep-data` preserves `memgpt-data`; without `--force` it confirms
-  first (and errors in a non-interactive shell). The linked source repo is
-  untouched.
+- **Uninstall command:** see **Test 5** below for the full per-variant matrix.
 - **Package boundary:** `npm pack --dry-run` → 48 files, no `tests/`,
   `__pycache__`, or dissertation dirs (`docs/`, `experiments/`, …).
 - **First-run cold-start:** first configured turn blocks ~60–90s (embedder
   download); second run is fast.
+
+---
+
+## Test 5 — Uninstall (each variant)
+
+`openclaw memgpt uninstall [--dry-run] [--force] [--keep-data]`.
+
+> **Setup once before the destructive cases (U2–U7).** The command only exists
+> while the plugin is installed, and you want artifacts present to watch them
+> get removed. So: plugin installed, configured via the **paste** path (creates
+> the secret file), and one agent turn run (creates `memgpt-data`). After a
+> *full* uninstall the `memgpt` command disappears, so each destructive case
+> below ends with a **reinstall** to set up the next.
+
+**Shared "before/after" inspectors:**
+```bash
+inspect() {
+  echo "-- artifacts --"
+  ls -d ~/.openclaw-dev/plugins/openclaw-memgpt ~/.openclaw-dev/memgpt-data \
+        ~/.openclaw-dev/memgpt-observability.jsonl 2>/dev/null || true
+  echo "-- registration --"
+  node -e 'const c=require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins||{};
+    console.log("entry:",!!c.entries?.["openclaw-memgpt"],
+    "| install:",!!c.installs?.["openclaw-memgpt"],
+    "| slot:",c.slots?.memory,
+    "| ourPathInLoad:",(c.load?.paths||[]).some(p=>p.includes("openclaw-memgpt")))'
+}
+reinstall() {
+  cd ~/Workspace/UCL/dissertation/openclaw-memgpt
+  openclaw --dev plugins install --link --dangerously-force-unsafe-install .
+  openclaw --dev memgpt setup   # paste path, to recreate the secret file
+}
+```
+
+**U1 — `--dry-run` (non-destructive).**
+```bash
+inspect
+openclaw --dev memgpt uninstall --dry-run
+inspect   # IDENTICAL to before
+```
+Expect: a "Dry run — no changes made" box listing the 3 artifacts + the config
+path; artifacts and registration **unchanged**.
+
+**U2 — interactive confirm, declined.**
+```bash
+openclaw --dev memgpt uninstall    # answer "n" / No
+inspect   # unchanged
+```
+Expect: "Uninstall cancelled — nothing was removed."; nothing removed.
+
+**U3 — interactive confirm, accepted (full removal).**
+```bash
+openclaw --dev memgpt uninstall    # answer "y" / Yes
+inspect
+```
+Expect: all 3 artifacts gone; `entry:false install:false slot:memory-core
+ourPathInLoad:false`. Then:
+```bash
+openclaw --dev memgpt --help 2>&1 | tail -3   # "unknown command 'memgpt'" — plugin unregistered
+openclaw --dev plugins list 2>&1 | grep -i memgpt || echo "gone"
+reinstall   # set up the next case
+```
+
+**U4 — `--force` (no prompt).**
+```bash
+openclaw --dev memgpt uninstall --force
+inspect    # all removed, de-registered — same as U3, no prompt
+reinstall
+```
+
+**U5 — `--keep-data`.**
+```bash
+openclaw --dev memgpt uninstall --force --keep-data
+ls -d ~/.openclaw-dev/memgpt-data        # STILL PRESENT
+ls ~/.openclaw-dev/plugins/openclaw-memgpt 2>&1   # secret dir gone
+inspect   # de-registered; only memgpt-data remains
+reinstall
+```
+Expect: `memgpt-data` preserved; secret dir + observability log removed; plugin
+de-registered.
+
+**U6 — non-interactive without `--force` errors.**
+```bash
+openclaw --dev memgpt uninstall </dev/null   # no TTY, no --force
+```
+Expect: error "uninstall needs confirmation — re-run with --force …"; **nothing
+removed** (verify with `inspect`).
+
+**U7 — round-trip (clean removal allows fresh install).**
+```bash
+openclaw --dev memgpt uninstall --force
+reinstall
+openclaw --dev memgpt setup       # first-run wizard behaves like a clean install
+source ~/.secrets && openclaw --dev agent --local --agent main --message "hi" --json
+```
+Expect: reinstall + setup succeed from the cleaned state; a turn works → proves
+the uninstall left no corrupting residue.
+
+**Size-drop note (your minimal dev config):** because de-registering shrinks the
+tiny dev `openclaw.json` >50%, the SDK `updateConfig` is rejected and the command
+**falls back to a direct atomic write** — you may see a one-line
+"SDK config update rejected … writing config directly" warning. That's expected
+here and is exactly why the command exists (generic `plugins uninstall` just
+fails on this config). On a normal-sized config the SDK path is used and there's
+no warning.
 
 ---
 
