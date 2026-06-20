@@ -13,6 +13,7 @@
  * interactive flow, dynamic-imported by the `setup` CLI command.
  */
 
+import { execFile } from "node:child_process";
 import path from "node:path";
 
 import {
@@ -48,6 +49,12 @@ export interface RunWizardDeps {
   /** Resolved OpenClaw state dir (secret-file root). Defaults to the SDK resolver. */
   stateDir?: string;
   logger?: Logger;
+  /**
+   * Prerequisite probe: resolves true when `uv` is available (the plugin spawns
+   * the sidecar via `uv run uvicorn`). Defaults to a real `uv --version` check.
+   * Injected in tests. Only consulted in spawn mode (no `sidecarUrl`).
+   */
+  checkUv?: () => Promise<boolean>;
 }
 
 export interface RunWizardResult {
@@ -120,6 +127,30 @@ export async function runWizard(
     }
   }
 
+  // Spawn-mode-only guidance (attach mode runs no sidecar of ours). Surfaces
+  // the `uv` prerequisite and the embedder cold-start at setup time rather than
+  // letting them bite at the first turn.
+  if (answers.sidecarUrl === undefined) {
+    const uvOk = await (deps.checkUv ?? defaultCheckUv)();
+    if (!uvOk) {
+      prompter.note(
+        "`uv` was not found on your PATH. The plugin runs the memory sidecar via `uv run uvicorn`, so install uv before starting an agent:\n  https://docs.astral.sh/uv/  (e.g. `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)\nThis wizard does not install it for you.",
+        "Prerequisite missing",
+      );
+    }
+    prompter.note(
+      "The first agent turn downloads the embedding model (~60–90s) before memory is ready; subsequent runs are fast.",
+      "Heads-up",
+    );
+  }
+
   prompter.outro("openclaw-memgpt configured. Run an agent to start using memory.");
   return { status: "applied", answers };
+}
+
+/** Real `uv` probe — resolves true iff `uv --version` exits 0. */
+function defaultCheckUv(): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile("uv", ["--version"], { timeout: 5000 }, (err) => resolve(err == null));
+  });
 }

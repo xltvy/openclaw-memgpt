@@ -59,9 +59,10 @@ function harness(initial: Record<string, any> = {}) {
 }
 
 const CANCEL = Symbol("cancel");
-function scripted(queue: unknown[]): Prompter {
+function scripted(queue: unknown[]): Prompter & { notes: string[] } {
   let i = 0;
   const next = () => queue[i++];
+  const notes: string[] = [];
   const runValidate = (
     opts: { validate?: (v: string | undefined) => string | undefined },
     v: unknown,
@@ -70,9 +71,12 @@ function scripted(queue: unknown[]): Prompter {
     if (typeof v === "string") opts.validate?.(v);
   };
   return {
+    notes,
     intro() {},
     outro() {},
-    note() {},
+    note(m: string) {
+      notes.push(m);
+    },
     cancel() {},
     isCancel: (v) => v === CANCEL,
     async select() {
@@ -186,6 +190,82 @@ test("cancelled wizard writes nothing", async () => {
   });
   assert.equal(res.status, "cancelled");
   assert.deepEqual(h.order, []);
+});
+
+// ── prerequisite (uv) + cold-start guidance ──────────────────────────────────
+
+const SPAWN_PASTE_FLOW = [
+  "anthropic",
+  "paste",
+  "sk-ant-key",
+  "claude-x",
+  "off",
+  "", // sidecar blank → spawn mode
+  true,
+];
+
+test("spawn mode + uv missing → warns about uv and notes cold-start", async () => {
+  const h = harness();
+  const prompter = scripted([...SPAWN_PASTE_FLOW]);
+  await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    checkUv: async () => false,
+  });
+  assert.ok(
+    prompter.notes.some((n) => n.includes("uv") && n.includes("install")),
+    "missing uv must surface an install instruction",
+  );
+  assert.ok(
+    prompter.notes.some((n) => /60.?90s|embedding model/.test(n)),
+    "cold-start heads-up must be shown",
+  );
+});
+
+test("spawn mode + uv present → no uv warning, still notes cold-start", async () => {
+  const h = harness();
+  const prompter = scripted([...SPAWN_PASTE_FLOW]);
+  await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    checkUv: async () => true,
+  });
+  assert.ok(!prompter.notes.some((n) => n.includes("install uv") || n.includes("`uv`")));
+  assert.ok(prompter.notes.some((n) => /60.?90s|embedding model/.test(n)));
+});
+
+test("attach mode (sidecarUrl set) → skips uv check + spawn guidance", async () => {
+  const h = harness();
+  const prompter = scripted([
+    "anthropic",
+    "paste",
+    "sk-ant-key",
+    "claude-x",
+    "off",
+    "http://127.0.0.1:9000", // sidecar override → attach mode
+    true,
+  ]);
+  let uvChecked = false;
+  await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    checkUv: async () => {
+      uvChecked = true;
+      return true;
+    },
+  });
+  assert.equal(uvChecked, false, "attach mode must not probe uv (no spawn)");
+  // The summary note is always shown; assert no spawn-only guidance is added.
+  assert.ok(
+    !prompter.notes.some((n) => /uv|60.?90s|embedding model/.test(n)),
+    "no uv / cold-start guidance in attach mode",
+  );
 });
 
 // ── notifyIfUnconfigured ─────────────────────────────────────────────────────
