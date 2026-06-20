@@ -27,6 +27,7 @@ import { Readable } from "node:stream";
 
 import {
   LifecycleManager,
+  NOT_CONFIGURED_MESSAGE,
   SIDECAR_DEAD_MESSAGE,
 } from "../../src/lifecycle/lifecycleManager.ts";
 import type { PluginConfig } from "../../src/config.ts";
@@ -44,6 +45,10 @@ function makeConfig(overrides: Partial<PluginConfig> = {}): PluginConfig {
     persona: "test-persona",
     human: "test-human",
     observability: "default",
+    // Configured by default (provider + credential) so spawn/attach tests run;
+    // the §6d.6 config gate is exercised by overriding these to undefined.
+    provider: "openai",
+    credential: { source: "env", var: "OPENAI_API_KEY" },
     ...overrides,
   };
 }
@@ -725,4 +730,57 @@ test("spawn healthz timeout emits health_failed", async () => {
   const failed = emitter.events.find((e) => e.kind === "health_failed");
   assert.ok(failed, "health_failed must be emitted on spawn healthz timeout");
   assert.equal(failed!.meta?.mode, "spawn");
+});
+
+// ── §6d.6 config gate ────────────────────────────────────────────────────────
+
+test("config gate: isConfigured reflects provider + credential presence", () => {
+  const configured = new LifecycleManager(makeConfig(), makeLogger());
+  assert.equal(configured.isConfigured, true);
+  const noProvider = new LifecycleManager(
+    makeConfig({ provider: undefined }),
+    makeLogger(),
+  );
+  assert.equal(noProvider.isConfigured, false);
+  const noCred = new LifecycleManager(
+    makeConfig({ credential: undefined }),
+    makeLogger(),
+  );
+  assert.equal(noCred.isConfigured, false);
+});
+
+test("config gate: start() skips spawn entirely when unconfigured", async () => {
+  let spawnCalls = 0;
+  const lc = new LifecycleManager(
+    makeConfig({ provider: undefined, credential: undefined }),
+    makeLogger(),
+    {
+      spawn: ((..._args: unknown[]) => {
+        spawnCalls += 1;
+        return new FakeChild();
+      }) as never,
+      createServer: (() => {
+        throw new Error("pickFreePort must not run when unconfigured");
+      }) as never,
+    },
+  );
+  await lc.start({}); // must resolve without throwing and without spawning
+  assert.equal(spawnCalls, 0, "spawn must not be called when unconfigured");
+  assert.equal(lc.isStarted, false, "start() leaves started=false when unconfigured");
+});
+
+test("config gate: resolveBaseUrl throws NOT_CONFIGURED when unconfigured", async () => {
+  const lc = new LifecycleManager(
+    makeConfig({ provider: undefined, credential: undefined }),
+    makeLogger(),
+    {
+      spawn: (() => {
+        throw new Error("must not spawn");
+      }) as never,
+    },
+  );
+  await assert.rejects(
+    () => lc.resolveBaseUrl(),
+    new RegExp(NOT_CONFIGURED_MESSAGE.replace(/[.*+?^${}()|[\]\\`]/g, "\\$&")),
+  );
 });

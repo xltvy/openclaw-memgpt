@@ -23,6 +23,10 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import type { PluginConfig } from "../config.ts";
 import type { SidecarClient } from "../client/sidecarClient.ts";
 import type { LifecycleManager } from "../lifecycle/lifecycleManager.ts";
+import {
+  NOT_CONFIGURED_MESSAGE,
+  SIDECAR_DEAD_MESSAGE,
+} from "../lifecycle/lifecycleManager.ts";
 import type { EventSink, MemoryEvent } from "../observability/events.ts";
 
 // ============================================================================
@@ -68,8 +72,9 @@ export interface ToolDeps {
   emit: (event: MemoryEvent) => void;
   logger: ToolLogger;
   /**
-   * §6.1 lifecycle — tools and hooks consult `lifecycle.isDead` at entry to
-   * short-circuit cleanly when the sidecar has crashed (6c.10a Q4). Optional
+   * §6.1 lifecycle — tools consult it (via `toolGuard`) at entry to
+   * short-circuit cleanly when unconfigured (§6d.6) or when the sidecar has
+   * crashed (6c.10a Q4), and hooks consult `lifecycle.isDead` directly. Optional
    * at this seam so existing tests that build a deps bag by hand keep working
    * without constructing a full LifecycleManager; the entry point always
    * supplies a real one.
@@ -99,4 +104,28 @@ export function makeToolDeps(
     logger: api.logger,
     lifecycle,
   };
+}
+
+/**
+ * Readiness gate for the six sidecar-backed tools (§6d.6). Returns a verbatim
+ * tool-result to short-circuit with when the plugin can't serve a memory op:
+ *   - unconfigured (no provider + credential) → `NOT_CONFIGURED_MESSAGE`
+ *     (takes priority — the actionable cause), or
+ *   - sidecar dead → `SIDECAR_DEAD_MESSAGE`.
+ * Returns `null` when ready, including when no lifecycle is wired (hand-built
+ * test deps) — those proceed as before. `isConfigured === false` is an explicit
+ * comparison so stubs that omit the getter (undefined) don't trip the gate.
+ */
+export function toolGuard(
+  deps: ToolDeps,
+): { content: Array<{ type: string; text: string }> } | null {
+  const lc = deps.lifecycle;
+  if (!lc) return null;
+  if (lc.isConfigured === false) {
+    return { content: [{ type: "text", text: NOT_CONFIGURED_MESSAGE }] };
+  }
+  if (lc.isDead) {
+    return { content: [{ type: "text", text: SIDECAR_DEAD_MESSAGE }] };
+  }
+  return null;
 }

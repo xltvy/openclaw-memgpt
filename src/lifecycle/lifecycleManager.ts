@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
-import type { PluginConfig } from "../config.ts";
+import { isConfigComplete, type PluginConfig } from "../config.ts";
 import type {
   ActivatableEventSink,
   MemoryEventKind,
@@ -72,6 +72,16 @@ const DEFAULT_SIDECAR_DIR = path.join(PLUGIN_ROOT, "sidecar");
 
 export const SIDECAR_DEAD_MESSAGE =
   "openclaw-memgpt: sidecar process died; restart OpenClaw to recover";
+
+/**
+ * Verbatim tool-result / error string when the plugin has no LLM provider +
+ * credential configured (§6d.6). Tools surface this to the LLM and
+ * `resolveBaseUrl` throws it; `start` skips the sidecar spawn entirely so an
+ * unconfigured plugin never pays the embedder cold-start or runs a
+ * credential-less sidecar.
+ */
+export const NOT_CONFIGURED_MESSAGE =
+  "openclaw-memgpt: not configured — run `openclaw memgpt setup` to choose an LLM provider and supply an API key.";
 
 // ============================================================================
 // Public API
@@ -171,6 +181,16 @@ export class LifecycleManager {
     return this._dead;
   }
 
+  /**
+   * True when the plugin has a usable LLM config (provider + credential).
+   * Tools/hooks consult this at entry to short-circuit with
+   * `NOT_CONFIGURED_MESSAGE` instead of spawning / hitting a credential-less
+   * sidecar (§6d.6). `start` and `resolveBaseUrl` gate on the same predicate.
+   */
+  get isConfigured(): boolean {
+    return isConfigComplete(this.config);
+  }
+
   constructor(
     config: PluginConfig,
     logger: OpenClawPluginApi["logger"],
@@ -220,6 +240,18 @@ export class LifecycleManager {
       throw new Error(
         "openclaw-memgpt: start() called after prior failure marked lifecycle dead",
       );
+    }
+
+    // §6d.6 config gate — without a provider + credential the sidecar has no
+    // usable LLM, so skip the spawn entirely (no embedder cold-start, no
+    // credential-less process). Leaves `started=false`; `resolveBaseUrl` throws
+    // NOT_CONFIGURED and tools short-circuit. Not a throw: the unconfigured
+    // state is expected and already surfaced by the register-time notice.
+    if (!isConfigComplete(this.config)) {
+      this.logger.warn(
+        "openclaw-memgpt: not configured — skipping sidecar spawn. Run `openclaw memgpt setup`.",
+      );
+      return;
     }
 
     // §6.2 two-phase init: activate the observability sink now that the state
@@ -480,6 +512,11 @@ export class LifecycleManager {
    * of attach-style entry, not a regression.
    */
   async resolveBaseUrl(): Promise<string> {
+    // §6d.6 config gate — fail fast and clearly rather than triggering the
+    // lazy-init spawn of a credential-less sidecar.
+    if (!isConfigComplete(this.config)) {
+      throw new Error(NOT_CONFIGURED_MESSAGE);
+    }
     if (this._dead) {
       throw new Error(
         "openclaw-memgpt: sidecar process died; restart OpenClaw to recover",

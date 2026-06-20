@@ -11,15 +11,13 @@
  * `content` insert may produce multiple passage entries.
  */
 
-import { SIDECAR_DEAD_MESSAGE } from "../lifecycle/lifecycleManager.ts";
-import type { ToolDeps, ToolHandler } from "./deps.ts";
+import { toolGuard, type ToolDeps, type ToolHandler } from "./deps.ts";
 
 export const archivalInsert =
   (deps: ToolDeps): ToolHandler =>
   async (_toolCallId, params) => {
-    if (deps.lifecycle?.isDead) {
-      return { content: [{ type: "text", text: SIDECAR_DEAD_MESSAGE }] };
-    }
+    const blocked = toolGuard(deps);
+    if (blocked) return blocked;
     const content = String(params.content ?? "");
     const r = await deps.client.archivalInsert(content);
     deps.emit({

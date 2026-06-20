@@ -11,15 +11,13 @@
  * failures bubble.
  */
 
-import { SIDECAR_DEAD_MESSAGE } from "../lifecycle/lifecycleManager.ts";
-import type { ToolDeps, ToolHandler } from "./deps.ts";
+import { toolGuard, type ToolDeps, type ToolHandler } from "./deps.ts";
 
 export const archivalSearch =
   (deps: ToolDeps): ToolHandler =>
   async (_toolCallId, params) => {
-    if (deps.lifecycle?.isDead) {
-      return { content: [{ type: "text", text: SIDECAR_DEAD_MESSAGE }] };
-    }
+    const blocked = toolGuard(deps);
+    if (blocked) return blocked;
     const query = String(params.query ?? "");
     const page = typeof params.page === "number" ? params.page : 0;
     const r = await deps.client.archivalSearch(query, page);
