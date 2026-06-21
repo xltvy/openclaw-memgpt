@@ -8,7 +8,7 @@
  *   Q2 healthz:  spawn-and-block in `start`, 120 s max, 10 s progress logs
  *   Q3 env:      explicit overrides for plugin-managed knobs; inherit rest
  *   Q4 crash:    log + deadFlag + fail-next-turn (no auto-restart in V1)
- *   Q5 resolver: config.sidecarUrl → env → spawn (three-way precedence)
+ *   Q5 resolver: sidecar base URL — config.sidecarUrl, then env, then a self-managed local port
  *   Q6 teardown: save (30 s) → SIGTERM → 10 s wait → SIGKILL fallback
  *
  * The manager owns the spawn-vs-attach decision (in `start`), the child
@@ -108,7 +108,7 @@ export interface LifecycleManagerOptions {
    * §6d.6 — async contributor of LLM credential env vars
    * (`OPENAI_API_KEY` / `OPENAI_API_BASE`) for the spawned sidecar, resolved
    * from the wizard's stored credential reference. Receives the resolved state
-   * dir (the secret-file root). Merged over inherited `process.env` but under
+   * dir (the secret-file root). Merged over the inherited environment but under
    * the plugin-managed pins. Absent ⇒ the sidecar inherits credentials from the
    * shell env verbatim (pre-6d.6 behaviour).
    */
