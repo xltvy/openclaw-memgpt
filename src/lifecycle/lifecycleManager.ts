@@ -178,13 +178,21 @@ export class LifecycleManager {
   /** Set true on `stop` entry so the child `exit` listener doesn't flip deadFlag. */
   private shuttingDown = false;
   /**
-   * Singleton in-flight promise for the lazy-init path (see `resolveBaseUrl`).
-   * Concurrent first calls await the same promise so `start({})` only fires
-   * once even under bursty parallel tool dispatch. Cleared on failure so a
-   * subsequent call can retry; left set on success so subsequent calls
-   * short-circuit at the `spawnedUrl !== undefined` check above lazy init.
+   * In-flight `start` promise, memoised. `register()` fires multiple times in a
+   * single process and each call registers a `memgpt-sidecar` service, so the
+   * SDK service runner can invoke `start` N times; the lazy-init path
+   * (`resolveBaseUrl`) is a further caller. Memoising collapses them all to a
+   * single spawn + healthz block. Cleared on failure so a later call retries;
+   * left set on success (re-entry then short-circuits via `started`).
    */
-  private lazyStartPromise?: Promise<void>;
+  private startPromise?: Promise<void>;
+  /**
+   * In-flight `stop` promise, memoised. Mirror of `startPromise`: the SDK runs
+   * the (N) registered `stop`s in reverse order, so without this the final save
+   * + SIGTERM would fire once per registration. Memoising makes teardown
+   * happen exactly once.
+   */
+  private stopPromise?: Promise<void>;
 
   /** Lifecycle.start sets this; tools/hooks can ask "what URL would I hit?". */
   get mode(): "spawn" | "attach" | "uninitialised" {
@@ -262,7 +270,17 @@ export class LifecycleManager {
         "openclaw-memgpt: start() called after prior failure marked lifecycle dead",
       );
     }
+    // Collapse concurrent / repeated starts (N service registrations + lazy
+    // path) to one spawn. Cleared on failure so the next caller can retry.
+    if (this.startPromise !== undefined) return this.startPromise;
+    this.startPromise = this._doStart(ctx).catch((err) => {
+      this.startPromise = undefined;
+      throw err;
+    });
+    return this.startPromise;
+  }
 
+  private async _doStart(ctx: Record<string, unknown>): Promise<void> {
     // §6d.6 config gate — without a provider + credential the sidecar has no
     // usable LLM, so skip the spawn entirely (no embedder cold-start, no
     // credential-less process). Leaves `started=false`; `resolveBaseUrl` throws
@@ -544,6 +562,16 @@ export class LifecycleManager {
    */
   async stop(
     client: SavableClient | undefined,
+    ctx: Record<string, unknown> = {},
+  ): Promise<void> {
+    // Memoise: the SDK runs each registration's `stop` (N of them, shared
+    // manager), so without this the save + SIGTERM would fire once per
+    // registration. Teardown happens exactly once.
+    return (this.stopPromise ??= this._doStop(client, ctx));
+  }
+
+  private async _doStop(
+    client: SavableClient | undefined,
     _ctx: Record<string, unknown> = {},
   ): Promise<void> {
     this.shuttingDown = true;
@@ -625,20 +653,15 @@ export class LifecycleManager {
     if (this.spawnedUrl !== undefined) return this.spawnedUrl;
     if (this.attachUrl !== undefined) return this.attachUrl;
 
-    // Lazy-init: SDK service runner never fired (likely --local mode).
-    if (this.lazyStartPromise === undefined) {
+    // Lazy-init: SDK service runner never fired (likely --local mode). `start`
+    // is memoised, so this shares the single spawn with the SDK service path
+    // and with any concurrent first-callers — no separate guard needed here.
+    if (this.startPromise === undefined && !this.started) {
       this.logger.info(
         "openclaw-memgpt: lazy lifecycle init triggered (SDK services.start did not fire — likely `openclaw agent --local`)",
       );
-      this.lazyStartPromise = this.start({}).catch((err) => {
-        // Clear so a later call can retry if the operator fixes the cause
-        // mid-process (rare; the cleared state is what stops a permanently
-        // failed promise from livelocking subsequent tool calls).
-        this.lazyStartPromise = undefined;
-        throw err;
-      });
     }
-    await this.lazyStartPromise;
+    await this.start({});
 
     if (this.spawnedUrl !== undefined) return this.spawnedUrl;
     if (this.attachUrl !== undefined) return this.attachUrl;
@@ -828,6 +851,63 @@ export class LifecycleManager {
   private stderrTail(): string {
     return this.stderrRing.join("\n");
   }
+}
+
+// ============================================================================
+// Process-singleton registry (Shape A)
+// ============================================================================
+
+/**
+ * OpenClaw calls a plugin's `register()` multiple times within one process
+ * (discovery / runtime / context-engine contexts — all the same config). Our
+ * backend is a *spawned sidecar with in-memory resident agent state*, so a
+ * fresh `LifecycleManager` per `register()` spawned a fresh sidecar each time:
+ * the `before_prompt_build` hook would `:ensure` the agent into one sidecar
+ * while a tool call landed on another, where the agent was never loaded —
+ * surfacing as `404 … "Agent '<ns>' is not resident"`.
+ *
+ * `@openclaw/memory-lancedb` avoids this by being stateless-per-op over a
+ * shared on-disk table (every `register()` opens the same `dbPath`). The
+ * equivalent for a *process* backend is to share the one process: this registry
+ * returns a single `LifecycleManager` per `namespace` (+ attach URL), so every
+ * registration resolves to the same sidecar and residency established by the
+ * hook is visible to the tools. Per-registration `SidecarClient`s are kept (they
+ * are cheap and hold no residency state) — they all close over this shared
+ * manager's `resolveBaseUrl`.
+ *
+ * Keyed by namespace because, within a single OpenClaw process, the state dir
+ * (hence data dir) is constant; the namespace is the only discriminator, and a
+ * distinct attach URL implies a distinct backend.
+ */
+const lifecycleRegistry = new Map<string, LifecycleManager>();
+
+function lifecycleKey(config: PluginConfig): string {
+  return `${config.namespace} ${config.sidecarUrl ?? ""}`;
+}
+
+/**
+ * Get-or-create the process-singleton `LifecycleManager` for this config's
+ * namespace. The first caller's `logger`/`options` win; later callers reuse the
+ * existing manager (their `options` are ignored by design — there is one
+ * sidecar, with one observability sink, owned by the first registration).
+ */
+export function getOrCreateLifecycle(
+  config: PluginConfig,
+  logger: OpenClawPluginApi["logger"],
+  options: LifecycleManagerOptions = {},
+): LifecycleManager {
+  const key = lifecycleKey(config);
+  let manager = lifecycleRegistry.get(key);
+  if (manager === undefined) {
+    manager = new LifecycleManager(config, logger, options);
+    lifecycleRegistry.set(key, manager);
+  }
+  return manager;
+}
+
+/** Test-only: clear the singleton registry between cases. */
+export function _resetLifecycleRegistry(): void {
+  lifecycleRegistry.clear();
 }
 
 // ============================================================================

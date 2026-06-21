@@ -27,9 +27,11 @@ import { Readable } from "node:stream";
 
 import {
   findSidecarDir,
+  getOrCreateLifecycle,
   LifecycleManager,
   NOT_CONFIGURED_MESSAGE,
   SIDECAR_DEAD_MESSAGE,
+  _resetLifecycleRegistry,
 } from "../../src/lifecycle/lifecycleManager.ts";
 import type { PluginConfig } from "../../src/config.ts";
 import type {
@@ -881,4 +883,124 @@ test("findSidecarDir: resolves the plugin's sidecar from source, bundled, and ro
 
 test("findSidecarDir: falls back to climb-two when no marker is found", () => {
   assert.equal(findSidecarDir("/a/b/src/lifecycle", () => false), "/a/b/sidecar");
+});
+
+// ── Shape A: idempotent start/stop + process-singleton registry ──────────────
+//
+// OpenClaw calls register() multiple times in one process; each call registers
+// a memgpt-sidecar service, so the SDK service runner can invoke start (and
+// stop) N times. With a fresh LifecycleManager per register() this spawned N
+// sidecars and the before_prompt_build hook's :ensure landed on a different
+// sidecar than the tool call → "Agent not resident". These tests pin the fix:
+// start/stop are idempotent, and getOrCreateLifecycle shares ONE manager (hence
+// one sidecar) per namespace so every per-registration client resolves to it.
+
+test("start() is idempotent — N explicit starts spawn once (service-runner calls collapse)", async () => {
+  let spawnCount = 0;
+  let healthzCount = 0;
+  const fakeChild = new FakeChild();
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 1_000,
+    pollIntervalMs: 10,
+    stateDirOverride: "/tmp/oc-test-idempotent-start",
+    fetch: fetchReturning(async () => {
+      healthzCount += 1;
+      return { ok: true, status: 200 };
+    }),
+    spawn: (() => {
+      spawnCount += 1;
+      return fakeChild as never;
+    }) as never,
+  });
+
+  // Sequential repeats (SDK awaits each service.start in turn) …
+  await lc.start({});
+  await lc.start({});
+  // … and concurrent repeats (defensive — interleaved registrations).
+  await Promise.all([lc.start({}), lc.start({})]);
+
+  assert.equal(spawnCount, 1, "spawn must fire exactly once across N starts");
+  assert.equal(healthzCount, 1, "healthz must poll exactly once across N starts");
+  await lc.stop(undefined, {});
+});
+
+test("stop() is idempotent — N stops save + SIGTERM exactly once", async () => {
+  const fakeChild = new FakeChild();
+  fakeChild.exitOnSigterm = true;
+  let saveCount = 0;
+  const client = {
+    save: async () => {
+      saveCount += 1;
+    },
+  };
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 1_000,
+    pollIntervalMs: 10,
+    sigtermTimeoutMs: 100,
+    saveTimeoutMs: 1_000,
+    stateDirOverride: "/tmp/oc-test-idempotent-stop",
+    fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+    spawn: spawnReturning(fakeChild) as never,
+  });
+
+  await lc.start({});
+  // Three stops (reverse-order service teardown, one per registration).
+  await Promise.all([
+    lc.stop(client, {}),
+    lc.stop(client, {}),
+    lc.stop(client, {}),
+  ]);
+
+  assert.equal(saveCount, 1, "final save must run exactly once");
+  assert.equal(
+    fakeChild.killSignals.filter((s) => s === "SIGTERM").length,
+    1,
+    "SIGTERM must be sent exactly once",
+  );
+});
+
+test("getOrCreateLifecycle: same namespace → same instance; different namespace → distinct", () => {
+  _resetLifecycleRegistry();
+  const logger = makeLogger();
+  const a1 = getOrCreateLifecycle(makeConfig({ namespace: "alpha" }), logger);
+  const a2 = getOrCreateLifecycle(makeConfig({ namespace: "alpha" }), logger);
+  const b1 = getOrCreateLifecycle(makeConfig({ namespace: "beta" }), logger);
+  assert.equal(a1, a2, "same namespace must return the same manager");
+  assert.notEqual(a1, b1, "different namespace must return a distinct manager");
+  _resetLifecycleRegistry();
+});
+
+test("multi-register: two registrations share one sidecar — agent resident for both", async () => {
+  // Models the real failure: register() fires twice, each builds its own client
+  // but both go through getOrCreateLifecycle. With the singleton, both clients
+  // resolve to the SAME spawned sidecar URL and only one sidecar is spawned, so
+  // an :ensure on one client makes the agent resident for the other's tool call.
+  _resetLifecycleRegistry();
+  let spawnCount = 0;
+  const fakeChild = new FakeChild();
+  const sharedOpts = {
+    spawnTimeoutMs: 1_000,
+    pollIntervalMs: 10,
+    stateDirOverride: "/tmp/oc-test-multi-register",
+    fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+    spawn: (() => {
+      spawnCount += 1;
+      return fakeChild as never;
+    }) as never,
+  };
+
+  // register() call #1 and #2 — same namespace, same process.
+  const lcHook = getOrCreateLifecycle(makeConfig(), makeLogger(), sharedOpts);
+  const lcTool = getOrCreateLifecycle(makeConfig(), makeLogger(), sharedOpts);
+  assert.equal(lcHook, lcTool, "both registrations must share one manager");
+
+  // Per-registration clients close over their registration's resolver. They
+  // must agree on the URL (so residency is shared) — this is what was broken.
+  const hookUrl = await lcHook.resolveBaseUrl();
+  const toolUrl = await lcTool.resolveBaseUrl();
+  assert.equal(hookUrl, toolUrl, "hook and tool must resolve to the same sidecar");
+  assert.equal(spawnCount, 1, "exactly one sidecar spawned across both registrations");
+
+  await lcHook.stop(undefined, {});
+  _resetLifecycleRegistry();
 });

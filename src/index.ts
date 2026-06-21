@@ -24,7 +24,7 @@ import { registerFlushPressureHook } from "./hooks/flushPressure.ts";
 import { registerAgentEndHook } from "./hooks/mirror.ts";
 import { registerPromptSectionHook } from "./hooks/promptSection.ts";
 import { registerReplyDispatchHook } from "./hooks/replyDispatch.ts";
-import { LifecycleManager } from "./lifecycle/lifecycleManager.ts";
+import { getOrCreateLifecycle } from "./lifecycle/lifecycleManager.ts";
 import { ObservabilityEmitter } from "./observability/events.ts";
 import { makeToolDeps } from "./tools/deps.ts";
 import { registerTools } from "./tools/index.ts";
@@ -83,7 +83,13 @@ const memgptPlugin = definePluginEntry({
             return env;
           };
 
-    const lifecycle = new LifecycleManager(config, api.logger, {
+    // Process-singleton per namespace: OpenClaw calls register() several times
+    // in one process, and our backend is a spawned sidecar holding in-memory
+    // resident agent state. A fresh manager per call spawned a fresh sidecar,
+    // so the hook's `:ensure` and a tool call could land on different sidecars
+    // → "Agent not resident". Sharing one manager (hence one sidecar) per
+    // namespace fixes it; see getOrCreateLifecycle. (Clients stay per-call.)
+    const lifecycle = getOrCreateLifecycle(config, api.logger, {
       emitter,
       credentialEnv,
     });
