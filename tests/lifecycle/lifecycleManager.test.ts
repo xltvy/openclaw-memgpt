@@ -26,6 +26,7 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 
 import {
+  findSidecarDir,
   LifecycleManager,
   NOT_CONFIGURED_MESSAGE,
   SIDECAR_DEAD_MESSAGE,
@@ -861,4 +862,23 @@ test("spawn env: UV_PROJECT_ENVIRONMENT points under the state dir, not the plug
     !capturedEnv?.UV_PROJECT_ENVIRONMENT?.includes("/plugin/sidecar"),
     "venv must not live under the plugin/sidecar dir",
   );
+});
+
+// §6d.7 — sidecar dir must resolve from ANY entry depth (regression: the bundled
+// `dist/index.js` entry overshot the old fixed `../..`, yielding a non-existent
+// cwd → `spawn uv ENOENT`).
+
+test("findSidecarDir: resolves the plugin's sidecar from source, bundled, and root entries", () => {
+  const root = "/plugins/openclaw-memgpt";
+  const exists = (p: string) => p === `${root}/sidecar/main.py`;
+  // bundled compiled entry → dist/ (the case that broke with a fixed ../..)
+  assert.equal(findSidecarDir(`${root}/dist`, exists), `${root}/sidecar`);
+  // source entry → src/lifecycle/
+  assert.equal(findSidecarDir(`${root}/src/lifecycle`, exists), `${root}/sidecar`);
+  // packaged install root entry
+  assert.equal(findSidecarDir(root, exists), `${root}/sidecar`);
+});
+
+test("findSidecarDir: falls back to climb-two when no marker is found", () => {
+  assert.equal(findSidecarDir("/a/b/src/lifecycle", () => false), "/a/b/sidecar");
 });

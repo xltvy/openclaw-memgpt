@@ -23,6 +23,7 @@
  */
 
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { createServer as nodeCreateServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,15 +58,34 @@ const DEFAULT_SAVE_TIMEOUT_MS = 30_000;
 const DEFAULT_STDERR_RING_SIZE = 200;
 
 /**
- * Sidecar directory — resolved from this file's location at module load.
- * src/lifecycle/lifecycleManager.ts → climb two → plugin root → sidecar/.
+ * Sidecar directory — walk up from this module's location until we find the dir
+ * containing `sidecar/main.py`. This must be robust to *entry depth*: from
+ * source this module is at `src/lifecycle/…` (plugin root is two up), but from
+ * the bundled compiled entry it runs from `dist/index.js` (plugin root is one
+ * up). A fixed `../..` is correct for source but overshoots for the bundle —
+ * which silently resolved the sidecar dir one level above the plugin, so the
+ * spawn failed with `spawn uv ENOENT` (a non-existent `cwd`). Walking up to the
+ * `sidecar/main.py` marker handles source, `--link`, and packaged installs.
  */
-const PLUGIN_ROOT = path.resolve(
+export function findSidecarDir(
+  startDir: string,
+  exists: (p: string) => boolean = existsSync,
+): string {
+  let dir = startDir;
+  for (let i = 0; i < 8; i++) {
+    const candidate = path.join(dir, "sidecar");
+    if (exists(path.join(candidate, "main.py"))) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Fallback to the legacy source-layout heuristic (climb two).
+  return path.join(path.resolve(startDir, "..", ".."), "sidecar");
+}
+
+const DEFAULT_SIDECAR_DIR = findSidecarDir(
   path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
 );
-const DEFAULT_SIDECAR_DIR = path.join(PLUGIN_ROOT, "sidecar");
 
 // ============================================================================
 // Shared dead-sidecar surface (consumed by tools/hooks at entry, 6c.10a Q4)
