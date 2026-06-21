@@ -11,22 +11,21 @@
  *
  * Two steps per turn, in order:
  *
- *   1. `ensure` — per-turn invocation for the `via` observability signal.
- *      This is NOT a correctness call (the client's doInit already
- *      guaranteed the agent exists at plugin init); the per-turn ensure
- *      surfaces unexpected residency changes — e.g. a sidecar restart
- *      between turns shows as `via:"load"` instead of the expected
- *      `via:"resident"`, which observability consumers (§6.2) care
- *      about. **Failures are telemetry-lossy by design** — logged + emitted
- *      as `emit_failed`, then swallowed so a sidecar restart doesn't fail
- *      the user's turn. (§4.2: "Telemetry can be lossy, so failures here
- *      are logged + emitted as `emit_failed` events but do not block the
- *      turn.")
+ *   1. `ensure` — the residency call. It makes the agent resident
+ *      (create | load | already-resident) and yields the `via` observability
+ *      signal (e.g. a sidecar restart between turns shows `via:"load"` instead
+ *      of `via:"resident"`, which §6.2 consumers care about). `doInit` only
+ *      confirms *sidecar* health, not *agent* readiness, so this is the call
+ *      that actually loads the agent. **Failures propagate** — an un-resident
+ *      agent makes Step 2 and every tool this turn fail with a misleading
+ *      "not resident" 404 that hides the real cause. (Swallowing this was what
+ *      masked the multi-sidecar bug throughout its investigation.) Only the
+ *      *telemetry emit* of the `via` signal is best-effort.
  *
- *   2. `getSystemPromptSection` — the correctness path. **Failures
- *      propagate** because the prompt section is load-bearing (persona /
- *      human / counts) and silently degrading would leave the agent with
- *      a corrupted prompt that's worse than a failed turn.
+ *   2. `getSystemPromptSection` — the prompt-section path. **Failures
+ *      propagate** because the section is load-bearing (persona / human /
+ *      counts) and silently degrading would leave the agent with a corrupted
+ *      prompt that's worse than a failed turn.
  *
  * Return shape — `{prependSystemContext, prependContext}`:
  *
@@ -152,10 +151,33 @@ export function registerPromptSectionHook(
       );
     }
 
-    // Step 1 — per-turn ensure for `via` observability. Failures are
-    // telemetry-lossy: logged + emitted but swallowed (§4.2).
+    // Step 1 — per-turn ensure. This is the residency call: it makes the agent
+    // resident (create | load | already-resident) AND yields the `via`
+    // observability signal. Residency is load-bearing — `doInit` only checks
+    // sidecar health, not agent readiness — so a failed ensure means the agent
+    // is NOT resident, and Step 2 plus every tool this turn would 404 "not
+    // resident" with an error that hides the real cause. (That masking is
+    // exactly what made the multi-sidecar bug hard to diagnose.) The ensure
+    // call therefore PROPAGATES on failure, consistent with Step 2; only the
+    // telemetry emit below is best-effort.
+    let ensured;
     try {
-      const ensured = await deps.client.ensure();
+      ensured = await deps.client.ensure();
+    } catch (err) {
+      deps.logger.error(
+        `openclaw-memgpt: agent ensure failed — agent not resident this turn: ${stringifyError(err)}`,
+      );
+      deps.emit({
+        kind: "emit_failed",
+        namespace: deps.namespace,
+        ts: new Date().toISOString(),
+        meta: { operation: "ensure", reason: stringifyError(err) },
+      });
+      throw err;
+    }
+    // Recording the `via` signal is best-effort — ensure already succeeded, so a
+    // dead emitter must not fail an otherwise-good turn.
+    try {
       deps.emit({
         kind: "agent_ensured",
         namespace: deps.namespace,
@@ -164,14 +186,8 @@ export function registerPromptSectionHook(
       });
     } catch (err) {
       deps.logger.warn(
-        `openclaw-memgpt: agent_ensured emit failed: ${stringifyError(err)}`,
+        `openclaw-memgpt: agent_ensured emit failed (turn continues): ${stringifyError(err)}`,
       );
-      deps.emit({
-        kind: "emit_failed",
-        namespace: deps.namespace,
-        ts: new Date().toISOString(),
-        meta: { operation: "ensure", reason: stringifyError(err) },
-      });
     }
 
     // Step 2 — fetch the system prompt section. Correctness path: failures
