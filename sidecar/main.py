@@ -61,7 +61,43 @@ async def lifespan(app: FastAPI):
     )
     yield
 
+    # ── P4: complementary durability sweep ────────────────────────────────
+    # A safety net *under* the per-turn-flush model (§2.3), not a replacement:
+    # per-turn `:save` stays the primary durability boundary. This sweep saves
+    # whatever is still resident when the sidecar is asked to stop.
+    #
+    # uvicorn runs this lifespan-shutdown on SIGTERM — which the sidecar
+    # receives in BOTH deployment modes (LifecycleManager.stop SIGTERMs the
+    # child in gateway mode; the parent's process-exit handler SIGTERMs it in
+    # `--local` one-shot mode, where neither the TS `agent_end` hook nor the
+    # plugin's `stop` save fires). So this is the one save path guaranteed to
+    # run regardless of how the host drives the turn. Idempotent: if a prior
+    # `:save` already ran this process, this just writes an identical snapshot.
+    save_all_on_shutdown()
+
     logger.info("Sidecar shutting down — agents_resident=%d", len(registry))
+
+
+def save_all_on_shutdown() -> None:
+    """Save every currently-resident agent. Thin wrapper over `_save_agents`
+    so the sweep logic is unit-testable on a controlled agent list without
+    touching (or having to mutate) the process-wide registry."""
+    _save_agents(registry.items())
+
+
+def _save_agents(resident: "list[tuple[str, object]]") -> None:
+    """Save each (agent_id, agent) in `resident`, isolating per-agent failures
+    so one bad agent can't block the rest. Errors are logged, never raised —
+    shutdown must complete."""
+    if not resident:
+        return
+    logger.info("P4 shutdown save — flushing %d resident agent(s)", len(resident))
+    for agent_id, agent in resident:
+        try:
+            agent.save()
+            logger.info("P4 shutdown save — agent=%s flushed", agent_id)
+        except Exception as exc:  # noqa: BLE001 — best-effort durability sweep
+            logger.error("P4 shutdown save — agent=%s FAILED: %s", agent_id, exc)
 
 
 # ── App ───────────────────────────────────────────────────────────────────

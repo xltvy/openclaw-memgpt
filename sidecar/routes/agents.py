@@ -39,6 +39,27 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
+
+def _has_saved_state(agent_id: str) -> bool:
+    """P5 — true iff the agent has a SAVED state on disk (an `agent_state/*.json`
+    snapshot), as opposed to a bare `config.json` that `AgentConfig.__init__`
+    writes at create time before any `:save`.
+
+    The distinction matters: `:load` reads `agent_state/`, so a create-without-
+    save (e.g. a session that never reached a save path) leaves only
+    `config.json`. Gating the on-disk/load decision on `config.json` alone would
+    route such a namespace to `:load` (→ "Cannot load", a 404) while also
+    blocking re-create (config exists → 409) — a brick wall. Gating on saved
+    state lets that case fall through to a clean re-create instead.
+    """
+    from memgpt.constants import MEMGPT_DIR as _DIR
+
+    state_dir = os.path.join(_DIR, "agents", agent_id, "agent_state")
+    if not os.path.isdir(state_dir):
+        return False
+    return any(name.endswith(".json") for name in os.listdir(state_dir))
+
+
 # ── Request / Response models ─────────────────────────────────────────────
 
 class OkResponse(BaseModel):
@@ -243,11 +264,15 @@ def create_agent(body: CreateAgentRequest) -> CreateAgentResponse:
     if namespace in registry:
         raise HTTPException(status_code=409, detail=f"Agent '{namespace}' is already resident")
 
-    # Guard: config on disk (protect against accidental overwrite of existing agent state)
+    # Guard: SAVED state on disk (protect against overwriting a persisted agent).
+    # P5: gate on saved state (agent_state/*.json), not bare config.json — an
+    # orphan config.json with no saved state is a create-without-save artifact
+    # and must be re-creatable, not a 409 wall. AgentConfig.__init__ below
+    # overwrites the orphan config.json harmlessly.
     from memgpt.config import AgentConfig as _AgentConfig
     from memgpt.constants import MEMGPT_DIR as _DIR
-    config_path = os.path.join(_DIR, "agents", namespace, "config.json")
-    if os.path.exists(config_path):
+    if _has_saved_state(namespace):
+        config_path = os.path.join(_DIR, "agents", namespace, "config.json")
         raise HTTPException(
             status_code=409,
             detail=f"Agent config already exists at {config_path}. Use :load to reload a persisted agent.",
@@ -867,12 +892,14 @@ def ensure_agent(agent_id: str, body: Optional[EnsureAgentRequest] = None) -> En
         logger.debug(":ensure resident agent=%s", agent_id)
         return EnsureAgentResponse(agent_id=agent_id, via="resident")
 
-    # 2. On-disk → :load (delegate to load_agent)
-    # Use the same path shape load_agent / AgentConfig.load would resolve.
-    from memgpt.constants import MEMGPT_DIR as _DIR
-    config_path = os.path.join(_DIR, "agents", agent_id, "config.json")
-    if os.path.exists(config_path):
-        logger.debug(":ensure on-disk agent=%s, delegating to :load", agent_id)
+    # 2. On-disk SAVED state → :load (delegate to load_agent)
+    # P5: gate on saved state (agent_state/*.json), not bare config.json. A
+    # config-only namespace (created but never :saved) has nothing for :load to
+    # read, so routing it here would 404 "Cannot load" and — since config.json
+    # exists — also block re-create. Gating on saved state lets it fall through
+    # to create below (re-creating fresh) instead of bricking the namespace.
+    if _has_saved_state(agent_id):
+        logger.debug(":ensure saved-state on-disk agent=%s, delegating to :load", agent_id)
         load_resp = load_agent(agent_id)  # raises HTTPException on its own failures
         return EnsureAgentResponse(agent_id=load_resp.agent_id, via="load")
 
