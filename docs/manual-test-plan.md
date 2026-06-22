@@ -51,10 +51,22 @@ cd ~/Workspace/UCL/dissertation/openclaw-memgpt && rm -rf sidecar/.venv
 openclaw --dev plugins install --link .
 ```
 **PASS:** installs; `~/.openclaw-dev/openclaw.json` shows the plugin in
-`load.paths` + `slots.memory = openclaw-memgpt`. (If it aborts with "manifest
-dependency scan exceeded max directories", a stale `sidecar/.venv` or
-`experiments/` is the cause — `rm -rf sidecar/.venv` and retry. Packaged
-installs never hit this.)
+`load.paths` + `slots.memory = openclaw-memgpt`. Packaged installs (1a) never
+hit the scan — this is dev-`--link`-only.
+
+> **If it aborts with "manifest dependency scan exceeded max directories
+> (10000)":** the dev tree is too big. The repo's own dirs (`experiments/` ~5.6k
+> + `proxy/` ~3k) sit just under the limit, so any stray heavy dir tips it over.
+> Diagnose + clean:
+> ```bash
+> find . -type d | wc -l                                   # total (must be <10000)
+> for d in */ sidecar/*/ ; do echo "$(find "$d" -type d|wc -l) $d"; done | sort -rn | head
+> rm -rf sidecar/.venv 'sidecar/~'                          # common strays: a uv venv, or a
+> #   literal "~" dir from a test cmd that passed UV_PROJECT_ENVIRONMENT=~/… unexpanded
+> ```
+> A real `uv`-managed venv lives under the **state dir** (`~/.openclaw-dev/
+> memgpt-sidecar-venv`), never in the repo — anything venv-like inside the repo
+> is a stray to delete.
 
 ---
 
