@@ -23,6 +23,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { appendFileSync, existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Readable } from "node:stream";
 
 import {
@@ -378,29 +381,64 @@ test("spawn-mode healthz timeout — start throws; isDead set; child terminated"
 });
 
 // Q4 — crash during run flips isDead
-test("child exit after start — isDead set; stderr tail surfaces in error log", async () => {
+test("child exit after start — isDead set; stderr tail (from log file) surfaces in error log", async () => {
+  // b1: the sidecar's stderr goes to <stateDir>/memgpt-sidecar.log via an
+  // inherited fd, not a pipe; the crash log reads that file's tail. Simulate
+  // the sidecar having written a traceback to the log before it exits.
   const fakeChild = new FakeChild();
   const logger = makeLogger();
+  const stateDir = mkdtempSync(path.join(tmpdir(), "oc-stderr-"));
   const lc = new LifecycleManager(makeConfig(), logger, {
     spawnTimeoutMs: 200,
     pollIntervalMs: 10,
+    stateDirOverride: stateDir,
     fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
     spawn: spawnReturning(fakeChild) as never,
   });
-  await lc.start({ stateDir: "/tmp/oc-test" });
+  await lc.start({});
   assert.equal(lc.isDead, false);
 
-  fakeChild.emitStderr("Traceback (most recent call last):");
-  fakeChild.emitStderr("RuntimeError: synthetic crash");
-  // Allow the stderr stream microtask to flush.
-  await new Promise((r) => setImmediate(r));
+  appendFileSync(
+    path.join(stateDir, "memgpt-sidecar.log"),
+    "Traceback (most recent call last):\nRuntimeError: synthetic crash\n",
+  );
   fakeChild.emitExit(1, null);
 
   assert.equal(lc.isDead, true);
   assert.equal(
     logger.errors.some((m) => m.includes("synthetic crash")),
     true,
-    "crash log must include stderr tail",
+    "crash log must include the log-file tail",
+  );
+});
+
+// b1 — sidecar stdout/stderr must be wired to a LOG FILE fd, not pipes. Pipes'
+// read ends are held by the parent; when the parent exits in `--local` they
+// close, and uvicorn's shutdown logging dies on the broken pipe mid-save
+// (truncated pickle). A file fd is independent of the parent's lifecycle.
+test("spawn-mode: sidecar stdio goes to a log-file fd, not pipes (b1)", async () => {
+  let capturedStdio: unknown;
+  const fakeChild = new FakeChild();
+  const stateDir = mkdtempSync(path.join(tmpdir(), "oc-logfd-"));
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 500,
+    pollIntervalMs: 10,
+    stateDirOverride: stateDir,
+    fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+    spawn: ((_cmd: string, _args: string[], opts: { stdio?: unknown }) => {
+      capturedStdio = opts?.stdio;
+      return fakeChild;
+    }) as never,
+  });
+  await lc.start({});
+  assert.ok(Array.isArray(capturedStdio), "stdio must be an array");
+  const stdio = capturedStdio as unknown[];
+  assert.equal(stdio[0], "ignore", "stdin ignored");
+  assert.equal(typeof stdio[1], "number", "stdout must be a file fd (number), not 'pipe'");
+  assert.equal(typeof stdio[2], "number", "stderr must be a file fd (number), not 'pipe'");
+  assert.ok(
+    existsSync(path.join(stateDir, "memgpt-sidecar.log")),
+    "the sidecar log file must be created",
   );
 });
 

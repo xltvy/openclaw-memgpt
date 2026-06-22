@@ -24,6 +24,7 @@ import json
 import logging
 import math
 import os
+import pickle
 import re
 from typing import List, Literal, Optional
 
@@ -41,23 +42,41 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 
 
 def _has_saved_state(agent_id: str) -> bool:
-    """P5 — true iff the agent has a SAVED state on disk (an `agent_state/*.json`
-    snapshot), as opposed to a bare `config.json` that `AgentConfig.__init__`
-    writes at create time before any `:save`.
+    """P5 — true iff the agent has a SAVED state on disk that `:load` could read:
+    an `agent_state/*.json` snapshot AND a non-empty `persistence_manager`
+    pickle. Distinct from a bare `config.json` that `AgentConfig.__init__` writes
+    at create time before any `:save`.
 
-    The distinction matters: `:load` reads `agent_state/`, so a create-without-
-    save (e.g. a session that never reached a save path) leaves only
-    `config.json`. Gating the on-disk/load decision on `config.json` alone would
-    route such a namespace to `:load` (→ "Cannot load", a 404) while also
-    blocking re-create (config exists → 409) — a brick wall. Gating on saved
-    state lets that case fall through to a clean re-create instead.
+    The distinction matters: `:load` reads both files, so a create-without-save
+    (a session that never reached a save path) leaves only `config.json`. Gating
+    the load-vs-create decision on `config.json` alone would route such a
+    namespace to `:load` (→ "Cannot load", a 404) while also blocking re-create
+    (config exists → 409) — a brick wall. Gating on saved state lets that case
+    fall through to a clean re-create instead.
+
+    b2 — the pickle must be non-empty. A 0-byte pickle (e.g. a shutdown save
+    interrupted mid-write) is unloadable, so treat it as no-saved-state so the
+    namespace re-creates rather than `:load` blowing up on `EOFError`. (A
+    truncated-but-non-empty pickle is caught at `:load` time instead — see
+    `load_agent`.)
     """
     from memgpt.constants import MEMGPT_DIR as _DIR
 
-    state_dir = os.path.join(_DIR, "agents", agent_id, "agent_state")
+    agent_dir = os.path.join(_DIR, "agents", agent_id)
+    state_dir = os.path.join(agent_dir, "agent_state")
     if not os.path.isdir(state_dir):
         return False
-    return any(name.endswith(".json") for name in os.listdir(state_dir))
+    if not any(name.endswith(".json") for name in os.listdir(state_dir)):
+        return False
+
+    pm_dir = os.path.join(agent_dir, "persistence_manager")
+    if not os.path.isdir(pm_dir):
+        return False
+    return any(
+        name.endswith(".pickle")
+        and os.path.getsize(os.path.join(pm_dir, name)) > 0
+        for name in os.listdir(pm_dir)
+    )
 
 
 # ── Request / Response models ─────────────────────────────────────────────
@@ -237,6 +256,13 @@ _DEFAULT_HUMAN: str = "This is what Sam knows about the human so far:\n"
 @router.post("", status_code=201, response_model=CreateAgentResponse,
              summary="Create a resident MemGPT agent (composite bootstrap)")
 def create_agent(body: CreateAgentRequest) -> CreateAgentResponse:
+    """Route handler — thin delegate to `_create_agent`. The `allow_overwrite`
+    knob (used by :ensure to replace unloadable state) is deliberately NOT a
+    route parameter, so it stays off the public API surface."""
+    return _create_agent(body)
+
+
+def _create_agent(body: CreateAgentRequest, allow_overwrite: bool = False) -> CreateAgentResponse:
     """
     COMPOSITE — §2.3.  Four pymemgpt touchpoints:
 
@@ -265,13 +291,16 @@ def create_agent(body: CreateAgentRequest) -> CreateAgentResponse:
         raise HTTPException(status_code=409, detail=f"Agent '{namespace}' is already resident")
 
     # Guard: SAVED state on disk (protect against overwriting a persisted agent).
-    # P5: gate on saved state (agent_state/*.json), not bare config.json — an
-    # orphan config.json with no saved state is a create-without-save artifact
-    # and must be re-creatable, not a 409 wall. AgentConfig.__init__ below
-    # overwrites the orphan config.json harmlessly.
+    # P5: gate on saved state, not bare config.json — an orphan config.json with
+    # no saved state is a create-without-save artifact and must be re-creatable,
+    # not a 409 wall. AgentConfig.__init__ below overwrites the orphan config.
+    # b2: `allow_overwrite` bypasses the guard when :ensure has determined the
+    # on-disk state is unloadable (corrupt pickle) and is re-creating fresh — a
+    # superseding save then makes the new state the latest-by-mtime that :load
+    # reads.
     from memgpt.config import AgentConfig as _AgentConfig
     from memgpt.constants import MEMGPT_DIR as _DIR
-    if _has_saved_state(namespace):
+    if not allow_overwrite and _has_saved_state(namespace):
         config_path = os.path.join(_DIR, "agents", namespace, "config.json")
         raise HTTPException(
             status_code=409,
@@ -853,6 +882,16 @@ def load_agent(agent_id: str) -> LoadResponse:
         agent = Agent.load_agent(DummyInterface(), cfg)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except (EOFError, pickle.UnpicklingError) as exc:
+        # b2 — a truncated/corrupt persistence pickle (e.g. a shutdown save
+        # interrupted mid-write) raises EOFError / UnpicklingError, not
+        # ValueError. Surface it as 404 "unloadable" (the same shape as
+        # "no saved state") so :ensure re-creates instead of the request
+        # 500'ing with a raw traceback.
+        raise HTTPException(
+            status_code=404,
+            detail=f"Saved state for '{agent_id}' is unloadable ({type(exc).__name__}: {exc})",
+        )
 
     registry.put(agent_id, agent)
     logger.info("Agent cold-start loaded: namespace=%s", agent_id)
@@ -893,23 +932,43 @@ def ensure_agent(agent_id: str, body: Optional[EnsureAgentRequest] = None) -> En
         return EnsureAgentResponse(agent_id=agent_id, via="resident")
 
     # 2. On-disk SAVED state → :load (delegate to load_agent)
-    # P5: gate on saved state (agent_state/*.json), not bare config.json. A
-    # config-only namespace (created but never :saved) has nothing for :load to
-    # read, so routing it here would 404 "Cannot load" and — since config.json
-    # exists — also block re-create. Gating on saved state lets it fall through
-    # to create below (re-creating fresh) instead of bricking the namespace.
+    # P5: gate on saved state, not bare config.json. A config-only namespace
+    # (created but never :saved) has nothing for :load to read, so routing it
+    # here would 404 "Cannot load" and — since config.json exists — also block
+    # re-create. Gating on saved state lets it fall through to create below
+    # (re-creating fresh) instead of bricking the namespace.
+    #
+    # b2: if the saved state exists but :load reports it unloadable (404 — a
+    # truncated/corrupt pickle, surfaced by load_agent's EOFError handling), do
+    # NOT propagate the failure. Fall through to re-create fresh (force-
+    # overwriting the unusable state) so a partial write degrades to a clean
+    # restart rather than a hard error. Non-404 load failures (e.g. 409 already-
+    # resident) still propagate.
+    overwrite_unloadable = False
     if _has_saved_state(agent_id):
         logger.debug(":ensure saved-state on-disk agent=%s, delegating to :load", agent_id)
-        load_resp = load_agent(agent_id)  # raises HTTPException on its own failures
-        return EnsureAgentResponse(agent_id=load_resp.agent_id, via="load")
+        try:
+            load_resp = load_agent(agent_id)
+            return EnsureAgentResponse(agent_id=load_resp.agent_id, via="load")
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            logger.warning(
+                ":ensure: on-disk state for %s is unloadable (%s); re-creating fresh",
+                agent_id, exc.detail,
+            )
+            overwrite_unloadable = True
 
-    # 3. Else → create (delegate to create_agent)
+    # 3. Else (or unloadable) → create (delegate to _create_agent)
     ensure_body = body or EnsureAgentRequest()
-    logger.debug(":ensure create agent=%s", agent_id)
-    create_resp = create_agent(CreateAgentRequest(
-        name=agent_id,
-        model=ensure_body.model,
-        persona=ensure_body.persona,
-        human=ensure_body.human,
-    ))
+    logger.debug(":ensure create agent=%s (overwrite=%s)", agent_id, overwrite_unloadable)
+    create_resp = _create_agent(
+        CreateAgentRequest(
+            name=agent_id,
+            model=ensure_body.model,
+            persona=ensure_body.persona,
+            human=ensure_body.human,
+        ),
+        allow_overwrite=overwrite_unloadable,
+    )
     return EnsureAgentResponse(agent_id=create_resp.agent_id, via="create")

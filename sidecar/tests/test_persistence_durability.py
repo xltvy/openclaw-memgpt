@@ -207,3 +207,70 @@ class TestShutdownSaveSweep:
         """Empty input → returns cleanly (shutdown must not error)."""
         from main import _save_agents
         _save_agents([])  # must not raise
+
+
+# ── b2: corrupt/truncated saved state degrades to re-create (no 500) ───────────
+
+
+def _latest_pickle_path(agent_id: str) -> str:
+    pm = os.path.join(_agent_dir(agent_id), "persistence_manager")
+    picks = sorted(n for n in os.listdir(pm) if n.endswith(".pickle"))
+    assert picks, f"no pickle for {agent_id}"
+    return os.path.join(pm, picks[-1])
+
+
+class TestCorruptStateRecovery:
+    """A truncated/empty persistence pickle (e.g. a shutdown save interrupted
+    mid-write) must NOT 500. `:ensure` degrades to a clean re-create; `:load`
+    surfaces a 404, not an unhandled traceback. Defense-in-depth under b1."""
+
+    def _saved_then_evicted(self, client) -> str:
+        ns = f"corrupt-{uuid.uuid4().hex[:8]}"
+        assert client.post("/agents", json={"name": ns, "model": "gpt-4"}).status_code == 201
+        _core_append(client, ns, "human", "marker before corruption")
+        assert client.post(f"/agents/{ns}:save").status_code == 200
+        assert _has_saved_state_on_disk(ns), "precondition: real saved state"
+        _evict(ns)
+        return ns
+
+    def test_zero_byte_pickle_recreates_via_ensure(self, client):
+        ns = self._saved_then_evicted(client)
+        open(_latest_pickle_path(ns), "wb").close()  # truncate to 0 bytes
+
+        r = client.post(f"/agents/{ns}:ensure", json={})
+        assert r.status_code == 200, r.text  # NOT 500
+        assert r.json()["via"] == "create", "0-byte pickle must re-create, not :load"
+        assert _is_resident(ns)
+
+    def test_midpoint_truncated_pickle_recreates_via_ensure(self, client):
+        ns = self._saved_then_evicted(client)
+        p = _latest_pickle_path(ns)
+        with open(p, "rb") as f:
+            data = f.read()
+        with open(p, "wb") as f:
+            f.write(data[: max(1, len(data) // 2)])  # non-empty but truncated
+
+        r = client.post(f"/agents/{ns}:ensure", json={})
+        assert r.status_code == 200, r.text  # NOT 500
+        assert r.json()["via"] == "create", "truncated pickle must re-create, not 500"
+        assert _is_resident(ns)
+
+    def test_load_on_corrupt_pickle_returns_404_not_500(self, client):
+        ns = self._saved_then_evicted(client)
+        p = _latest_pickle_path(ns)
+        with open(p, "rb") as f:
+            data = f.read()
+        with open(p, "wb") as f:
+            f.write(data[: max(1, len(data) // 2)])
+
+        r = client.post(f"/agents/{ns}:load", json={})
+        assert r.status_code == 404, f"corrupt pickle must 404, got {r.status_code}: {r.text}"
+
+    def test_zero_byte_pickle_not_counted_as_saved_state(self, client):
+        """`:ensure` re-create path also means direct create succeeds (the
+        0-byte pickle isn't a 409-blocking 'saved state')."""
+        ns = self._saved_then_evicted(client)
+        open(_latest_pickle_path(ns), "wb").close()
+        _evict(ns) if _is_resident(ns) else None
+        r = client.post("/agents", json={"name": ns, "model": "gpt-4"})
+        assert r.status_code == 201, r.text

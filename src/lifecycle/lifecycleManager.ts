@@ -23,7 +23,13 @@
  */
 
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import { createServer as nodeCreateServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -173,7 +179,13 @@ export class LifecycleManager {
   private child?: ChildProcess;
   private spawnedUrl?: string;
   private attachUrl?: string;
-  private stderrRing: string[] = [];
+  /**
+   * Path to the sidecar's stdout/stderr log file. The child writes here via an
+   * inherited file descriptor (NOT a pipe) — see the spawn block for why. Crash
+   * diagnostics read the tail of this file (`stderrTail`). Undefined until spawn
+   * (and in attach mode, where there is no child to log).
+   */
+  private logPath?: string;
   private started = false;
   /** Set true on `stop` entry so the child `exit` listener doesn't flip deadFlag. */
   private shuttingDown = false;
@@ -382,6 +394,31 @@ export class LifecycleManager {
       UV_PROJECT_ENVIRONMENT: venvDir,
     };
 
+    // Route the child's stdout/stderr to a LOG FILE, not a pipe. A pipe's read
+    // end is held by this (parent) process; when the parent exits — as it does
+    // immediately after the turn in `--local` one-shot mode — the pipe closes,
+    // and uvicorn's graceful-shutdown logging then writes to a broken pipe and
+    // dies *mid-save*, truncating the persistence pickle to 0 bytes (proven by
+    // a single-variable repro: stdio "pipe" → 0-byte pickle, "ignore"/file →
+    // complete pickle). A file fd is independent of the parent's lifecycle, so
+    // the SIGTERM-driven lifespan save (sidecar P4) runs to completion after
+    // the parent is gone. Crash diagnostics are preserved — and improved — by
+    // tailing this file (`stderrTail`) instead of an in-memory ring buffer.
+    // No log rotation in v1 (documented limitation); operators can use OS
+    // logrotate. On open failure we degrade to discarding output, never block
+    // the spawn.
+    this.logPath = path.join(stateDir, "memgpt-sidecar.log");
+    let logFd: number | undefined;
+    try {
+      mkdirSync(stateDir, { recursive: true });
+      logFd = openSync(this.logPath, "a");
+    } catch (err) {
+      this.logger.warn(
+        `openclaw-memgpt: could not open sidecar log at ${this.logPath}; sidecar output will be discarded: ${stringifyError(err)}`,
+      );
+      this.logPath = undefined;
+    }
+
     try {
       this.child = this.opts.spawn(
         "uv",
@@ -397,32 +434,34 @@ export class LifecycleManager {
         {
           cwd: this.opts.sidecarDir,
           env,
-          stdio: ["ignore", "pipe", "pipe"],
+          // stdin ignored; stdout+stderr → the inherited log fd (or discarded).
+          stdio:
+            logFd !== undefined
+              ? ["ignore", logFd, logFd]
+              : ["ignore", "ignore", "ignore"],
         },
       );
     } catch (err) {
       this._dead = true;
+      if (logFd !== undefined) closeSync(logFd);
       throw new Error(
         `openclaw-memgpt: failed to spawn sidecar: ${stringifyError(err)}`,
       );
     }
+    // The child inherited its own dup of the fd; the parent's copy is no longer
+    // needed (and keeping it open would leak a descriptor per spawn).
+    if (logFd !== undefined) closeSync(logFd);
 
     this.wireChildEvents(this.child);
-    // Detach the child from the parent's event loop reference count: without
-    // this, openclaw's process can't exit cleanly because Node.js waits for
-    // child.stdout / child.stderr to close. In gateway mode `services.stop`
-    // SIGTERMs the child before exit, but `--local` mode never fires stop,
-    // so the parent hangs post-turn waiting for the long-running uvicorn.
-    // `unref()` only removes the keep-alive reference; the child still runs
-    // until SIGTERMed. We pair this with `installExitHandler` below so the
-    // child doesn't leak when the parent exits without going through
-    // `LifecycleManager.stop` (the `--local` path).
+    // Detach the child from the parent's event loop reference count so
+    // openclaw's process can exit cleanly post-turn without waiting on the
+    // long-running uvicorn child. `unref()` only removes the keep-alive
+    // reference; the child still runs until SIGTERMed. We pair this with
+    // `installExitHandler` below so the child doesn't leak when the parent
+    // exits without going through `LifecycleManager.stop` (the `--local`
+    // path). With file-fd stdio (above) there are no child.stdout/stderr
+    // pipe streams to unref — that whole class of keep-alive is gone.
     this.child.unref();
-    // Cast: stdout/stderr are typed as Readable in @types/node, but the
-    // runtime instances are Socket (subclass of Duplex) which has unref().
-    // The cast keeps the unref call without weakening Readable elsewhere.
-    (this.child.stdout as { unref?: () => void } | null)?.unref?.();
-    (this.child.stderr as { unref?: () => void } | null)?.unref?.();
     this.installExitHandler();
     this.spawnedUrl = url;
 
@@ -771,17 +810,9 @@ export class LifecycleManager {
   }
 
   private wireChildEvents(child: ChildProcess): void {
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-      for (const line of text.split(/\r?\n/)) {
-        if (line.length === 0) continue;
-        this.stderrRing.push(line);
-        if (this.stderrRing.length > this.opts.stderrRingSize) {
-          this.stderrRing.shift();
-        }
-      }
-    });
-
+    // No stderr 'data' listener: the child's stderr goes to the log file via an
+    // inherited fd (see spawn), not a pipe. Crash diagnostics read the file
+    // tail (`stderrTail`) instead of an in-memory ring.
     child.on("error", (err) => {
       // Errors during spawn (binary not found, EPERM, etc.). We only flip
       // deadFlag here if we're already past start — pre-start errors are
@@ -848,8 +879,22 @@ export class LifecycleManager {
     }
   }
 
+  /**
+   * Last `stderrRingSize` non-empty lines of the sidecar's log file — the
+   * crash-diagnostic context surfaced in the `sidecar process died` /
+   * `did not become ready` messages. Best-effort: returns "" if the log is
+   * absent or unreadable (e.g. open failed and output was discarded).
+   */
   private stderrTail(): string {
-    return this.stderrRing.join("\n");
+    if (this.logPath === undefined) return "";
+    try {
+      const lines = readFileSync(this.logPath, "utf8")
+        .split(/\r?\n/)
+        .filter((l) => l.length > 0);
+      return lines.slice(-this.opts.stderrRingSize).join("\n");
+    } catch {
+      return "";
+    }
   }
 }
 
