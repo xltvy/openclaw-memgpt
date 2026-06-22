@@ -232,6 +232,22 @@ export class LifecycleManager {
     return isConfigComplete(this.config);
   }
 
+  /**
+   * The observability sink this (singleton) manager owns and `activate()`s in
+   * `start`. Exposed so every per-registration `deps` routes through the SAME
+   * activated emitter: the lifecycle is a process-singleton per namespace, but
+   * `register()` fires multiple times and constructs an emitter each call —
+   * only the first registration's emitter gets its JSONL sink activated. Without
+   * sharing this, hooks dispatched on a *later* registration would emit to an
+   * un-activated emitter (live EventEmitter only, no JSONL), leaving the
+   * "authoritative research record" (§6.2/§6.3) incomplete under gateway/multi-
+   * register. Returns the first registration's emitter (the one passed when the
+   * singleton was created).
+   */
+  get emitter(): ActivatableEventSink | undefined {
+    return this.opts.emitter;
+  }
+
   constructor(
     config: PluginConfig,
     logger: OpenClawPluginApi["logger"],

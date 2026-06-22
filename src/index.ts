@@ -105,7 +105,19 @@ const memgptPlugin = definePluginEntry({
     const client = new SidecarClientImpl(config, async () =>
       lifecycle.resolveBaseUrl(),
     );
-    const deps = makeToolDeps(client, config, api, lifecycle, emitter);
+    // Use the SINGLETON lifecycle's emitter (the one whose JSONL sink is
+    // activated), not this registration's freshly-constructed `emitter` — see
+    // LifecycleManager.emitter. On the first register() they're the same object;
+    // on later register()s `lifecycle.emitter` is the first one (activated) and
+    // the local `emitter` is an unused duplicate. This keeps the JSONL record
+    // complete across all registrations' hooks (§6.2/§6.3).
+    const deps = makeToolDeps(
+      client,
+      config,
+      api,
+      lifecycle,
+      lifecycle.emitter ?? emitter,
+    );
 
     registerTools(api, deps);
     registerPromptSectionHook(api, deps);

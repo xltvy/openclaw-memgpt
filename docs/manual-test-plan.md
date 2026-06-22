@@ -119,6 +119,17 @@ present: a confirm "Pre-download the embedding model now (~60s)?".
 - **Decline:** **PASS** — "Skipped pre-warm … first turn downloads (~60s)" note;
   wizard still completes; no marker written.
 
+### 3d — Conversation-access grant (gateway hook gate)
+After any successful `setup`, the wizard surfaces a **"Conversation access"** note
+and writes the grant. Verify:
+```bash
+node -e 'console.log(require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].hooks)'
+```
+**PASS:** prints `{ allowConversationAccess: true }` (a sibling of `config`, not
+inside it). Without it, OpenClaw ≥2026.6.x blocks the `agent_end`/`llm_output`
+hooks in **gateway** mode → silent loss of recall mirror + per-turn save +
+flush-pressure. Revoke by removing the flag.
+
 ### 3c — Wizard edge cases
 - **Cancel (Ctrl-C mid-wizard, or decline the summary):** **PASS** — "Setup
   cancelled"; `sha256` of `openclaw.json` unchanged.
@@ -202,14 +213,35 @@ appears **once**.
 error.
 
 ### 5c — Gateway mode (real-user daemon path)
+Requires the conversation-access grant (3d) — without it the gateway blocks our
+hooks. A wizard-configured install has it; verify it's present first.
 ```bash
-source ~/.secrets && (openclaw --dev gateway run --allow-unconfigured &)   # wait for "sidecar ready"
+source ~/.secrets && (openclaw --dev gateway run --allow-unconfigured > /tmp/gw.log 2>&1 &)   # wait for "sidecar ready"
 source ~/.secrets && openclaw --dev agent --agent main --message "Remember my plant is Fernie." --json
-kill -TERM "$(pgrep -f 'gateway run' | head -1)"                            # clean shutdown
+# hooks must NOT be blocked:
+grep -i "openclaw-memgpt.*blocked because" /tmp/gw.log && echo "FAIL: hooks blocked (grant missing)" || echo "PASS: hooks allowed"
+lsof -ti :19001 | xargs kill -TERM                                          # clean shutdown
 ```
-**PASS:** turn runs (no `EMBEDDED FALLBACK`); gateway log shows "teardown — final
-save complete"; the namespace's `*.persistence.pickle` is non-zero. Restart the
-gateway and ask for the plant → recalls **Fernie**.
+**PASS:** turn runs (no `EMBEDDED FALLBACK`); **no `blocked because …
+allowConversationAccess`** lines; gateway log shows "teardown — final save
+complete"; `*.persistence.pickle` non-zero. Restart the gateway, ask for the
+plant → recalls **Fernie**.
+
+**`agent_end` actually fires (ground truth, since the JSONL emitter is shared
+per Fix 2):** after a gateway turn, a fresh `agent_state/*.json` appears (per-turn
+save) and `recall:search` against the live sidecar returns the turn's messages
+(mirror). Port from `/tmp/gw.log`'s `sidecar ready on …:<port>`.
+
+### 5d — Observability JSONL completeness under multi-register (Fix 2)
+With `observability:"verbose"`, run a gateway turn, then:
+```bash
+python3 -c "import json,collections; c=collections.Counter(json.loads(l).get('kind') for l in open('$HOME/.openclaw-dev/memgpt-observability.jsonl') if l.strip()); print(c)"
+```
+**PASS:** the counter includes `agent_ensured`, `messages_mirrored`, and
+`agent_saved` with recent counts — proving hook events from *every* registration
+reach the single activated sink (not just lifecycle events like
+`sidecar_spawned`). Before Fix 2, only the first registration's emitter wrote the
+file, so hook events were missing.
 
 ---
 

@@ -1008,6 +1008,26 @@ test("getOrCreateLifecycle: same namespace → same instance; different namespac
   _resetLifecycleRegistry();
 });
 
+// Fix 2 — the singleton's emitter is the FIRST registration's (the one whose
+// JSONL sink gets activated in start). Later registrations construct their own
+// emitter, but `lifecycle.emitter` (which index.ts routes all deps through)
+// stays the first — so every hook's events reach the one activated sink, and
+// the JSONL record is complete under multi-register.
+test("getOrCreateLifecycle: emitter is shared (first registration's), not per-call", () => {
+  _resetLifecycleRegistry();
+  const e1 = makeFakeEmitter();
+  const e2 = makeFakeEmitter();
+  const lc1 = getOrCreateLifecycle(makeConfig({ namespace: "shared" }), makeLogger(), { emitter: e1 });
+  const lc2 = getOrCreateLifecycle(makeConfig({ namespace: "shared" }), makeLogger(), { emitter: e2 });
+  assert.equal(lc1, lc2, "same manager");
+  assert.equal(lc1.emitter, e1, "shared manager keeps the first emitter");
+  assert.equal(
+    lc2.emitter, e1,
+    "a later registration must see the first (activated) emitter, not its own e2",
+  );
+  _resetLifecycleRegistry();
+});
+
 test("multi-register: two registrations share one sidecar — agent resident for both", async () => {
   // Models the real failure: register() fires twice, each builds its own client
   // but both go through getOrCreateLifecycle. With the singleton, both clients
