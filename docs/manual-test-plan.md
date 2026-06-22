@@ -347,23 +347,49 @@ source ~/.secrets && openclaw --dev agent --local --agent main --message "What i
 
 ## 7 — Edge cases
 
-> 7a/7d use a **manual attach-mode sidecar** so you can curl it. Start it:
-> ```bash
-> cd "$REPO"
-> OPENCLAW_MEMGPT_DATA_DIR=~/.openclaw-dev/memgpt-data UV_PROJECT_ENVIRONMENT=~/.openclaw-dev/memgpt-sidecar-venv \
->   uv run --project sidecar uvicorn main:app --app-dir sidecar --host 127.0.0.1 --port 8765 > /tmp/sc.log 2>&1 &
-> until curl -sf http://127.0.0.1:8765/healthz >/dev/null; do sleep 1; done; echo "sidecar up on 8765"
-> ```
-> Kill it when done: `pkill -f "uvicorn main:app"`
-
 ### 7a — Corrupt/truncated saved state → re-creates, never 500
-**Reset:** start the attach sidecar (above). Use a namespace that has saved state (e.g. `$NS` from test 5/6).
-**Run + Check:**
+Fully self-contained: starts its own sidecar, creates + saves a fresh test agent
+(real pickle on disk), corrupts the pickle, **restarts** the sidecar so the agent
+is no longer resident (forcing `:ensure` to read disk), then checks `:ensure`
+re-creates instead of 500'ing. No dependence on `$NS` from earlier tests.
+
+A reusable start helper (paste once per shell):
 ```bash
-PK=$(find ~/.openclaw-dev/memgpt-data/agents/$NS/persistence_manager -name '*.pickle' | head -1); : > "$PK"   # truncate to 0
-VIA=$(curl -s -XPOST "http://127.0.0.1:8765/agents/$NS:ensure" -d '{}' -H 'content-type: application/json')
+start_sc() {
+  cd "$REPO"; pkill -f "uvicorn main:app" 2>/dev/null; sleep 1
+  OPENCLAW_MEMGPT_DATA_DIR="$HOME/.openclaw-dev/memgpt-data" UV_PROJECT_ENVIRONMENT="$HOME/.openclaw-dev/memgpt-sidecar-venv" \
+    uv run --project sidecar uvicorn main:app --app-dir sidecar --host 127.0.0.1 --port 8765 > /tmp/sc.log 2>&1 &
+  until curl -sf http://127.0.0.1:8765/healthz >/dev/null; do sleep 1; done; echo "sidecar up on 8765"
+}
+```
+> **zsh note:** in curls below, the namespace before `:save`/`:ensure` is wrapped
+> as `${N7}` — bare `$N7:save` makes zsh try a `:s` history-modifier ("bad
+> substitution"). `$N7/core_memory:append` (slash after the var) is fine as-is.
+
+**Step 1 — start the sidecar + create/save a test agent + corrupt its pickle:**
+```bash
+start_sc
+N7=edge-7a
+curl -s -XPOST "http://127.0.0.1:8765/agents" -H 'content-type: application/json' -d "{\"name\":\"$N7\",\"model\":\"gpt-4\"}" >/dev/null
+curl -s -XPOST "http://127.0.0.1:8765/agents/$N7/core_memory:append" -H 'content-type: application/json' -d '{"name":"human","content":"edge-7a marker"}' >/dev/null
+curl -s -XPOST "http://127.0.0.1:8765/agents/${N7}:save" >/dev/null
+PK=$(find ~/.openclaw-dev/memgpt-data/agents/$N7/persistence_manager -name '*.pickle' | head -1)
+[ -n "$PK" ] && : > "$PK" && echo "pickle truncated: $PK"
+```
+
+**Step 2 — restart the sidecar (so the agent isn't resident → `:ensure` reads disk):**
+```bash
+start_sc
+```
+
+**Step 3 — Run + Check** (`:ensure` must re-create, not 500):
+```bash
+N7=edge-7a
+VIA=$(curl -s -XPOST "http://127.0.0.1:8765/agents/${N7}:ensure" -H 'content-type: application/json' -d '{}')
 echo "$VIA" | grep -q '"via":"create"' && echo "PASS: re-created (no 500)" || { echo "FAIL"; echo "$VIA"; }
 ```
+
+**Step 4 — kill the sidecar:** `pkill -f "uvicorn main:app"`
 
 ### 7b — Cache eviction → clear error + recovery (DESTRUCTIVE — re-download)
 **Reset:**
@@ -391,8 +417,10 @@ grep -qiE "sidecar.*(died|unavailable|restart)" /tmp/t7c.log && echo "PASS: degr
 **Reset (REQUIRED): `mv "$UVP.bak" "$UVP"`**
 
 ### 7d — Attach mode (plugin attaches, doesn't kill your sidecar)
-**Reset:** start the attach sidecar (top of §7); then point the plugin at it:
+**Reset:** start a manual sidecar on 8765 (reuse `start_sc` from 7a, or paste its
+body), then point the plugin at it:
 ```bash
+start_sc    # the helper defined in 7a; or paste its 3 lines
 node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.plugins.entries["openclaw-memgpt"].config.sidecarUrl="http://127.0.0.1:8765";fs.writeFileSync(p,JSON.stringify(c,null,2));'
 ```
 **Run + Check:**
