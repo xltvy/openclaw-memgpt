@@ -118,7 +118,16 @@ export async function runWizard(
     await writeApiKeyFile(stateDir, answers.pastedKey, secretIO);
   }
 
-  // 2. Config block.
+  // Conversation-access grant note (surfaced before the write that sets it).
+  // OpenClaw blocks a non-bundled plugin's conversation-reading hooks unless the
+  // user opts in; a memory plugin can't store what it can't read, so setup grants
+  // it. Make the grant visible + revocable.
+  prompter.note(
+    "openclaw-memgpt reads your conversation to store memories, so setup grants it conversation access (sets hooks.allowConversationAccess=true on the plugin entry in your config). Without it, gateway mode silently skips saving/recalling. Remove that flag any time to revoke.",
+    "Conversation access",
+  );
+
+  // 2. Config block (also sets hooks.allowConversationAccess — see mergePluginConfig).
   await mergePluginConfig(
     {
       provider: answers.provider,

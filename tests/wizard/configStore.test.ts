@@ -49,6 +49,32 @@ test("mergePluginConfig creates entry (enabled) and writes config", async () => 
   assert.deepEqual(entry.config, { provider: "anthropic", model: "claude-x" });
 });
 
+test("mergePluginConfig grants hooks.allowConversationAccess (gateway hook gate)", async () => {
+  // Without this, OpenClaw ≥2026.6.x blocks our agent_end/llm_output hooks in
+  // gateway mode (silent loss of recall mirror + per-turn save + flush-pressure).
+  const { io, get } = fakeIO({});
+  await mergePluginConfig({ provider: "anthropic" }, io);
+  assert.equal(
+    get().plugins.entries[PLUGIN_ID].hooks.allowConversationAccess,
+    true,
+  );
+});
+
+test("mergePluginConfig preserves other hooks while granting access", async () => {
+  const { io, get } = fakeIO({
+    plugins: {
+      entries: {
+        [PLUGIN_ID]: { enabled: true, hooks: { timeoutMs: 5000 }, config: {} },
+      },
+    },
+  });
+  await mergePluginConfig({ provider: "openai" }, io);
+  assert.deepEqual(get().plugins.entries[PLUGIN_ID].hooks, {
+    timeoutMs: 5000,
+    allowConversationAccess: true,
+  });
+});
+
 test("mergePluginConfig preserves untouched keys (namespace/persona)", async () => {
   const { io, get } = fakeIO({
     plugins: {

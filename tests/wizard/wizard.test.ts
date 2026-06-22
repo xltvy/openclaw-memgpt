@@ -55,6 +55,7 @@ function harness(initial: Record<string, any> = {}) {
     secretIO,
     secrets,
     block: () => cfg?.plugins?.entries?.[PLUGIN_ID]?.config ?? {},
+    entry: () => cfg?.plugins?.entries?.[PLUGIN_ID] ?? {},
   };
 }
 
@@ -194,6 +195,29 @@ test("cancelled wizard writes nothing", async () => {
   });
   assert.equal(res.status, "cancelled");
   assert.deepEqual(h.order, []);
+});
+
+test("wizard grants conversation access + surfaces the note", async () => {
+  const h = harness();
+  // full apply, then decline the pre-warm offer (uv present)
+  const prompter = scripted([
+    "anthropic", "paste", "sk-ant-x", "claude-x", "off", "", true, false,
+  ]);
+  const res = await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    reachable: async () => true,
+    checkUv: async () => true,
+    prewarmEmbedder: async () => true,
+  });
+  assert.equal(res.status, "applied");
+  assert.equal(h.entry().hooks.allowConversationAccess, true, "must grant conversation access");
+  assert.ok(
+    prompter.notes.some((n) => /conversation access/i.test(n)),
+    "must surface the conversation-access note",
+  );
 });
 
 // ── prerequisite (uv) + cold-start guidance ──────────────────────────────────
