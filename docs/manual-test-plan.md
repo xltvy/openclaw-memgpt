@@ -1,371 +1,481 @@
 # Manual test plan — rc1 pre-publish (OpenClaw 2026.6.8)
 
-The last gate before publishing to the community. Covers the full end-user
-surface: install (packaged + dev), the config gates, the setup wizard, prewarm,
-memory working end-to-end (store / recall / **cross-session**), cold-start,
-edge cases, and uninstall. Each test states a **PASS** condition.
+The last gate before publishing. Run top-to-bottom. Each test is **Reset → Run →
+Check**; the **Check** block prints `PASS`/`FAIL` (or a value to compare) so you
+never have to eyeball logs. Where a step is interactive (wizard prompts), the
+Run block says exactly what to type and the Check verifies the persisted result.
 
-Dev-profile paths (`~/.openclaw-dev`) assumed. This file ships **excluded** from
-the package (`files` whitelist).
+`REPO` and dev paths are assumed below. Set once per shell:
+```bash
+REPO=~/Workspace/UCL/dissertation/openclaw-memgpt
+CFG=~/.openclaw-dev/openclaw.json
+cd "$REPO"
+```
 
-## Prerequisites & conventions (read once)
+## Preflight (run once, before everything)
 
-- **The agent's brain is separate from the memory sidecar.** Every agent turn
-  needs OpenClaw's own LLM (`~/.openclaw-dev/agents/main/agent/models.json`);
-  the wizard configures only the memory **sidecar**'s LLM. In this repo the
-  brain is `gpt-5.4` via local LiteLLM (`:4000`) → proxy shim (`:4100`), so that
-  stack must be up before any turn (CLAUDE.md → RUNNING THE STACK). Diagnose a
-  failing turn: `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4000/v1/models`
-  → `000` = LiteLLM down; `500 "Budget exceeded"` = account cap. Neither is a
-  plugin bug.
-- **Verify memory by ground truth, not the CLI summary.** Every `send_message`
-  turn prints `livenessState:"abandoned"` + `⚠️ couldn't generate a response`
-  **by design** — ignore it. Verify via: (a) the next turn's `finalPromptText`
-  (`--log-level trace`) showing the stored fact in the `<human>`/`<persona>`
-  block or a grown recall count, or (b) `curl …/recall:search` against a live
-  sidecar (attach mode, or mid-turn). See CLAUDE.md → V1 PROTOCOL.
-- **`--dangerously-force-unsafe-install` is no longer required** on 2026.6.8 (the
-  dangerous-code scanner is gone). Dev installs use a plain `--link`.
-- **Back up:** `cp ~/.openclaw-dev/openclaw.json ~/.openclaw-dev/openclaw.json.bak`
-- **Most tests need the plugin ENABLED** (`openclaw --dev plugins enable
-  openclaw-memgpt`) — a disabled/uninstalled plugin has no `memgpt` command.
-- **Restore** when done (last section).
+```bash
+# 0a. Back up config
+cp "$CFG" "$CFG.bak" && echo "backed up"
+
+# 0b. Brain (host LLM) reachable? memory turns need it, independent of the plugin.
+code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4000/v1/models)
+[ "$code" != "000" ] && echo "PASS: brain endpoint up ($code)" || echo "FAIL: LiteLLM down — start the stack (CLAUDE.md → RUNNING THE STACK)"
+
+# 0c. uv present (plugin spawns the sidecar via uv)
+command -v uv >/dev/null && echo "PASS: uv present" || echo "FAIL: install uv"
+```
+A `500 "Budget exceeded"` from the brain is an account cap, not a plugin bug.
 
 ---
 
 ## 1 — Install
 
-### 1a — Packaged install (the community path) — clean, no force flag
+### 1a — Packaged install (community path; clean, no force flag)
+**Run:**
 ```bash
-npm pack                                   # builds dist/ via prepack → openclaw-memgpt-<v>.tgz
-mkdir -p /tmp/oc-pkgtest && OPENCLAW_PROFILE=pkgtest \
-  openclaw --profile pkgtest plugins install ./openclaw-memgpt-*.tgz
+cd "$REPO"
+rm -f openclaw-memgpt-*.tgz
+npm pack 2>/tmp/pack.err 1>/tmp/pack.out                      # prepack builds dist/
+rm -rf ~/.openclaw-pkgtest
+OPENCLAW_PROFILE=pkgtest openclaw --profile pkgtest plugins install ./openclaw-memgpt-*.tgz > /tmp/t1a.log 2>&1
 ```
-**PASS:** install completes with **no** "requires compiled runtime output", **no**
-dangerous-code warning, **no** `--dangerously-force-unsafe-install`; output ends
-"Installed plugin: openclaw-memgpt". (Throwaway profile — discard after.)
-
-### 1b — Dev `--link` install (iteration)
+**Check (PASS prints PASS):**
 ```bash
-cd ~/Workspace/UCL/dissertation/openclaw-memgpt && rm -rf sidecar/.venv
-openclaw --dev plugins install --link .
+grep -q "Installed plugin: openclaw-memgpt" /tmp/t1a.log \
+  && ! grep -qiE "requires compiled runtime output|dangerous|unsafe-install" /tmp/t1a.log \
+  && echo "PASS" || { echo "FAIL"; cat /tmp/t1a.log; }
 ```
-**PASS:** installs; `~/.openclaw-dev/openclaw.json` shows the plugin in
-`load.paths` + `slots.memory = openclaw-memgpt`. Packaged installs (1a) never
-hit the scan — this is dev-`--link`-only.
+**Cleanup:** `rm -rf ~/.openclaw-pkgtest; rm -f openclaw-memgpt-*.tgz`
 
-> **If it aborts with "manifest dependency scan exceeded max directories
-> (10000)":** the dev tree is too big. The repo's own dirs (`experiments/` ~5.6k
-> + `proxy/` ~3k) sit just under the limit, so any stray heavy dir tips it over.
-> Diagnose + clean:
+### 1b — Dev `--link` install (used by all later tests)
+**Reset (run first):**
+```bash
+cd "$REPO" && rm -rf sidecar/.venv 'sidecar/~'
+find . -type d | wc -l    # must be < 10000; if not, see the note below
+```
+**Run:**
+```bash
+openclaw --dev plugins install --link . > /tmp/t1b.log 2>&1
+```
+**Check:**
+```bash
+node -e 'const c=require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins||{};
+const ok=(c.load?.paths||[]).some(p=>p.includes("openclaw-memgpt")) && c.slots?.memory==="openclaw-memgpt";
+console.log(ok?"PASS":"FAIL", "| inLoad:",(c.load?.paths||[]).some(p=>p.includes("openclaw-memgpt")),"slot:",c.slots?.memory)'
+```
+> **If "manifest dependency scan exceeded max directories (10000)":** a stray heavy
+> dir. Find + remove it, then re-run:
 > ```bash
-> find . -type d | wc -l                                   # total (must be <10000)
 > for d in */ sidecar/*/ ; do echo "$(find "$d" -type d|wc -l) $d"; done | sort -rn | head
-> rm -rf sidecar/.venv 'sidecar/~'                          # common strays: a uv venv, or a
-> #   literal "~" dir from a test cmd that passed UV_PROJECT_ENVIRONMENT=~/… unexpanded
+> rm -rf sidecar/.venv 'sidecar/~'   # a uv venv, or a literal "~" dir, are the usual culprits
 > ```
-> A real `uv`-managed venv lives under the **state dir** (`~/.openclaw-dev/
-> memgpt-sidecar-venv`), never in the repo — anything venv-like inside the repo
-> is a stray to delete.
+
+### 1c — Enable (later tests need the `memgpt` command)
+**Run + Check:**
+```bash
+openclaw --dev plugins enable openclaw-memgpt >/dev/null 2>&1
+node -e 'console.log(require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].enabled===true?"PASS":"FAIL")'
+```
 
 ---
 
-## 2 — Config gates (plugin present but should do nothing)
+## 2 — Config gates
 
 ### 2a — Disabled → zero effect on the agent
+**Run:**
 ```bash
-openclaw --dev plugins disable openclaw-memgpt
-openclaw --dev agent --local --agent main --message "Hello" --json 2>&1 | tee /tmp/t2a.log
-openclaw --dev plugins enable openclaw-memgpt    # re-enable for later tests
+openclaw --dev plugins disable openclaw-memgpt >/dev/null 2>&1
+source ~/.secrets && openclaw --dev agent --local --agent main --message "Hello" --json > /tmp/t2a.log 2>&1
 ```
-**PASS:** `/tmp/t2a.log` (the **agent run**, not the disable command) contains
-**no** `openclaw-memgpt: … registered` line, no sidecar (`pgrep -f "uvicorn
-main:app"` empty), no `abandoned` artifact. (Agent reply itself needs the brain
-up; a brain error still passes this — it has zero memgpt involvement.)
+**Check:**
+```bash
+! grep -q "openclaw-memgpt: 7 tools" /tmp/t2a.log \
+  && ! pgrep -f "uvicorn main:app" >/dev/null \
+  && echo "PASS: plugin inert + no sidecar" || echo "FAIL"
+```
+**Reset (re-enable for the rest):**
+```bash
+openclaw --dev plugins enable openclaw-memgpt >/dev/null 2>&1
+```
 
 ### 2b — Enabled but UNCONFIGURED → loads yet fully inert
+**Reset (clear config so it's unconfigured):**
 ```bash
-node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));const g=c.plugins.entries["openclaw-memgpt"].config;delete g.provider;delete g.baseUrl;delete g.credential;fs.writeFileSync(p,JSON.stringify(c,null,2));'
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));const g=c.plugins.entries["openclaw-memgpt"].config||{};delete g.provider;delete g.baseUrl;delete g.credential;c.plugins.entries["openclaw-memgpt"].config=g;fs.writeFileSync(p,JSON.stringify(c,null,2));'
 rm -f ~/.openclaw-dev/plugins/openclaw-memgpt/api-key
-openclaw --dev agent --local --agent main --message "Remember I like espresso." --json 2>&1 | tee /tmp/t2b.log
 ```
-**PASS:** registration line present + one-time "not configured — run `openclaw
-memgpt setup`" notice; **no sidecar spawned**; if a memory tool is called its
-result is the setup string; no per-turn hook error spam; agent still responds.
-
----
-
-## 3 — Setup wizard
-
-`openclaw --dev memgpt setup` (plugin must be enabled).
-
-### 3a — Credential modes (run each; config saved, no key leak)
-- **Paste** (OpenAI-compatible, base `http://127.0.0.1:4000/v1`, key
-  `sk-local-dev-only`): **PASS** — `…/plugins/openclaw-memgpt/api-key` exists,
-  `stat -f '%Lp'` = `600`; key never printed.
-- **Env var** (`OPENAI_API_KEY`): **PASS** — **no** `api-key` file written;
-  config `credential={source:"env",var:"OPENAI_API_KEY"}`.
-- **Re-entry:** re-run setup → intro says "reconfigure", provider prefilled,
-  credential prompt offers Keep / Replace / Switch and **never prints the stored
-  key**. **PASS** for file→env (switch): after, `…/api-key` is gone and config
-  shows `{source:"env"}` (config written before file removed).
-
-### 3b — Pre-warm offer (new)
-During setup, after the summary, in spawn mode (no `sidecarUrl`) with `uv`
-present: a confirm "Pre-download the embedding model now (~60s)?".
-- **Accept (default):** **PASS** — "Downloading…" then "Embedder cached — first
-  agent turn will be fast"; `~/.openclaw-dev/memgpt-data/.embedder-warm` exists
-  and its content is `BAAI/bge-small-en-v1.5`.
-- **Decline:** **PASS** — "Skipped pre-warm … first turn downloads (~60s)" note;
-  wizard still completes; no marker written.
-
-### 3d — Conversation-access grant (gateway hook gate)
-After any successful `setup`, the wizard surfaces a **"Conversation access"** note
-and writes the grant. Verify:
+**Run:**
 ```bash
-node -e 'console.log(require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].hooks)'
+source ~/.secrets && openclaw --dev agent --local --agent main --message "Remember I like espresso." --json > /tmp/t2b.log 2>&1
 ```
-**PASS:** prints `{ allowConversationAccess: true }` (a sibling of `config`, not
-inside it). Without it, OpenClaw ≥2026.6.x blocks the `agent_end`/`llm_output`
-hooks in **gateway** mode → silent loss of recall mirror + per-turn save +
-flush-pressure. Revoke by removing the flag.
-
-### 3c — Wizard edge cases
-- **Cancel (Ctrl-C mid-wizard, or decline the summary):** **PASS** — "Setup
-  cancelled"; `sha256` of `openclaw.json` unchanged.
-- **Invalid key:** paste a wrong-prefix key → **PASS** rejected inline
-  (format-only; never network-tested).
-- **Unreachable endpoint:** configure a local base URL with nothing listening →
-  **PASS** wizard shows "Endpoint not reachable" + "start your local server"
-  hint, still saves; a direct provider (`api.anthropic.com`) never warns.
-- **`uv` missing** (`UV=$(which uv); mv "$UV" "$UV.bak"`): **PASS** wizard shows
-  "Prerequisite missing" + uv install link + "does not install it for you", and
-  **no** pre-warm offer; still saves config; `uv` still absent. Restore: `mv
-  "$UV.bak" "$UV"`. (Restore uv before `node --test` — integration tests spawn a
-  real sidecar.)
-
-
+**Check:**
 ```bash
-BEFORE=$(shasum -a 256 ~/.openclaw-dev/openclaw.json | awk '{print $1}')
-openclaw --dev memgpt setup        # then either Ctrl-C mid-wizard, OR answer "No" at the summary
-AFTER=$(shasum -a 256 ~/.openclaw-dev/openclaw.json | awk '{print $1}')
-[ "$BEFORE" = "$AFTER" ] && echo "PASS: config unchanged" || echo "FAIL: config mutated"
+grep -q "openclaw-memgpt: 7 tools" /tmp/t2b.log \
+  && grep -qi "not configured" /tmp/t2b.log \
+  && ! pgrep -f "uvicorn main:app" >/dev/null \
+  && echo "PASS: loaded, notice shown, no sidecar" || { echo "FAIL"; grep -i "openclaw-memgpt" /tmp/t2b.log; }
 ```
 
 ---
 
-## 4 — Prewarm (standalone)
+## 3 — Setup wizard (interactive)
 
+> Each sub-test runs `openclaw --dev memgpt setup` and you answer the prompts as
+> described; the **Check** verifies the persisted result.
+
+### 3a — Paste API key
+**Run:** `openclaw --dev memgpt setup` → provider **OpenAI-compatible** · base `http://127.0.0.1:4000/v1` · **Paste** · key `sk-local-dev-only` · model `claude-haiku-dev` (any) · observability `off` · sidecar **blank** · summary **Yes** · pre-warm **No** (faster).
+**Check:**
 ```bash
-rm -f ~/.openclaw-dev/memgpt-data/.embedder-warm     # force a cold marker state
-openclaw --dev memgpt prewarm
-cat ~/.openclaw-dev/memgpt-data/.embedder-warm
+F=~/.openclaw-dev/plugins/openclaw-memgpt/api-key
+[ -f "$F" ] && [ "$(stat -f '%Lp' "$F")" = "600" ] \
+  && node -e 'const c=require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].config; process.exit(c.credential&&c.credential.source==="file"?0:1)' \
+  && echo "PASS: 600 secret file + credential=file" || echo "FAIL"
 ```
-**PASS:** logs "pre-warming … downloads once" then "embedder cached — agent turns
-will be offline-fast"; exits 0; marker file contains `BAAI/bge-small-en-v1.5`.
-(`uv` missing → **PASS** clear error, exit 1, no marker.)
+
+### 3b — Env-var API key
+**Reset:** `export OPENAI_API_KEY=sk-local-dev-only`
+**Run:** `openclaw --dev memgpt setup` → provider **OpenAI-compatible** · **Environment variable** · name `OPENAI_API_KEY` · (rest as 3a).
+**Check:**
+```bash
+[ ! -f ~/.openclaw-dev/plugins/openclaw-memgpt/api-key ] \
+  && node -e 'const c=require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].config; process.exit(c.credential&&c.credential.source==="env"&&c.credential.var==="OPENAI_API_KEY"?0:1)' \
+  && echo "PASS: no secret file + credential=env" || echo "FAIL"
+```
+
+### 3c — Re-entry + file→env switch (no key re-display)
+**Reset (make it file-mode first):** do 3a.
+**Run:** `openclaw --dev memgpt setup` → on the credential prompt choose **Switch** to env, name `ANTHROPIC_API_KEY` (observe: the stored key is **never printed**).
+**Check:**
+```bash
+[ ! -f ~/.openclaw-dev/plugins/openclaw-memgpt/api-key ] \
+  && node -e 'const c=require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].config; process.exit(c.credential&&c.credential.source==="env"?0:1)' \
+  && echo "PASS: secret file removed + credential=env" || echo "FAIL"
+```
+
+### 3d — Pre-warm offer
+**Reset:** `rm -f ~/.openclaw-dev/memgpt-data/.embedder-warm`
+**Run:** `openclaw --dev memgpt setup` → at the end, **Accept** "Pre-download the embedding model now".
+**Check:**
+```bash
+[ "$(cat ~/.openclaw-dev/memgpt-data/.embedder-warm 2>/dev/null)" = "BAAI/bge-small-en-v1.5" ] \
+  && echo "PASS: marker written" || echo "FAIL"
+```
+(Decline variant: reset the marker, run setup, choose **No** → Check expects the marker **absent**: `[ ! -f ~/.openclaw-dev/memgpt-data/.embedder-warm ] && echo PASS || echo FAIL`.)
+
+### 3e — Conversation-access grant (the gateway hook gate; the wizard sets it)
+**Reset (prove the wizard sets it, not a leftover):**
+```bash
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));delete c.plugins.entries["openclaw-memgpt"].hooks;fs.writeFileSync(p,JSON.stringify(c,null,2));'
+```
+**Run:** `openclaw --dev memgpt setup` (any valid path; observe the **"Conversation access"** note before it saves).
+**Check:**
+```bash
+node -e 'const h=require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].hooks; console.log(h&&h.allowConversationAccess===true?"PASS":"FAIL", JSON.stringify(h))'
+```
+
+### 3f — Cancel writes nothing
+**Run + Check (one block):**
+```bash
+B=$(shasum -a 256 "$CFG" | awk '{print $1}')
+openclaw --dev memgpt setup        # Ctrl-C mid-wizard, OR answer "No" at the summary
+A=$(shasum -a 256 "$CFG" | awk '{print $1}')
+[ "$B" = "$A" ] && echo "PASS: config unchanged" || echo "FAIL: config mutated"
+```
+Test **both** paths (Ctrl-C early, and decline at summary).
+
+### 3g — Invalid key rejected (format only)
+**Run:** `openclaw --dev memgpt setup` → provider **Anthropic** · **Paste** · key `not-a-key`.
+**Check:** **PASS** = the prompt rejects inline with `Expected an Anthropic … key starting with "sk-ant-"` and won't proceed until you enter a valid-prefix key (no network call). (Don't use OpenAI-compatible here — it has no prefix rule.) Then Ctrl-C out.
+
+### 3h — Unreachable endpoint warns (still saves)
+**Run:** `openclaw --dev memgpt setup` → **OpenAI-compatible** · base `http://127.0.0.1:4999/v1` (nothing listening) · finish.
+**Check:** **PASS** = wizard shows an **"Endpoint not reachable"** note with a "start your local server" hint **and still completes** (config saved). Verify saved:
+```bash
+node -e 'console.log(require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].config.baseUrl==="http://127.0.0.1:4999/v1"?"PASS: saved despite warning":"FAIL")'
+```
+**Reset (restore a working endpoint): re-run 3a or 3b before continuing.**
+
+### 3i — `uv` missing → warns, no pre-warm offer, still saves
+**Reset:** `UVP=$(command -v uv); mv "$UVP" "$UVP.bak"`
+**Run:** `openclaw --dev memgpt setup` (any valid path).
+**Check:** **PASS** = a **"Prerequisite missing"** note with the uv install link + "does not install it for you", **no** pre-warm offer, config still saved, and:
+```bash
+command -v uv >/dev/null && echo "FAIL: uv reappeared" || echo "PASS: uv still absent (wizard didn't install it)"
+```
+**Reset (REQUIRED — restore uv before any later test):** `mv "$UVP.bak" "$UVP"; command -v uv && echo restored`
+
+---
+
+## 4 — Prewarm (standalone CLI)
+
+**Reset:** `rm -f ~/.openclaw-dev/memgpt-data/.embedder-warm`
+**Run:**
+```bash
+openclaw --dev memgpt prewarm > /tmp/t4.log 2>&1; echo "exit=$?"
+```
+**Check:**
+```bash
+[ "$(cat ~/.openclaw-dev/memgpt-data/.embedder-warm 2>/dev/null)" = "BAAI/bge-small-en-v1.5" ] \
+  && grep -qi "cached" /tmp/t4.log && echo "PASS: cached + marker written" || echo "FAIL"
+```
 
 ---
 
 ## 5 — Memory end-to-end (the load-bearing property)
 
-Configure via **paste** (3a), bring LiteLLM up, **prewarm** (4) so cold-start
-isn't a confound. Set a fresh namespace, then capture it into `$NS` for the rest
-of the test (read it back from config so it's always exact — no copy-paste):
+**Reset (configure + prewarm + fresh namespace):**
 ```bash
+# configure if not already (paste path): openclaw --dev memgpt setup
+openclaw --dev memgpt prewarm >/dev/null 2>&1                      # so cold-start isn't a confound
 node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.plugins.entries["openclaw-memgpt"].config.namespace="mt-"+Date.now();fs.writeFileSync(p,JSON.stringify(c,null,2));'
 NS=$(node -e 'console.log(require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].config.namespace)')
-echo "namespace = $NS"
+echo "NS=$NS"
 ```
 
-### 5a — Store + cross-session recall (`--local`, two processes)
+### 5a — Cross-session recall (`--local`, two processes) + 5b one-sidecar
+**Run:**
 ```bash
-source ~/.secrets && openclaw --dev agent --local --agent main --message "Remember my lucky number is 4173. Acknowledge." --json   # TURN 1 (write)
-sleep 8   # let the detached sidecar finish its shutdown save
-find ~/.openclaw-dev/memgpt-data/agents/$NS/persistence_manager -name '*.pickle' -exec ls -la {} \;   # pickle present + NON-zero
-source ~/.secrets && openclaw --dev agent --local --agent main --message "What is my lucky number? Check your memory." --json   # TURN 2 (recall, fresh process)
+source ~/.secrets && openclaw --dev agent --local --agent main --message "Remember my lucky number is 4173. Acknowledge." --json > /tmp/t5_turn1.log 2>&1
+sleep 8                                                            # detached sidecar finishes its shutdown save
+source ~/.secrets && openclaw --dev agent --local --agent main --message "What is my lucky number? Check your memory." --json > /tmp/t5_turn2.log 2>&1
 ```
-**PASS (all):** turn 1 exits 0; after the wait, `agent_state/*.json` **and** a
-**non-zero** `*.persistence.pickle` exist on disk; turn 2's `before_prompt_build`
-hook does **not** log `timed out after 15000ms` (the whole turn may exceed 15s —
-that includes the brain's LLM call; the 15s budget is the hook's), with **no**
-"not resident"/"Cannot load"/500, and the agent recalls **4173**.
-
-> **Rule out the session-buffer confound (V1 PROTOCOL).** If turn 2 reuses turn
-> 1's `sessionId`, OpenClaw's own buffer also holds "4173", so the reply alone
-> doesn't prove memgpt `:load`. Confirm both:
-> ```bash
-> # (a) the saved memgpt state actually holds it
-> python3 -c "import json,glob,os; d=os.path.expanduser('~/.openclaw-dev/memgpt-data/agents/$NS/agent_state'); f=sorted(glob.glob(d+'/*.json'))[-1]; print('4173 in saved core memory:', '4173' in json.dumps(json.load(open(f))))"
-> # (b) buffer-free recall: archive sessions, ask in a NEW session
-> mkdir -p /tmp/oc-sess-bak && mv ~/.openclaw-dev/agents/main/sessions/*.jsonl /tmp/oc-sess-bak/ 2>/dev/null
-> source ~/.secrets && openclaw --dev agent --local --agent main --session-id clean-$(date +%s) --message "What is my lucky number? Use only your memory." --json | grep -i 4173
-> ```
-> **Decisive PASS:** (a) prints `True` **and** (b) still answers 4173 — that can
-> only come from memgpt `:load`. (This *is* the genuine cross-session path: turn
-> 2 is a separate sidecar process.)
-
-### 5b — One sidecar per process (multi-register fix)
-In turn 1's log: the `openclaw-memgpt: … registered` line appears multiple times
-(OpenClaw registers per-context) but `sidecar spawning on 127.0.0.1:<port>`
-appears **once**.
-**PASS:** exactly one `sidecar spawning` line; no `Agent '<ns>' is not resident`
-error.
+**Check — turn 1 wrote a complete pickle + one sidecar (5b):**
+```bash
+PK=$(find ~/.openclaw-dev/memgpt-data/agents/$NS/persistence_manager -name '*.pickle' 2>/dev/null | head -1)
+[ -n "$PK" ] && [ "$(stat -f%z "$PK")" -gt 0 ] && echo "PASS: non-zero pickle" || echo "FAIL: pickle missing/empty"
+[ "$(grep -c 'sidecar spawning' /tmp/t5_turn1.log)" = "1" ] && echo "PASS: exactly one sidecar (5b)" || echo "FAIL: multi-sidecar"
+```
+**Check — turn 2 had no hook timeout / errors:**
+```bash
+! grep -qE "timed out after 15000ms|not resident|Cannot load|Internal Server Error" /tmp/t5_turn2.log && echo "PASS: clean turn" || { echo "FAIL"; grep -iE "timed out|not resident|Cannot load|500" /tmp/t5_turn2.log; }
+```
+**Check — DECISIVE cross-session (rule out the session buffer):**
+```bash
+# (a) saved memgpt state actually holds it
+python3 -c "import json,glob,os; d=os.path.expanduser('~/.openclaw-dev/memgpt-data/agents/$NS/agent_state'); f=sorted(glob.glob(d+'/*.json'))[-1]; print('PASS' if '4173' in json.dumps(json.load(open(f))) else 'FAIL', '(saved state)')"
+# (b) buffer-free: archive sessions, ask in a NEW session — only memgpt :load can answer
+mkdir -p /tmp/oc-sess-bak && mv ~/.openclaw-dev/agents/main/sessions/*.jsonl /tmp/oc-sess-bak/ 2>/dev/null
+source ~/.secrets && openclaw --dev agent --local --agent main --session-id clean-$(date +%s) --message "What is my lucky number? Use only your memory." --json > /tmp/t5_bufferfree.log 2>&1
+grep -q 4173 /tmp/t5_bufferfree.log && echo "PASS: buffer-free recall (genuine :load)" || echo "FAIL"
+```
+**Reset (restore archived sessions before later tests):**
+```bash
+mv /tmp/oc-sess-bak/*.jsonl ~/.openclaw-dev/agents/main/sessions/ 2>/dev/null; echo "sessions restored"
+```
 
 ### 5c — Gateway mode (real-user daemon path)
-Requires the conversation-access grant (3d) — without it the gateway blocks our
-hooks. A wizard-configured install has it; verify it's present first.
+**Reset (grant must be present — wizard sets it; ensure it for this test):**
 ```bash
-source ~/.secrets && (openclaw --dev gateway run --allow-unconfigured > /tmp/gw.log 2>&1 &)   # wait for "sidecar ready"
-source ~/.secrets && openclaw --dev agent --agent main --message "Remember my plant is Fernie." --json
-# hooks must NOT be blocked:
-grep -i "openclaw-memgpt.*blocked because" /tmp/gw.log && echo "FAIL: hooks blocked (grant missing)" || echo "PASS: hooks allowed"
-lsof -ti :19001 | xargs kill -TERM                                          # clean shutdown
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));const e=c.plugins.entries["openclaw-memgpt"];e.hooks={...(e.hooks||{}),allowConversationAccess:true};fs.writeFileSync(p,JSON.stringify(c,null,2));'
+pkill -9 -f "gateway run" 2>/dev/null; lsof -ti :19001 2>/dev/null | xargs -r kill -9; sleep 2
 ```
-**PASS:** turn runs (no `EMBEDDED FALLBACK`); **no `blocked because …
-allowConversationAccess`** lines; gateway log shows "teardown — final save
-complete"; `*.persistence.pickle` non-zero. Restart the gateway, ask for the
-plant → recalls **Fernie**.
-
-**`agent_end` actually fires (ground truth, since the JSONL emitter is shared
-per Fix 2):** after a gateway turn, a fresh `agent_state/*.json` appears (per-turn
-save) and `recall:search` against the live sidecar returns the turn's messages
-(mirror). Port from `/tmp/gw.log`'s `sidecar ready on …:<port>`.
+**Run:**
+```bash
+source ~/.secrets && nohup openclaw --dev gateway run --allow-unconfigured > /tmp/t5c_gw.log 2>&1 &
+for i in $(seq 1 100); do grep -q "sidecar ready" /tmp/t5c_gw.log && break; sleep 1; done
+source ~/.secrets && openclaw --dev agent --agent main --message "Remember my plant is Fernie." --json > /tmp/t5c_turn.log 2>&1
+sleep 2
+PORT=$(grep -oE "sidecar ready on http://127.0.0.1:[0-9]+" /tmp/t5c_gw.log | tail -1 | grep -oE "[0-9]+$")
+```
+**Check — hooks allowed (Fix 1), turn ran, mirror reached recall:**
+```bash
+! grep -qi "openclaw-memgpt.*blocked because" /tmp/t5c_gw.log && echo "PASS: hooks not blocked (Fix 1)" || echo "FAIL: hooks blocked"
+! grep -q "EMBEDDED FALLBACK" /tmp/t5c_turn.log && echo "PASS: ran on gateway" || echo "FAIL: fell back to embedded (gateway down)"
+curl -s -XPOST "http://127.0.0.1:$PORT/agents/$(node -e 'console.log(require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].config.namespace)')/recall:search" -H 'content-type: application/json' -d '{"query":"Fernie"}' | grep -qi Fernie && echo "PASS: agent_end mirror reached recall" || echo "FAIL: mirror missing"
+```
+**Check — clean teardown + persistence:**
+```bash
+lsof -ti :19001 | xargs kill -TERM; sleep 3
+grep -qi "teardown — final save complete" /tmp/t5c_gw.log && echo "PASS: final save on shutdown" || echo "FAIL"
+```
 
 ### 5d — Observability JSONL completeness under multi-register (Fix 2)
-With `observability:"verbose"`, run a gateway turn, then:
+Uses the gateway turn from 5c (run it with `observability:"verbose"` for full coverage; default also emits these).
+**Check:**
 ```bash
-python3 -c "import json,collections; c=collections.Counter(json.loads(l).get('kind') for l in open('$HOME/.openclaw-dev/memgpt-observability.jsonl') if l.strip()); print(c)"
+python3 -c "
+import json, collections, os
+path = os.path.expanduser('~/.openclaw-dev/memgpt-observability.jsonl')
+c = collections.Counter(json.loads(l).get('kind') for l in open(path) if l.strip())
+print(c)
+print('PASS' if c['messages_mirrored'] and c['agent_saved'] else 'FAIL')
+"
 ```
-**PASS:** the counter includes `agent_ensured`, `messages_mirrored`, and
-`agent_saved` with recent counts — proving hook events from *every* registration
-reach the single activated sink (not just lifecycle events like
-`sidecar_spawned`). Before Fix 2, only the first registration's emitter wrote the
-file, so hook events were missing.
+**PASS:** the counter shows `messages_mirrored` and `agent_saved` ≥1 (hook events reached the JSONL, not just `sidecar_spawned`).
 
 ---
 
 ## 6 — Cold-start behaviour
 
-### 6a — Prewarmed → first turn is fast
-Marker present (after 4). First `--local` turn on a fresh namespace.
-**PASS:** the sidecar log shows "offline cache hit"; turn completes <15s; memory
-works on the **first** turn (5a holds without a throwaway turn).
+### 6a — Prewarmed → first turn fast (no throwaway turn needed)
+**Reset:**
+```bash
+openclaw --dev memgpt prewarm >/dev/null 2>&1
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.plugins.entries["openclaw-memgpt"].config.namespace="cold-"+Date.now();fs.writeFileSync(p,JSON.stringify(c,null,2));'
+NS=$(node -e 'console.log(require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].config.namespace)')
+```
+**Run + Check:**
+```bash
+source ~/.secrets && openclaw --dev agent --local --agent main --message "Remember my code is 7788." --json > /tmp/t6a.log 2>&1
+! grep -q "timed out after 15000ms" /tmp/t6a.log && echo "PASS: first turn within hook budget (prewarmed)" || echo "FAIL: timed out"
+```
 
-### 6b — NOT prewarmed → first turn slow, second fast (graceful)
+### 6b — Cold cache → first turn slow, second fast (DESTRUCTIVE — one-time ~60s re-download)
+**Reset (only if you accept re-downloading the model):**
 ```bash
 rm -f ~/.openclaw-dev/memgpt-data/.embedder-warm
-rm -rf ~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5    # truly cold (forces ~60s download)
-# (only do this if you accept a one-time re-download)
-source ~/.secrets && openclaw --dev agent --local --agent main --message "Remember my code is 5566." --json   # TURN 1: downloads
-sleep 8
-source ~/.secrets && openclaw --dev agent --local --agent main --message "What is my code?" --json             # TURN 2
-```
-**PASS:** turn 1 may show the `before_prompt_build … timed out after 15000ms`
-hook line and answer without memory (download > 15s) — this is the documented
-cold first-turn; it still **downloads + writes the marker**. Turn 2 shows
-"offline cache hit", completes <15s, and recalls **5566**. (Prewarm avoids the
-slow turn 1 entirely — that's its purpose.)
-
----
-
-## 7 — Edge cases (robustness)
-
-### 7a — Corrupt / truncated saved state → re-creates, never 500
-With a saved namespace (after 5a), against a **live** sidecar (attach mode on a
-fixed port, or mid-turn):
-```bash
-PK=$(find ~/.openclaw-dev/memgpt-data/agents/$NS/persistence_manager -name '*.pickle' | head -1)
-: > "$PK"                                  # truncate to 0 bytes
-curl -s -XPOST "http://127.0.0.1:<port>/agents/$NS:ensure" -d '{}' -H 'content-type: application/json'
-```
-**PASS:** returns `{"via":"create"}` (re-creates fresh), **not** a 500. (A
-mid-truncated pickle behaves the same — `:load` 404s internally → re-create.)
-
-### 7b — Cache eviction → clear error + recovery
-```bash
-# marker present, but model cache gone:
 rm -rf ~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5
-source ~/.secrets && openclaw --dev agent --local --agent main --message "hi" --json 2>&1 | grep -i "prewarm\|cache"
-openclaw --dev memgpt prewarm        # recover
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.plugins.entries["openclaw-memgpt"].config.namespace="coldcache-"+Date.now();fs.writeFileSync(p,JSON.stringify(c,null,2));'
+NS=$(node -e 'console.log(require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].config.namespace)')
 ```
-**PASS:** the turn surfaces "Embedder model cache appears unavailable. Run
-`openclaw memgpt prewarm` or restart"; the marker is cleared; after `prewarm` a
-subsequent turn works again.
-
-### 7c — Sidecar-dead degradation
-Rename `uv` (`mv $(which uv) …bak`), configure, run a turn.
-**PASS:** within ~1–2s of `sidecar spawning…` (not after 120s) the plugin marks
-itself dead and tools return "sidecar … restart to recover"; the agent itself
-still responds. Restore `uv`.
-
-### 7d — Attach mode (escape hatch)
-Set `config.sidecarUrl` to a manually-started sidecar.
-**PASS:** wizard skips uv/prewarm guidance; the plugin attaches (no spawn) and at
-teardown does **not** SIGTERM your sidecar; a final `:save` still fires.
-
-### 7e — Observability
-`config.observability:"verbose"` → `~/.openclaw-dev/memgpt-observability.jsonl`
-gets entries with content; `"off"` → stays empty/absent. **PASS** accordingly.
+**Run:**
+```bash
+source ~/.secrets && openclaw --dev agent --local --agent main --message "Remember my code is 5566." --json > /tmp/t6b1.log 2>&1   # downloads
+sleep 8
+source ~/.secrets && openclaw --dev agent --local --agent main --message "What is my code?" --json > /tmp/t6b2.log 2>&1            # offline-fast
+```
+**Check:**
+```bash
+[ "$(cat ~/.openclaw-dev/memgpt-data/.embedder-warm 2>/dev/null)" = "BAAI/bge-small-en-v1.5" ] && echo "PASS: marker written after download" || echo "FAIL"
+! grep -q "timed out after 15000ms" /tmp/t6b2.log && grep -q 5566 /tmp/t6b2.log && echo "PASS: turn 2 fast + recalls" || echo "FAIL"
+```
+(Turn 1 may show `timed out after 15000ms` — documented cold first-turn; not a failure.)
 
 ---
 
-## 8 — Uninstall (`openclaw memgpt uninstall [--dry-run] [--force] [--keep-data]`)
+## 7 — Edge cases
 
-Set up once before the destructive cases: installed, configured via **paste**
-(creates the secret file), one turn run (creates `memgpt-data`).
+> 7a/7d use a **manual attach-mode sidecar** so you can curl it. Start it:
+> ```bash
+> cd "$REPO"
+> OPENCLAW_MEMGPT_DATA_DIR=~/.openclaw-dev/memgpt-data UV_PROJECT_ENVIRONMENT=~/.openclaw-dev/memgpt-sidecar-venv \
+>   uv run --project sidecar uvicorn main:app --app-dir sidecar --host 127.0.0.1 --port 8765 > /tmp/sc.log 2>&1 &
+> until curl -sf http://127.0.0.1:8765/healthz >/dev/null; do sleep 1; done; echo "sidecar up on 8765"
+> ```
+> Kill it when done: `pkill -f "uvicorn main:app"`
 
+### 7a — Corrupt/truncated saved state → re-creates, never 500
+**Reset:** start the attach sidecar (above). Use a namespace that has saved state (e.g. `$NS` from test 5/6).
+**Run + Check:**
+```bash
+PK=$(find ~/.openclaw-dev/memgpt-data/agents/$NS/persistence_manager -name '*.pickle' | head -1); : > "$PK"   # truncate to 0
+VIA=$(curl -s -XPOST "http://127.0.0.1:8765/agents/$NS:ensure" -d '{}' -H 'content-type: application/json')
+echo "$VIA" | grep -q '"via":"create"' && echo "PASS: re-created (no 500)" || { echo "FAIL"; echo "$VIA"; }
+```
+
+### 7b — Cache eviction → clear error + recovery (DESTRUCTIVE — re-download)
+**Reset:**
+```bash
+pkill -f "uvicorn main:app" 2>/dev/null; sleep 1
+rm -rf ~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5   # marker stays → forces offline-miss
+```
+**Run + Check:**
+```bash
+source ~/.secrets && openclaw --dev agent --local --agent main --message "hi" --json > /tmp/t7b.log 2>&1
+grep -qi "prewarm\|cache appears unavailable" /tmp/t7b.log && echo "PASS: actionable error" || echo "FAIL"
+openclaw --dev memgpt prewarm > /tmp/t7b_pw.log 2>&1 && echo "PASS: prewarm recovered" || echo "FAIL"
+```
+
+### 7c — Sidecar-dead degradation (fail-fast, not 120s hang)
+**Reset:** `UVP=$(command -v uv); mv "$UVP" "$UVP.bak"`
+**Run + Check:**
+```bash
+t0=$(date +%s)
+source ~/.secrets && openclaw --dev agent --local --agent main --message "hi" --json > /tmp/t7c.log 2>&1
+t1=$(date +%s)
+grep -qiE "sidecar.*(died|unavailable|restart)" /tmp/t7c.log && echo "PASS: degraded message" || echo "FAIL"
+[ $((t1-t0)) -lt 30 ] && echo "PASS: fast-fail ($((t1-t0))s, not ~120s)" || echo "FAIL: hung ($((t1-t0))s)"
+```
+**Reset (REQUIRED): `mv "$UVP.bak" "$UVP"`**
+
+### 7d — Attach mode (plugin attaches, doesn't kill your sidecar)
+**Reset:** start the attach sidecar (top of §7); then point the plugin at it:
+```bash
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.plugins.entries["openclaw-memgpt"].config.sidecarUrl="http://127.0.0.1:8765";fs.writeFileSync(p,JSON.stringify(c,null,2));'
+```
+**Run + Check:**
+```bash
+source ~/.secrets && openclaw --dev agent --local --agent main --message "hi attach" --json > /tmp/t7d.log 2>&1
+[ "$(grep -c 'sidecar spawning' /tmp/t7d.log)" = "0" ] && echo "PASS: attached (no spawn)" || echo "FAIL: spawned its own"
+curl -sf http://127.0.0.1:8765/healthz >/dev/null && echo "PASS: your sidecar still alive (not SIGTERMed)" || echo "FAIL: plugin killed your sidecar"
+```
+**Reset (REQUIRED):**
+```bash
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));delete c.plugins.entries["openclaw-memgpt"].config.sidecarUrl;fs.writeFileSync(p,JSON.stringify(c,null,2));'
+pkill -f "uvicorn main:app" 2>/dev/null
+```
+
+### 7e — Observability levels
+**Run + Check (verbose writes content; off stays empty):**
+```bash
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.plugins.entries["openclaw-memgpt"].config.observability="verbose";fs.writeFileSync(p,JSON.stringify(c,null,2));'
+: > ~/.openclaw-dev/memgpt-observability.jsonl
+source ~/.secrets && openclaw --dev agent --local --agent main --message "verbose check" --json >/dev/null 2>&1
+[ -s ~/.openclaw-dev/memgpt-observability.jsonl ] && echo "PASS: verbose wrote events" || echo "FAIL"
+```
+**Reset:** `node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));delete c.plugins.entries["openclaw-memgpt"].config.observability;fs.writeFileSync(p,JSON.stringify(c,null,2));'`
+
+---
+
+## 8 — Uninstall
+
+**Reset (set up artifacts to watch them get removed):** plugin installed + configured via **paste** (3a, creates the secret file) + one turn run (creates `memgpt-data`). Helpers:
 ```bash
 inspect() {
-  echo "-- artifacts --"; ls -d ~/.openclaw-dev/plugins/openclaw-memgpt \
-    ~/.openclaw-dev/memgpt-data ~/.openclaw-dev/memgpt-observability.jsonl \
-    ~/.openclaw-dev/memgpt-sidecar-venv 2>/dev/null || true
-  echo "-- registration --"; node -e 'const c=require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins||{};
-    console.log("entry:",!!c.entries?.["openclaw-memgpt"],"| install:",!!c.installs?.["openclaw-memgpt"],
-    "| slot:",c.slots?.memory,"| inLoad:",(c.load?.paths||[]).some(p=>p.includes("openclaw-memgpt")))'
+  echo "-- artifacts --"; ls -d ~/.openclaw-dev/plugins/openclaw-memgpt ~/.openclaw-dev/memgpt-data \
+    ~/.openclaw-dev/memgpt-observability.jsonl ~/.openclaw-dev/memgpt-sidecar-venv 2>/dev/null || true
+  node -e 'const c=require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins||{};
+    console.log("entry:",!!c.entries?.["openclaw-memgpt"],"install:",!!c.installs?.["openclaw-memgpt"],"slot:",c.slots?.memory)'
 }
-reinstall() { cd ~/Workspace/UCL/dissertation/openclaw-memgpt && rm -rf sidecar/.venv && openclaw --dev plugins install --link . && openclaw --dev memgpt setup; }
+reinstall() { cd "$REPO" && rm -rf sidecar/.venv && openclaw --dev plugins install --link . >/dev/null 2>&1 && openclaw --dev memgpt setup; }
 ```
 
-- **U1 `--dry-run`:** `inspect` → `uninstall --dry-run` → `inspect`. **PASS:**
-  "Dry run — no changes" box; artifacts + registration **identical**.
-- **U2 decline:** `uninstall` → answer No. **PASS:** "cancelled"; nothing removed.
-- **U3 accept:** `uninstall` → Yes. **PASS:** all artifacts gone; `entry:false
-  install:false slot:memory-core inLoad:false`; `memgpt --help` → "unknown
-  command". `reinstall`.
-- **U4 `--force`:** **PASS:** same as U3, no prompt. `reinstall`.
-- **U5 `--keep-data`:** **PASS:** `memgpt-data` **kept**; secret dir +
-  observability log + venv removed; de-registered. `reinstall`.
-- **U6 non-interactive, no `--force`** (`uninstall </dev/null`): **PASS:** errors
-  "needs confirmation — re-run with --force"; nothing removed.
-- **U7 round-trip:** `uninstall --force` → `reinstall` → `setup` → a turn works.
-  **PASS:** clean reinstall from the removed state; turn succeeds (no residue).
+- **U1 `--dry-run`:** `inspect; openclaw --dev memgpt uninstall --dry-run; inspect` → **PASS** = "Dry run — no changes" box; both `inspect` outputs identical.
+- **U2 decline:** `openclaw --dev memgpt uninstall` → answer **No** → **PASS** = "cancelled"; `inspect` unchanged.
+- **U3 accept:** `openclaw --dev memgpt uninstall` → **Yes**. **Check:**
+  ```bash
+  ls ~/.openclaw-dev/plugins/openclaw-memgpt 2>/dev/null && echo "FAIL: artifacts remain" || echo "PASS: artifacts gone"
+  openclaw --dev memgpt --help 2>&1 | grep -qi "unknown command" && echo "PASS: command gone" || echo "FAIL"
+  ```
+  then `reinstall`.
+- **U4 `--force`:** `openclaw --dev memgpt uninstall --force` → same checks as U3, no prompt. then `reinstall`.
+- **U5 `--keep-data`:** `openclaw --dev memgpt uninstall --force --keep-data`. **Check:**
+  ```bash
+  [ -d ~/.openclaw-dev/memgpt-data ] && echo "PASS: data kept" || echo "FAIL"
+  [ ! -d ~/.openclaw-dev/plugins/openclaw-memgpt ] && echo "PASS: secret dir removed" || echo "FAIL"
+  ```
+  then `reinstall`.
+- **U6 non-interactive, no `--force`:** `openclaw --dev memgpt uninstall </dev/null` → **PASS** = errors "needs confirmation — re-run with --force"; `inspect` unchanged.
+- **U7 round-trip:** `openclaw --dev memgpt uninstall --force; reinstall` then a turn:
+  ```bash
+  source ~/.secrets && openclaw --dev agent --local --agent main --message "hi" --json > /tmp/u7.log 2>&1
+  grep -q "openclaw-memgpt: 7 tools" /tmp/u7.log && echo "PASS: clean reinstall works" || echo "FAIL"
+  ```
 
-**Expected note (minimal dev config only):** de-register shrinks the tiny
-`openclaw.json` >50%, so the SDK rejects the update and the command falls back to
-a direct atomic write (one-line warning). Expected here; absent on normal configs.
-
-**Note:** a full uninstall removes the whole config block incl.
-`namespace`/`persona`/`human`, so post-reinstall the agent runs the **default**
-namespace (prior memory still on disk under `memgpt-data`, just not loaded). Use
-`--keep-data` + re-add `namespace` to resume a specific agent.
+A one-line "SDK config update rejected … writing config directly" warning on the minimal dev config is **expected** (size-drop guard). A full uninstall resets `namespace`/`persona`/`human` to defaults (data stays on disk; use `--keep-data` + re-add `namespace` to resume).
 
 ---
 
 ## 9 — Package boundary
+**Run + Check:**
 ```bash
-npm pack --dry-run
+cd "$REPO"
+npm pack --dry-run > /tmp/t9.log 2>&1
+grep -q "dist/index.js" /tmp/t9.log && grep -q "sidecar/main.py" /tmp/t9.log \
+  && ! grep -qiE "(tests/|__pycache__|\.venv|docs/|experiments/|\.test\.)" /tmp/t9.log \
+  && echo "PASS: ships src+dist+sidecar; no tests/docs/experiments" || { echo "FAIL — offenders:"; grep -iE "(tests/|docs/|experiments/|__pycache__|\.venv|\.test\.)" /tmp/t9.log; }
 ```
-**PASS:** ships `dist/` + `src/` + `sidecar/` (`.py`, `pyproject.toml`,
-`uv.lock`) + manifest + README + LICENSE; **0** `tests/`, `__pycache__`,
-`.venv`, `docs/`, `experiments/`, or `*.test.*` files.
 
 ---
 
-## Restore
+## Restore (after all tests)
 ```bash
-cp ~/.openclaw-dev/openclaw.json.bak ~/.openclaw-dev/openclaw.json
+pkill -f "uvicorn main:app" 2>/dev/null; pkill -f "gateway run" 2>/dev/null; lsof -ti :19001 2>/dev/null | xargs -r kill
+cp "$CFG.bak" "$CFG"
 rm -f ~/.openclaw-dev/plugins/openclaw-memgpt/api-key
 rm -f ~/.openclaw-dev/openclaw.json.rejected.* 2>/dev/null
-pkill -f "uvicorn main:app"; pkill -f "gateway run" 2>/dev/null
+mv /tmp/oc-sess-bak/*.jsonl ~/.openclaw-dev/agents/main/sessions/ 2>/dev/null
+echo "restored"
 ```
