@@ -175,12 +175,24 @@ find ~/.openclaw-dev/memgpt-data/agents/$NS/persistence_manager -name '*.pickle'
 source ~/.secrets && openclaw --dev agent --local --agent main --message "What is my lucky number? Check your memory." --json   # TURN 2 (recall, fresh process)
 ```
 **PASS (all):** turn 1 exits 0; after the wait, `agent_state/*.json` **and** a
-**non-zero** `*.persistence.pickle` exist on disk; turn 2 completes in **<15s**
-with **no** "timed out"/"not resident"/"Cannot load"/500 in the log, and the
-agent's reply contains **4173** sourced from memory (the next turn's
-`finalPromptText`/core-memory block shows it; the string is in no workspace
-file). This is the genuine `:load` cross-session path (turn 2 is a separate
-sidecar process).
+**non-zero** `*.persistence.pickle` exist on disk; turn 2's `before_prompt_build`
+hook does **not** log `timed out after 15000ms` (the whole turn may exceed 15s —
+that includes the brain's LLM call; the 15s budget is the hook's), with **no**
+"not resident"/"Cannot load"/500, and the agent recalls **4173**.
+
+> **Rule out the session-buffer confound (V1 PROTOCOL).** If turn 2 reuses turn
+> 1's `sessionId`, OpenClaw's own buffer also holds "4173", so the reply alone
+> doesn't prove memgpt `:load`. Confirm both:
+> ```bash
+> # (a) the saved memgpt state actually holds it
+> python3 -c "import json,glob,os; d=os.path.expanduser('~/.openclaw-dev/memgpt-data/agents/$NS/agent_state'); f=sorted(glob.glob(d+'/*.json'))[-1]; print('4173 in saved core memory:', '4173' in json.dumps(json.load(open(f))))"
+> # (b) buffer-free recall: archive sessions, ask in a NEW session
+> mkdir -p /tmp/oc-sess-bak && mv ~/.openclaw-dev/agents/main/sessions/*.jsonl /tmp/oc-sess-bak/ 2>/dev/null
+> source ~/.secrets && openclaw --dev agent --local --agent main --session-id clean-$(date +%s) --message "What is my lucky number? Use only your memory." --json | grep -i 4173
+> ```
+> **Decisive PASS:** (a) prints `True` **and** (b) still answers 4173 — that can
+> only come from memgpt `:load`. (This *is* the genuine cross-session path: turn
+> 2 is a separate sidecar process.)
 
 ### 5b — One sidecar per process (multi-register fix)
 In turn 1's log: the `openclaw-memgpt: … registered` line appears multiple times
