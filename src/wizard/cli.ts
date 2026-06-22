@@ -48,6 +48,24 @@ export function registerWizardCli(api: OpenClawPluginApi): void {
         });
 
       memgpt
+        .command("prewarm")
+        .description(
+          "Download + cache the embedding model so the first agent turn is fast",
+        )
+        .action(async () => {
+          try {
+            const { runPrewarm } = await import("./wizard.ts");
+            const ok = await runPrewarm({ logger: api.logger });
+            if (!ok) process.exitCode = 1;
+          } catch (err) {
+            api.logger.error(
+              `openclaw-memgpt: prewarm failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exitCode = 1;
+          }
+        });
+
+      memgpt
         .command("uninstall")
         .description(
           "Remove openclaw-memgpt: its credentials, memory data, config, and registration",

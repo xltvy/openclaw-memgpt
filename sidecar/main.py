@@ -126,3 +126,32 @@ def healthz():
             "agents_resident": len(registry),
         },
     )
+
+
+# ── Prewarm mode (no server) ────────────────────────────────────────────────
+#
+# `uv run python main.py --prewarm` loads the embedder (downloading + caching it
+# if absent) and exits, WITHOUT starting the FastAPI server. The wizard offers to
+# run this at setup so the first real agent turn finds a warm cache and fits
+# inside OpenClaw's 15s before_prompt_build hook budget (a cold online load is
+# ~56s; a warm offline load is ~0.5s — see bootstrap.load_embedder). Exits 0 on
+# success, 1 on failure, so the wizard can report the outcome.
+
+if __name__ == "__main__":
+    import sys
+
+    if "--prewarm" in sys.argv:
+        logger.info("Prewarm: loading embedder (will download + cache if absent) …")
+        try:
+            ensure_memgpt_config()
+            load_embedder()
+        except Exception as exc:  # noqa: BLE001 — report + non-zero exit for the wizard
+            logger.error("Prewarm failed: %s", exc)
+            sys.exit(1)
+        logger.info("Prewarm complete — embedder cached; first agent turn will be fast.")
+        sys.exit(0)
+
+    raise SystemExit(
+        "main.py is the FastAPI app (run via `uvicorn main:app`). "
+        "The only direct-exec mode is `python main.py --prewarm`."
+    )
