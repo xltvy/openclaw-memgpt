@@ -133,6 +133,14 @@ present: a confirm "Pre-download the embedding model now (~60s)?".
   "$UV.bak" "$UV"`. (Restore uv before `node --test` — integration tests spawn a
   real sidecar.)
 
+
+```bash
+BEFORE=$(shasum -a 256 ~/.openclaw-dev/openclaw.json | awk '{print $1}')
+openclaw --dev memgpt setup        # then either Ctrl-C mid-wizard, OR answer "No" at the summary
+AFTER=$(shasum -a 256 ~/.openclaw-dev/openclaw.json | awk '{print $1}')
+[ "$BEFORE" = "$AFTER" ] && echo "PASS: config unchanged" || echo "FAIL: config mutated"
+```
+
 ---
 
 ## 4 — Prewarm (standalone)
@@ -151,16 +159,18 @@ will be offline-fast"; exits 0; marker file contains `BAAI/bge-small-en-v1.5`.
 ## 5 — Memory end-to-end (the load-bearing property)
 
 Configure via **paste** (3a), bring LiteLLM up, **prewarm** (4) so cold-start
-isn't a confound. Use a fresh namespace per run:
+isn't a confound. Set a fresh namespace, then capture it into `$NS` for the rest
+of the test (read it back from config so it's always exact — no copy-paste):
 ```bash
-node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.plugins.entries["openclaw-memgpt"].config.namespace="mt-"+Date.now();fs.writeFileSync(p,JSON.stringify(c,null,2));console.log("ns:",c.plugins.entries["openclaw-memgpt"].config.namespace)'
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.openclaw-dev/openclaw.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.plugins.entries["openclaw-memgpt"].config.namespace="mt-"+Date.now();fs.writeFileSync(p,JSON.stringify(c,null,2));'
+NS=$(node -e 'console.log(require(process.env.HOME+"/.openclaw-dev/openclaw.json").plugins.entries["openclaw-memgpt"].config.namespace)')
+echo "namespace = $NS"
 ```
 
 ### 5a — Store + cross-session recall (`--local`, two processes)
 ```bash
 source ~/.secrets && openclaw --dev agent --local --agent main --message "Remember my lucky number is 4173. Acknowledge." --json   # TURN 1 (write)
 sleep 8   # let the detached sidecar finish its shutdown save
-NS=<the namespace above>
 find ~/.openclaw-dev/memgpt-data/agents/$NS/persistence_manager -name '*.pickle' -exec ls -la {} \;   # pickle present + NON-zero
 source ~/.secrets && openclaw --dev agent --local --agent main --message "What is my lucky number? Check your memory." --json   # TURN 2 (recall, fresh process)
 ```
