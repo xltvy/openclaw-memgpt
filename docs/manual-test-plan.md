@@ -427,9 +427,14 @@ openclaw --dev memgpt prewarm > /tmp/t7b.log 2>&1; echo "exit=$?"
 t0=$(date +%s)
 source ~/.secrets && openclaw --dev agent --local --agent main --message "hi" --json > /tmp/t7c.log 2>&1
 t1=$(date +%s)
-grep -qiE "sidecar.*(died|unavailable|restart)" /tmp/t7c.log && echo "PASS: degraded message" || echo "FAIL"
-[ $((t1-t0)) -lt 30 ] && echo "PASS: fast-fail ($((t1-t0))s, not ~120s)" || echo "FAIL: hung ($((t1-t0))s)"
+# degraded message — the actual wording is "did not become ready / not resident / uv installed and on PATH":
+grep -qiE "did not become ready|not resident|uv installed and on PATH|spawn uv ENOENT|sidecar process died" /tmp/t7c.log \
+  && echo "PASS: degraded message (clear, actionable)" || { echo "FAIL"; grep -i "openclaw-memgpt" /tmp/t7c.log | tail -3; }
+# fast-fail — the spawn aborts on ENOENT instead of waiting the 120s healthz timeout.
+# (the whole turn still includes the brain's LLM call, so allow generous headroom under 120s)
+[ $((t1-t0)) -lt 90 ] && echo "PASS: no 120s hang ($((t1-t0))s)" || echo "FAIL: hung ($((t1-t0))s)"
 ```
+(The agent itself still responds — the failure is confined to the memory sidecar.)
 **Reset (REQUIRED — self-locating, doesn't need `$UVP`):**
 ```bash
 for d in $(echo "$PATH" | tr ':' ' '); do [ -e "$d/uv.bak" ] && mv "$d/uv.bak" "$d/uv" && echo "restored $d/uv"; done
