@@ -204,7 +204,11 @@ node -e 'console.log(require(process.env.HOME+"/.openclaw-dev/openclaw.json").pl
 ```bash
 command -v uv >/dev/null && echo "FAIL: uv reappeared" || echo "PASS: uv still absent (wizard didn't install it)"
 ```
-**Reset (REQUIRED — restore uv before any later test):** `mv "$UVP.bak" "$UVP"; command -v uv && echo restored`
+**Reset (REQUIRED — restore uv before any later test; self-locating, doesn't need `$UVP`):**
+```bash
+for d in $(echo "$PATH" | tr ':' ' '); do [ -e "$d/uv.bak" ] && mv "$d/uv.bak" "$d/uv" && echo "restored $d/uv"; done
+command -v uv && echo "uv on PATH ✓" || echo "STILL MISSING"
+```
 
 ---
 
@@ -426,7 +430,11 @@ t1=$(date +%s)
 grep -qiE "sidecar.*(died|unavailable|restart)" /tmp/t7c.log && echo "PASS: degraded message" || echo "FAIL"
 [ $((t1-t0)) -lt 30 ] && echo "PASS: fast-fail ($((t1-t0))s, not ~120s)" || echo "FAIL: hung ($((t1-t0))s)"
 ```
-**Reset (REQUIRED): `mv "$UVP.bak" "$UVP"`**
+**Reset (REQUIRED — self-locating, doesn't need `$UVP`):**
+```bash
+for d in $(echo "$PATH" | tr ':' ' '); do [ -e "$d/uv.bak" ] && mv "$d/uv.bak" "$d/uv" && echo "restored $d/uv"; done
+command -v uv && echo "uv on PATH ✓" || echo "STILL MISSING"
+```
 
 ### 7d — Attach mode (plugin attaches, doesn't kill your sidecar)
 **Reset:** start a manual sidecar on 8765 (reuse `start_sc` from 7a, or paste its
