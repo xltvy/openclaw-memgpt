@@ -117,29 +117,49 @@ test(
   "flush pipeline end-to-end: llm_output captures → agent_end summarises + writes metadata → assemble() returns trimmed buffer → recall finds summary",
   { timeout: 180_000 }, // generous timeout: sidecar startup + LLM call can take 2-3 min combined
   async (t) => {
-    // ── LLM preflight: skip if the endpoint is unreachable ──────────────────
+    // ── LLM preflight: skip if the model can't actually complete ────────────
     //
-    // The sidecar's :summarize route calls the LLM. A connection failure turns
-    // the test into a misleading failure rather than an environmental skip.
-    // t.skip() marks the test skipped (not failed) so the CI signal stays clean.
+    // The sidecar's :summarize route calls the LLM, so an unusable LLM turns
+    // this into a misleading failure rather than an environmental skip. A
+    // connection-level check (e.g. GET /health) is too weak: a proxy can answer
+    // /health 200 while the model's upstream is down (observed: LiteLLM :4000 up
+    // but gpt-5.4's :4100 shim refusing connections → :summarize emit_failed).
+    // So we do a REAL minimal completion with the same model and skip unless it
+    // returns 200 — verify the LLM works, don't optimistically assume it from a
+    // reachable port (same "surface honestly, don't silently degrade" discipline
+    // as the Shape A un-swallow fix). t.skip() keeps the CI signal clean.
 
     const apiBase =
       process.env.OPENAI_API_BASE ?? "https://api.openai.com/v1";
-    let llmReachable = false;
+    const apiKey = process.env.OPENAI_API_KEY ?? "sk-local-dev-only";
+    let llmUsable = false;
+    let preflightDetail = "";
     try {
-      const origin = new URL(apiBase).origin;
-      const res = await fetch(`${origin}/health`, {
-        signal: AbortSignal.timeout(3_000),
+      const res = await fetch(`${apiBase}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-5.4", // same model :summarize uses (see config below)
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
+        }),
+        signal: AbortSignal.timeout(20_000),
       });
-      llmReachable = res.status < 500;
-    } catch {
-      llmReachable = false;
+      llmUsable = res.ok;
+      if (!res.ok) {
+        preflightDetail = `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
+      }
+    } catch (err) {
+      preflightDetail = err instanceof Error ? err.message : String(err);
     }
-    if (!llmReachable) {
+    if (!llmUsable) {
       t.skip(
-        `LLM endpoint unreachable at ${apiBase}. ` +
-          `See CLAUDE.md 'RUNNING THE STACK' for the three-terminal recipe ` +
-          `(LiteLLM proxy on port 4000 + institutional Bedrock proxy at $SHIM_UPSTREAM_URL).`,
+        `summarisation LLM can't complete (model gpt-5.4) — ${preflightDetail}. ` +
+          `See CLAUDE.md 'RUNNING THE STACK' (LiteLLM :4000 + the proxy shim :4100 ` +
+          `must both be up, sourcing ~/.secrets).`,
       );
       return;
     }

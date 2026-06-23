@@ -141,6 +141,21 @@ test("guard: !event.success → no mirror, no save", async () => {
   assert.equal(deps.emitted.length, 0);
 });
 
+test("config gate: unconfigured → no mirror, no save, no log (silent)", async () => {
+  const append = mock.fn(async () => ({ appended: 0 }));
+  const save = mock.fn(async () => ({ saved: true as const }));
+  const deps = {
+    ...makeDeps({ messagesAppend: append, save }),
+    lifecycle: { isConfigured: false } as unknown as ToolDeps["lifecycle"],
+  };
+  const { handler } = captureHookHandler(deps);
+  await handler(makeHappyEvent(), INTERACTIVE_CTX);
+  assert.equal(append.mock.callCount(), 0);
+  assert.equal(save.mock.callCount(), 0);
+  assert.equal(deps.emitted.length, 0);
+  assert.equal(deps.logger.warned.length, 0, "unconfigured skip must be silent");
+});
+
 test("guard: empty event.messages → no mirror, no save", async () => {
   const append = mock.fn(async () => ({ appended: 0 }));
   const save = mock.fn(async () => ({ saved: true as const }));

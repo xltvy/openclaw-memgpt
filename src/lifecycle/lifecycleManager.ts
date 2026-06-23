@@ -8,7 +8,7 @@
  *   Q2 healthz:  spawn-and-block in `start`, 120 s max, 10 s progress logs
  *   Q3 env:      explicit overrides for plugin-managed knobs; inherit rest
  *   Q4 crash:    log + deadFlag + fail-next-turn (no auto-restart in V1)
- *   Q5 resolver: config.sidecarUrl → env → spawn (three-way precedence)
+ *   Q5 resolver: sidecar base URL — config.sidecarUrl, then env, then a self-managed local port
  *   Q6 teardown: save (30 s) → SIGTERM → 10 s wait → SIGKILL fallback
  *
  * The manager owns the spawn-vs-attach decision (in `start`), the child
@@ -23,13 +23,21 @@
  */
 
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import { createServer as nodeCreateServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
-import type { PluginConfig } from "../config.ts";
+import { isConfigComplete, type PluginConfig } from "../config.ts";
+import { isEndpointReachable, isLocalUrl } from "../reachability.ts";
 import type {
   ActivatableEventSink,
   MemoryEventKind,
@@ -56,15 +64,34 @@ const DEFAULT_SAVE_TIMEOUT_MS = 30_000;
 const DEFAULT_STDERR_RING_SIZE = 200;
 
 /**
- * Sidecar directory — resolved from this file's location at module load.
- * src/lifecycle/lifecycleManager.ts → climb two → plugin root → sidecar/.
+ * Sidecar directory — walk up from this module's location until we find the dir
+ * containing `sidecar/main.py`. This must be robust to *entry depth*: from
+ * source this module is at `src/lifecycle/…` (plugin root is two up), but from
+ * the bundled compiled entry it runs from `dist/index.js` (plugin root is one
+ * up). A fixed `../..` is correct for source but overshoots for the bundle —
+ * which silently resolved the sidecar dir one level above the plugin, so the
+ * spawn failed with `spawn uv ENOENT` (a non-existent `cwd`). Walking up to the
+ * `sidecar/main.py` marker handles source, `--link`, and packaged installs.
  */
-const PLUGIN_ROOT = path.resolve(
+export function findSidecarDir(
+  startDir: string,
+  exists: (p: string) => boolean = existsSync,
+): string {
+  let dir = startDir;
+  for (let i = 0; i < 8; i++) {
+    const candidate = path.join(dir, "sidecar");
+    if (exists(path.join(candidate, "main.py"))) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Fallback to the legacy source-layout heuristic (climb two).
+  return path.join(path.resolve(startDir, "..", ".."), "sidecar");
+}
+
+const DEFAULT_SIDECAR_DIR = findSidecarDir(
   path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
 );
-const DEFAULT_SIDECAR_DIR = path.join(PLUGIN_ROOT, "sidecar");
 
 // ============================================================================
 // Shared dead-sidecar surface (consumed by tools/hooks at entry, 6c.10a Q4)
@@ -72,6 +99,16 @@ const DEFAULT_SIDECAR_DIR = path.join(PLUGIN_ROOT, "sidecar");
 
 export const SIDECAR_DEAD_MESSAGE =
   "openclaw-memgpt: sidecar process died; restart OpenClaw to recover";
+
+/**
+ * Verbatim tool-result / error string when the plugin has no LLM provider +
+ * credential configured (§6d.6). Tools surface this to the LLM and
+ * `resolveBaseUrl` throws it; `start` skips the sidecar spawn entirely so an
+ * unconfigured plugin never pays the embedder cold-start or runs a
+ * credential-less sidecar.
+ */
+export const NOT_CONFIGURED_MESSAGE =
+  "openclaw-memgpt: not configured — run `openclaw memgpt setup` to choose an LLM provider and supply an API key.";
 
 // ============================================================================
 // Public API
@@ -93,6 +130,15 @@ export interface LifecycleManagerOptions {
    * (`sidecar_spawned` / `sidecar_exited` / `health_failed`) through it.
    */
   emitter?: ActivatableEventSink;
+  /**
+   * §6d.6 — async contributor of LLM credential env vars
+   * (`OPENAI_API_KEY` / `OPENAI_API_BASE`) for the spawned sidecar, resolved
+   * from the wizard's stored credential reference. Receives the resolved state
+   * dir (the secret-file root). Merged over the inherited environment but under
+   * the plugin-managed pins. Absent ⇒ the sidecar inherits credentials from the
+   * shell env verbatim (pre-6d.6 behaviour).
+   */
+  credentialEnv?: (stateDir: string) => Promise<Record<string, string>>;
   /** DI for testing. */
   spawn?: SpawnFn;
   createServer?: CreateServerFn;
@@ -114,7 +160,12 @@ export class LifecycleManager {
   private readonly opts: Required<
     Omit<
       LifecycleManagerOptions,
-      "spawn" | "createServer" | "fetch" | "stateDirOverride" | "emitter"
+      | "spawn"
+      | "createServer"
+      | "fetch"
+      | "stateDirOverride"
+      | "emitter"
+      | "credentialEnv"
     >
   > & {
     spawn: SpawnFn;
@@ -122,23 +173,38 @@ export class LifecycleManager {
     fetch: FetchFn;
     stateDirOverride?: string;
     emitter?: ActivatableEventSink;
+    credentialEnv?: (stateDir: string) => Promise<Record<string, string>>;
   };
 
   private child?: ChildProcess;
   private spawnedUrl?: string;
   private attachUrl?: string;
-  private stderrRing: string[] = [];
+  /**
+   * Path to the sidecar's stdout/stderr log file. The child writes here via an
+   * inherited file descriptor (NOT a pipe) — see the spawn block for why. Crash
+   * diagnostics read the tail of this file (`stderrTail`). Undefined until spawn
+   * (and in attach mode, where there is no child to log).
+   */
+  private logPath?: string;
   private started = false;
   /** Set true on `stop` entry so the child `exit` listener doesn't flip deadFlag. */
   private shuttingDown = false;
   /**
-   * Singleton in-flight promise for the lazy-init path (see `resolveBaseUrl`).
-   * Concurrent first calls await the same promise so `start({})` only fires
-   * once even under bursty parallel tool dispatch. Cleared on failure so a
-   * subsequent call can retry; left set on success so subsequent calls
-   * short-circuit at the `spawnedUrl !== undefined` check above lazy init.
+   * In-flight `start` promise, memoised. `register()` fires multiple times in a
+   * single process and each call registers a `memgpt-sidecar` service, so the
+   * SDK service runner can invoke `start` N times; the lazy-init path
+   * (`resolveBaseUrl`) is a further caller. Memoising collapses them all to a
+   * single spawn + healthz block. Cleared on failure so a later call retries;
+   * left set on success (re-entry then short-circuits via `started`).
    */
-  private lazyStartPromise?: Promise<void>;
+  private startPromise?: Promise<void>;
+  /**
+   * In-flight `stop` promise, memoised. Mirror of `startPromise`: the SDK runs
+   * the (N) registered `stop`s in reverse order, so without this the final save
+   * + SIGTERM would fire once per registration. Memoising makes teardown
+   * happen exactly once.
+   */
+  private stopPromise?: Promise<void>;
 
   /** Lifecycle.start sets this; tools/hooks can ask "what URL would I hit?". */
   get mode(): "spawn" | "attach" | "uninitialised" {
@@ -154,6 +220,32 @@ export class LifecycleManager {
   /** True if the child has exited (spawn mode) or start failed. Tools/hooks consult this. */
   get isDead(): boolean {
     return this._dead;
+  }
+
+  /**
+   * True when the plugin has a usable LLM config (provider + credential).
+   * Tools/hooks consult this at entry to short-circuit with
+   * `NOT_CONFIGURED_MESSAGE` instead of spawning / hitting a credential-less
+   * sidecar (§6d.6). `start` and `resolveBaseUrl` gate on the same predicate.
+   */
+  get isConfigured(): boolean {
+    return isConfigComplete(this.config);
+  }
+
+  /**
+   * The observability sink this (singleton) manager owns and `activate()`s in
+   * `start`. Exposed so every per-registration `deps` routes through the SAME
+   * activated emitter: the lifecycle is a process-singleton per namespace, but
+   * `register()` fires multiple times and constructs an emitter each call —
+   * only the first registration's emitter gets its JSONL sink activated. Without
+   * sharing this, hooks dispatched on a *later* registration would emit to an
+   * un-activated emitter (live EventEmitter only, no JSONL), leaving the
+   * "authoritative research record" (§6.2/§6.3) incomplete under gateway/multi-
+   * register. Returns the first registration's emitter (the one passed when the
+   * singleton was created).
+   */
+  get emitter(): ActivatableEventSink | undefined {
+    return this.opts.emitter;
   }
 
   constructor(
@@ -175,6 +267,7 @@ export class LifecycleManager {
       sidecarDir: options.sidecarDir ?? DEFAULT_SIDECAR_DIR,
       stateDirOverride: options.stateDirOverride,
       emitter: options.emitter,
+      credentialEnv: options.credentialEnv,
       spawn: options.spawn ?? nodeSpawn,
       createServer: options.createServer ?? nodeCreateServer,
       fetch: options.fetch ?? globalThis.fetch.bind(globalThis),
@@ -204,6 +297,28 @@ export class LifecycleManager {
       throw new Error(
         "openclaw-memgpt: start() called after prior failure marked lifecycle dead",
       );
+    }
+    // Collapse concurrent / repeated starts (N service registrations + lazy
+    // path) to one spawn. Cleared on failure so the next caller can retry.
+    if (this.startPromise !== undefined) return this.startPromise;
+    this.startPromise = this._doStart(ctx).catch((err) => {
+      this.startPromise = undefined;
+      throw err;
+    });
+    return this.startPromise;
+  }
+
+  private async _doStart(ctx: Record<string, unknown>): Promise<void> {
+    // §6d.6 config gate — without a provider + credential the sidecar has no
+    // usable LLM, so skip the spawn entirely (no embedder cold-start, no
+    // credential-less process). Leaves `started=false`; `resolveBaseUrl` throws
+    // NOT_CONFIGURED and tools short-circuit. Not a throw: the unconfigured
+    // state is expected and already surfaced by the register-time notice.
+    if (!isConfigComplete(this.config)) {
+      this.logger.warn(
+        "openclaw-memgpt: not configured — skipping sidecar spawn. Run `openclaw memgpt setup`.",
+      );
+      return;
     }
 
     // §6.2 two-phase init: activate the observability sink now that the state
@@ -238,6 +353,7 @@ export class LifecycleManager {
         );
         this.started = true;
         this.logger.info("openclaw-memgpt: attach mode ready");
+        await this.warnIfLlmEndpointUnreachable();
         return;
       } catch (err) {
         this._dead = true;
@@ -256,17 +372,68 @@ export class LifecycleManager {
     const url = `http://127.0.0.1:${port}`;
     const stateDir = this.resolveStateDir(ctx);
     const dataDir = path.join(stateDir, "memgpt-data");
+    // uv venv relocated out of the plugin dir (see env block below).
+    const venvDir = path.join(stateDir, "memgpt-sidecar-venv");
 
     this.logger.info(
-      `openclaw-memgpt: sidecar spawning on 127.0.0.1:${port} (data_dir=${dataDir}, sidecarDir=${this.opts.sidecarDir})`,
+      `openclaw-memgpt: sidecar spawning on 127.0.0.1:${port} (data_dir=${dataDir}, venv=${venvDir}, sidecarDir=${this.opts.sidecarDir})`,
     );
 
+    // §6d.6 — resolve the wizard's stored credential into LLM env vars. Merged
+    // over inherited process.env (the resolved key is authoritative) but under
+    // the plugin-managed pins below. Failures are logged, not fatal — the
+    // sidecar then falls back to whatever the shell env carries.
+    let credEnv: Record<string, string> = {};
+    if (this.opts.credentialEnv !== undefined) {
+      try {
+        credEnv = await this.opts.credentialEnv(stateDir);
+      } catch (err) {
+        this.logger.warn(
+          `openclaw-memgpt: credential resolution failed; sidecar will use shell env: ${stringifyError(err)}`,
+        );
+      }
+    }
+
+    // `UV_PROJECT_ENVIRONMENT` puts `uv run`'s virtualenv at `venvDir` (under
+    // the state dir) instead of the default `<sidecarDir>/.venv`. That default
+    // pulls in torch/transformers/scipy for the embedder (~6.5k directories);
+    // inside the installed plugin it bloats the tree past OpenClaw's 10k-dir
+    // install/update safety-scan limit (and bloats a dev `--link` source tree
+    // the same way). Relocating keeps the plugin tree small and lets the venv
+    // persist across reinstalls (no torch re-download). `uninstall` removes it.
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...credEnv,
       OPENCLAW_MEMGPT_DATA_DIR: dataDir,
       OPENCLAW_MEMGPT_HOST: "127.0.0.1",
       OPENCLAW_MEMGPT_PORT: String(port),
+      UV_PROJECT_ENVIRONMENT: venvDir,
     };
+
+    // Route the child's stdout/stderr to a LOG FILE, not a pipe. A pipe's read
+    // end is held by this (parent) process; when the parent exits — as it does
+    // immediately after the turn in `--local` one-shot mode — the pipe closes,
+    // and uvicorn's graceful-shutdown logging then writes to a broken pipe and
+    // dies *mid-save*, truncating the persistence pickle to 0 bytes (proven by
+    // a single-variable repro: stdio "pipe" → 0-byte pickle, "ignore"/file →
+    // complete pickle). A file fd is independent of the parent's lifecycle, so
+    // the SIGTERM-driven lifespan save (sidecar P4) runs to completion after
+    // the parent is gone. Crash diagnostics are preserved — and improved — by
+    // tailing this file (`stderrTail`) instead of an in-memory ring buffer.
+    // No log rotation in v1 (documented limitation); operators can use OS
+    // logrotate. On open failure we degrade to discarding output, never block
+    // the spawn.
+    this.logPath = path.join(stateDir, "memgpt-sidecar.log");
+    let logFd: number | undefined;
+    try {
+      mkdirSync(stateDir, { recursive: true });
+      logFd = openSync(this.logPath, "a");
+    } catch (err) {
+      this.logger.warn(
+        `openclaw-memgpt: could not open sidecar log at ${this.logPath}; sidecar output will be discarded: ${stringifyError(err)}`,
+      );
+      this.logPath = undefined;
+    }
 
     try {
       this.child = this.opts.spawn(
@@ -283,40 +450,81 @@ export class LifecycleManager {
         {
           cwd: this.opts.sidecarDir,
           env,
-          stdio: ["ignore", "pipe", "pipe"],
+          // stdin ignored; stdout+stderr → the inherited log fd (or discarded).
+          stdio:
+            logFd !== undefined
+              ? ["ignore", logFd, logFd]
+              : ["ignore", "ignore", "ignore"],
         },
       );
     } catch (err) {
       this._dead = true;
+      if (logFd !== undefined) closeSync(logFd);
       throw new Error(
         `openclaw-memgpt: failed to spawn sidecar: ${stringifyError(err)}`,
       );
     }
+    // The child inherited its own dup of the fd; the parent's copy is no longer
+    // needed (and keeping it open would leak a descriptor per spawn).
+    if (logFd !== undefined) closeSync(logFd);
 
     this.wireChildEvents(this.child);
-    // Detach the child from the parent's event loop reference count: without
-    // this, openclaw's process can't exit cleanly because Node.js waits for
-    // child.stdout / child.stderr to close. In gateway mode `services.stop`
-    // SIGTERMs the child before exit, but `--local` mode never fires stop,
-    // so the parent hangs post-turn waiting for the long-running uvicorn.
-    // `unref()` only removes the keep-alive reference; the child still runs
-    // until SIGTERMed. We pair this with `installExitHandler` below so the
-    // child doesn't leak when the parent exits without going through
-    // `LifecycleManager.stop` (the `--local` path).
+    // Detach the child from the parent's event loop reference count so
+    // openclaw's process can exit cleanly post-turn without waiting on the
+    // long-running uvicorn child. `unref()` only removes the keep-alive
+    // reference; the child still runs until SIGTERMed. We pair this with
+    // `installExitHandler` below so the child doesn't leak when the parent
+    // exits without going through `LifecycleManager.stop` (the `--local`
+    // path). With file-fd stdio (above) there are no child.stdout/stderr
+    // pipe streams to unref — that whole class of keep-alive is gone.
     this.child.unref();
-    // Cast: stdout/stderr are typed as Readable in @types/node, but the
-    // runtime instances are Socket (subclass of Duplex) which has unref().
-    // The cast keeps the unref call without weakening Readable elsewhere.
-    (this.child.stdout as { unref?: () => void } | null)?.unref?.();
-    (this.child.stderr as { unref?: () => void } | null)?.unref?.();
     this.installExitHandler();
     this.spawnedUrl = url;
 
+    // Fast-fail: a missing `uv` surfaces as an async `spawn uv ENOENT` *error*
+    // event (not a synchronous throw), and a sidecar that boots then crashes
+    // emits an early `exit`. Race both against the healthz poll so we abort
+    // immediately instead of polling for the full 120 s timeout. `settled`
+    // makes the listeners no-ops once the race is decided (so the legitimate
+    // teardown `exit` later doesn't reject an unawaited promise).
+    const child = this.child;
+    let settled = false;
+    // Abort the losing race branch: when `startupFailed` wins, `pollHealthz`
+    // would otherwise keep looping + logging for the full timeout (Promise.race
+    // doesn't cancel the loser) and its un-unref'd sleep timers would keep the
+    // process alive. The signal stops it within one poll interval.
+    const pollAbort = new AbortController();
+    const startupFailed = new Promise<never>((_, reject) => {
+      child.once("error", (err) => {
+        if (settled) return;
+        settled = true;
+        reject(
+          new Error(
+            `failed to launch sidecar via \`uv run\` — is uv installed and on PATH? (${stringifyError(err)})`,
+          ),
+        );
+      });
+      child.once("exit", (code, signal) => {
+        if (settled) return;
+        settled = true;
+        reject(
+          new Error(
+            `sidecar exited during startup (code=${code}, signal=${signal ?? "none"})`,
+          ),
+        );
+      });
+    });
+
     try {
-      await this.pollHealthz(url, this.opts.spawnTimeoutMs, "spawn");
+      await Promise.race([
+        this.pollHealthz(url, this.opts.spawnTimeoutMs, "spawn", pollAbort.signal),
+        startupFailed,
+      ]);
+      settled = true;
     } catch (err) {
-      // start failed; child is alive but unresponsive. Tear it down so we
+      // Spawn error / early exit / healthz timeout — tear the child down so we
       // don't leak the process when the SDK swallows our throw.
+      settled = true;
       this._dead = true;
       this.emitLifecycle("health_failed", {
         mode: "spawn",
@@ -324,14 +532,43 @@ export class LifecycleManager {
         timeoutMs: this.opts.spawnTimeoutMs,
       });
       await this.terminateChild().catch(() => undefined);
+      const tail = this.stderrTail();
       throw new Error(
-        `openclaw-memgpt: sidecar healthz timed out after ${this.opts.spawnTimeoutMs}ms — last stderr lines:\n${this.stderrTail()}\nCause: ${stringifyError(err)}`,
+        `openclaw-memgpt: sidecar did not become ready: ${stringifyError(err)}${tail ? `\nLast stderr lines:\n${tail}` : ""}`,
       );
+    } finally {
+      // Stop the losing pollHealthz (no-op if it already won/finished).
+      pollAbort.abort();
     }
 
     this.started = true;
     this.emitLifecycle("sidecar_spawned", { port });
     this.logger.info(`openclaw-memgpt: sidecar ready on ${url}`);
+    await this.warnIfLlmEndpointUnreachable();
+  }
+
+  /**
+   * §6d.6 — after the sidecar is up, probe the configured LLM endpoint
+   * (config.baseUrl). The sidecar boots fine without it (only summarisation
+   * calls the LLM), so an unreachable endpoint would otherwise stay silent
+   * until an overflow turn. Warn loudly + actionably instead. Non-fatal;
+   * connection-level only (any HTTP response = reachable).
+   */
+  private async warnIfLlmEndpointUnreachable(): Promise<void> {
+    const base = this.config.baseUrl;
+    if (base === undefined) return;
+    const reachable = await isEndpointReachable(base, {
+      fetch: this.opts.fetch,
+      timeoutMs: 4000,
+    });
+    if (reachable) return;
+    this.logger.warn(
+      `openclaw-memgpt: configured LLM endpoint ${base} is not reachable — memory's LLM step (summarisation on context overflow) will fail until it's up.${
+        isLocalUrl(base)
+          ? " If it's a local server (LiteLLM/Ollama/…), start it; the plugin does not launch it."
+          : ""
+      }`,
+    );
   }
 
   /** Already-registered exit handler closure (kept for test cleanup). */
@@ -379,6 +616,16 @@ export class LifecycleManager {
    * not held by the manager — keeps the dependency direction clean.
    */
   async stop(
+    client: SavableClient | undefined,
+    ctx: Record<string, unknown> = {},
+  ): Promise<void> {
+    // Memoise: the SDK runs each registration's `stop` (N of them, shared
+    // manager), so without this the save + SIGTERM would fire once per
+    // registration. Teardown happens exactly once.
+    return (this.stopPromise ??= this._doStop(client, ctx));
+  }
+
+  private async _doStop(
     client: SavableClient | undefined,
     _ctx: Record<string, unknown> = {},
   ): Promise<void> {
@@ -432,12 +679,12 @@ export class LifecycleManager {
    * already awaited `start()` by the time this fires, so the happy path is
    * a synchronous URL return through the `spawnedUrl`/`attachUrl` branches.
    *
-   * **Lazy-init fallback (post-V1.3).** `openclaw agent --local` skips
+   * **Lazy-init fallback.** `openclaw agent --local` skips
    * `startPluginServices` entirely — `server.impl-DLF59fRo.js:21287` only
    * fires it inside the gateway startup path — so on the `--local` route
    * `start()` is never called and both URLs are undefined when tools fire.
-   * Before V1.3 that threw `"lifecycle not started"` and the trial was a
-   * silent no-op (the agent fell through to stock OpenClaw tools).
+   * Without the fallback that threw `"lifecycle not started"` and the agent
+   * fell through to stock OpenClaw tools.
    *
    * The fallback below detects the "neither url set, not dead" condition,
    * triggers `start({})` once, and awaits it. `resolveStateDir`'s env +
@@ -446,10 +693,13 @@ export class LifecycleManager {
    * the second branch returns the real URL. The 120 s spawn-mode healthz
    * block therefore moves from gateway-startup to first-turn — a property
    * of attach-style entry, not a regression.
-   *
-   * See `docs/methodology-bank.md` #18 for the bug write-up.
    */
   async resolveBaseUrl(): Promise<string> {
+    // §6d.6 config gate — fail fast and clearly rather than triggering the
+    // lazy-init spawn of a credential-less sidecar.
+    if (!isConfigComplete(this.config)) {
+      throw new Error(NOT_CONFIGURED_MESSAGE);
+    }
     if (this._dead) {
       throw new Error(
         "openclaw-memgpt: sidecar process died; restart OpenClaw to recover",
@@ -458,20 +708,15 @@ export class LifecycleManager {
     if (this.spawnedUrl !== undefined) return this.spawnedUrl;
     if (this.attachUrl !== undefined) return this.attachUrl;
 
-    // Lazy-init: SDK service runner never fired (likely --local mode).
-    if (this.lazyStartPromise === undefined) {
+    // Lazy-init: SDK service runner never fired (likely --local mode). `start`
+    // is memoised, so this shares the single spawn with the SDK service path
+    // and with any concurrent first-callers — no separate guard needed here.
+    if (this.startPromise === undefined && !this.started) {
       this.logger.info(
-        "openclaw-memgpt: lazy lifecycle init triggered (SDK services.start did not fire — likely `openclaw agent --local`; see methodology-bank #18)",
+        "openclaw-memgpt: lazy lifecycle init triggered (SDK services.start did not fire — likely `openclaw agent --local`)",
       );
-      this.lazyStartPromise = this.start({}).catch((err) => {
-        // Clear so a later call can retry if the operator fixes the cause
-        // mid-process (rare; the cleared state is what stops a permanently
-        // failed promise from livelocking subsequent tool calls).
-        this.lazyStartPromise = undefined;
-        throw err;
-      });
     }
-    await this.lazyStartPromise;
+    await this.start({});
 
     if (this.spawnedUrl !== undefined) return this.spawnedUrl;
     if (this.attachUrl !== undefined) return this.attachUrl;
@@ -542,6 +787,7 @@ export class LifecycleManager {
     baseUrl: string,
     timeoutMs: number,
     modeLabel: "spawn" | "attach",
+    signal?: AbortSignal,
   ): Promise<void> {
     const url = baseUrl.endsWith("/") ? `${baseUrl}healthz` : `${baseUrl}/healthz`;
     const deadline = Date.now() + timeoutMs;
@@ -550,6 +796,10 @@ export class LifecycleManager {
     let lastError: unknown;
 
     while (Date.now() < deadline) {
+      // Aborted because a competing condition (spawn error / early exit) already
+      // decided startup — stop quietly so we don't keep polling + logging for
+      // the full timeout, and so un-unref'd sleep timers stop holding the loop.
+      if (signal?.aborted) return;
       try {
         const resp = await this.opts.fetch(url);
         if (resp.ok) return;
@@ -576,17 +826,9 @@ export class LifecycleManager {
   }
 
   private wireChildEvents(child: ChildProcess): void {
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-      for (const line of text.split(/\r?\n/)) {
-        if (line.length === 0) continue;
-        this.stderrRing.push(line);
-        if (this.stderrRing.length > this.opts.stderrRingSize) {
-          this.stderrRing.shift();
-        }
-      }
-    });
-
+    // No stderr 'data' listener: the child's stderr goes to the log file via an
+    // inherited fd (see spawn), not a pipe. Crash diagnostics read the file
+    // tail (`stderrTail`) instead of an in-memory ring.
     child.on("error", (err) => {
       // Errors during spawn (binary not found, EPERM, etc.). We only flip
       // deadFlag here if we're already past start — pre-start errors are
@@ -653,9 +895,80 @@ export class LifecycleManager {
     }
   }
 
+  /**
+   * Last `stderrRingSize` non-empty lines of the sidecar's log file — the
+   * crash-diagnostic context surfaced in the `sidecar process died` /
+   * `did not become ready` messages. Best-effort: returns "" if the log is
+   * absent or unreadable (e.g. open failed and output was discarded).
+   */
   private stderrTail(): string {
-    return this.stderrRing.join("\n");
+    if (this.logPath === undefined) return "";
+    try {
+      const lines = readFileSync(this.logPath, "utf8")
+        .split(/\r?\n/)
+        .filter((l) => l.length > 0);
+      return lines.slice(-this.opts.stderrRingSize).join("\n");
+    } catch {
+      return "";
+    }
   }
+}
+
+// ============================================================================
+// Process-singleton registry (Shape A)
+// ============================================================================
+
+/**
+ * OpenClaw calls a plugin's `register()` multiple times within one process
+ * (discovery / runtime / context-engine contexts — all the same config). Our
+ * backend is a *spawned sidecar with in-memory resident agent state*, so a
+ * fresh `LifecycleManager` per `register()` spawned a fresh sidecar each time:
+ * the `before_prompt_build` hook would `:ensure` the agent into one sidecar
+ * while a tool call landed on another, where the agent was never loaded —
+ * surfacing as `404 … "Agent '<ns>' is not resident"`.
+ *
+ * `@openclaw/memory-lancedb` avoids this by being stateless-per-op over a
+ * shared on-disk table (every `register()` opens the same `dbPath`). The
+ * equivalent for a *process* backend is to share the one process: this registry
+ * returns a single `LifecycleManager` per `namespace` (+ attach URL), so every
+ * registration resolves to the same sidecar and residency established by the
+ * hook is visible to the tools. Per-registration `SidecarClient`s are kept (they
+ * are cheap and hold no residency state) — they all close over this shared
+ * manager's `resolveBaseUrl`.
+ *
+ * Keyed by namespace because, within a single OpenClaw process, the state dir
+ * (hence data dir) is constant; the namespace is the only discriminator, and a
+ * distinct attach URL implies a distinct backend.
+ */
+const lifecycleRegistry = new Map<string, LifecycleManager>();
+
+function lifecycleKey(config: PluginConfig): string {
+  return `${config.namespace} ${config.sidecarUrl ?? ""}`;
+}
+
+/**
+ * Get-or-create the process-singleton `LifecycleManager` for this config's
+ * namespace. The first caller's `logger`/`options` win; later callers reuse the
+ * existing manager (their `options` are ignored by design — there is one
+ * sidecar, with one observability sink, owned by the first registration).
+ */
+export function getOrCreateLifecycle(
+  config: PluginConfig,
+  logger: OpenClawPluginApi["logger"],
+  options: LifecycleManagerOptions = {},
+): LifecycleManager {
+  const key = lifecycleKey(config);
+  let manager = lifecycleRegistry.get(key);
+  if (manager === undefined) {
+    manager = new LifecycleManager(config, logger, options);
+    lifecycleRegistry.set(key, manager);
+  }
+  return manager;
+}
+
+/** Test-only: clear the singleton registry between cases. */
+export function _resetLifecycleRegistry(): void {
+  lifecycleRegistry.clear();
 }
 
 // ============================================================================

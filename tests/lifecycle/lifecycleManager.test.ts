@@ -23,11 +23,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { appendFileSync, existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Readable } from "node:stream";
 
 import {
+  findSidecarDir,
+  getOrCreateLifecycle,
   LifecycleManager,
+  NOT_CONFIGURED_MESSAGE,
   SIDECAR_DEAD_MESSAGE,
+  _resetLifecycleRegistry,
 } from "../../src/lifecycle/lifecycleManager.ts";
 import type { PluginConfig } from "../../src/config.ts";
 import type {
@@ -44,6 +51,10 @@ function makeConfig(overrides: Partial<PluginConfig> = {}): PluginConfig {
     persona: "test-persona",
     human: "test-human",
     observability: "default",
+    // Configured by default (provider + credential) so spawn/attach tests run;
+    // the §6d.6 config gate is exercised by overriding these to undefined.
+    provider: "openai",
+    credential: { source: "env", var: "OPENAI_API_KEY" },
     ...overrides,
   };
 }
@@ -114,6 +125,11 @@ class FakeChild extends EventEmitter {
     this.exitCode = code;
     this.signalCode = signal;
     this.emit("exit", code, signal);
+  }
+
+  /** Simulate an async spawn failure (e.g. `spawn uv ENOENT`). */
+  emitError(err: Error): void {
+    this.emit("error", err);
   }
 
   emitStderr(line: string): void {
@@ -355,7 +371,7 @@ test("spawn-mode healthz timeout — start throws; isDead set; child terminated"
   });
   await assert.rejects(
     lc.start({ stateDir: "/tmp/oc-test" }),
-    /healthz timed out/,
+    /did not become ready/,
   );
   assert.equal(lc.isDead, true);
   assert.ok(
@@ -365,29 +381,64 @@ test("spawn-mode healthz timeout — start throws; isDead set; child terminated"
 });
 
 // Q4 — crash during run flips isDead
-test("child exit after start — isDead set; stderr tail surfaces in error log", async () => {
+test("child exit after start — isDead set; stderr tail (from log file) surfaces in error log", async () => {
+  // b1: the sidecar's stderr goes to <stateDir>/memgpt-sidecar.log via an
+  // inherited fd, not a pipe; the crash log reads that file's tail. Simulate
+  // the sidecar having written a traceback to the log before it exits.
   const fakeChild = new FakeChild();
   const logger = makeLogger();
+  const stateDir = mkdtempSync(path.join(tmpdir(), "oc-stderr-"));
   const lc = new LifecycleManager(makeConfig(), logger, {
     spawnTimeoutMs: 200,
     pollIntervalMs: 10,
+    stateDirOverride: stateDir,
     fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
     spawn: spawnReturning(fakeChild) as never,
   });
-  await lc.start({ stateDir: "/tmp/oc-test" });
+  await lc.start({});
   assert.equal(lc.isDead, false);
 
-  fakeChild.emitStderr("Traceback (most recent call last):");
-  fakeChild.emitStderr("RuntimeError: synthetic crash");
-  // Allow the stderr stream microtask to flush.
-  await new Promise((r) => setImmediate(r));
+  appendFileSync(
+    path.join(stateDir, "memgpt-sidecar.log"),
+    "Traceback (most recent call last):\nRuntimeError: synthetic crash\n",
+  );
   fakeChild.emitExit(1, null);
 
   assert.equal(lc.isDead, true);
   assert.equal(
     logger.errors.some((m) => m.includes("synthetic crash")),
     true,
-    "crash log must include stderr tail",
+    "crash log must include the log-file tail",
+  );
+});
+
+// b1 — sidecar stdout/stderr must be wired to a LOG FILE fd, not pipes. Pipes'
+// read ends are held by the parent; when the parent exits in `--local` they
+// close, and uvicorn's shutdown logging dies on the broken pipe mid-save
+// (truncated pickle). A file fd is independent of the parent's lifecycle.
+test("spawn-mode: sidecar stdio goes to a log-file fd, not pipes (b1)", async () => {
+  let capturedStdio: unknown;
+  const fakeChild = new FakeChild();
+  const stateDir = mkdtempSync(path.join(tmpdir(), "oc-logfd-"));
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 500,
+    pollIntervalMs: 10,
+    stateDirOverride: stateDir,
+    fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+    spawn: ((_cmd: string, _args: string[], opts: { stdio?: unknown }) => {
+      capturedStdio = opts?.stdio;
+      return fakeChild;
+    }) as never,
+  });
+  await lc.start({});
+  assert.ok(Array.isArray(capturedStdio), "stdio must be an array");
+  const stdio = capturedStdio as unknown[];
+  assert.equal(stdio[0], "ignore", "stdin ignored");
+  assert.equal(typeof stdio[1], "number", "stdout must be a file fd (number), not 'pipe'");
+  assert.equal(typeof stdio[2], "number", "stderr must be a file fd (number), not 'pipe'");
+  assert.ok(
+    existsSync(path.join(stateDir, "memgpt-sidecar.log")),
+    "the sidecar log file must be created",
   );
 });
 
@@ -721,8 +772,293 @@ test("spawn healthz timeout emits health_failed", async () => {
     spawn: spawnReturning(fakeChild) as never,
   });
 
-  await assert.rejects(() => lc.start({}), /healthz timed out/);
+  await assert.rejects(() => lc.start({}), /did not become ready/);
   const failed = emitter.events.find((e) => e.kind === "health_failed");
   assert.ok(failed, "health_failed must be emitted on spawn healthz timeout");
   assert.equal(failed!.meta?.mode, "spawn");
+});
+
+test("spawn error (uv ENOENT) fails fast — does not wait the healthz timeout", async () => {
+  const fakeChild = new FakeChild();
+  const emitter = makeFakeEmitter();
+  let fetchCalls = 0;
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 30_000, // large: a regression (waiting it out) makes this test slow + fail the timing assert
+    pollIntervalMs: 20,
+    sidecarDir: "/tmp/fake-sidecar",
+    stateDirOverride: "/tmp/oc-state",
+    emitter,
+    // healthz never succeeds, so without fast-fail start() would poll for 30s
+    fetch: fetchReturning(async () => {
+      fetchCalls += 1;
+      throw new Error("ECONNREFUSED");
+    }),
+    spawn: spawnReturning(fakeChild) as never,
+  });
+
+  const t0 = Date.now();
+  const startP = lc.start({});
+  // emit the async ENOENT spawn error just after start begins polling
+  setImmediate(() =>
+    fakeChild.emitError(
+      Object.assign(new Error("spawn uv ENOENT"), { code: "ENOENT" }),
+    ),
+  );
+  await assert.rejects(startP, /uv installed and on PATH/);
+  assert.ok(
+    Date.now() - t0 < 3_000,
+    "must fail fast on ENOENT, not wait the 30s healthz timeout",
+  );
+  assert.equal(lc.isDead, true);
+  assert.ok(
+    emitter.events.some((e) => e.kind === "health_failed"),
+    "health_failed emitted on spawn error",
+  );
+
+  // The losing pollHealthz must be aborted: no further healthz fetches after
+  // start() rejects (otherwise it keeps polling + logging for the full timeout).
+  const callsAtFailure = fetchCalls;
+  await new Promise((r) => setTimeout(r, 100)); // several poll intervals
+  assert.equal(
+    fetchCalls,
+    callsAtFailure,
+    "pollHealthz must stop after fast-fail (race loser aborted)",
+  );
+});
+
+// ── §6d.6 config gate ────────────────────────────────────────────────────────
+
+test("config gate: isConfigured reflects provider + credential presence", () => {
+  const configured = new LifecycleManager(makeConfig(), makeLogger());
+  assert.equal(configured.isConfigured, true);
+  const noProvider = new LifecycleManager(
+    makeConfig({ provider: undefined }),
+    makeLogger(),
+  );
+  assert.equal(noProvider.isConfigured, false);
+  const noCred = new LifecycleManager(
+    makeConfig({ credential: undefined }),
+    makeLogger(),
+  );
+  assert.equal(noCred.isConfigured, false);
+});
+
+test("config gate: start() skips spawn entirely when unconfigured", async () => {
+  let spawnCalls = 0;
+  const lc = new LifecycleManager(
+    makeConfig({ provider: undefined, credential: undefined }),
+    makeLogger(),
+    {
+      spawn: ((..._args: unknown[]) => {
+        spawnCalls += 1;
+        return new FakeChild();
+      }) as never,
+      createServer: (() => {
+        throw new Error("pickFreePort must not run when unconfigured");
+      }) as never,
+    },
+  );
+  await lc.start({}); // must resolve without throwing and without spawning
+  assert.equal(spawnCalls, 0, "spawn must not be called when unconfigured");
+  assert.equal(lc.isStarted, false, "start() leaves started=false when unconfigured");
+});
+
+test("config gate: resolveBaseUrl throws NOT_CONFIGURED when unconfigured", async () => {
+  const lc = new LifecycleManager(
+    makeConfig({ provider: undefined, credential: undefined }),
+    makeLogger(),
+    {
+      spawn: (() => {
+        throw new Error("must not spawn");
+      }) as never,
+    },
+  );
+  await assert.rejects(
+    () => lc.resolveBaseUrl(),
+    new RegExp(NOT_CONFIGURED_MESSAGE.replace(/[.*+?^${}()|[\]\\`]/g, "\\$&")),
+  );
+});
+
+// §6d.6 — sidecar venv relocated out of the plugin dir (install-scan bloat fix)
+
+test("spawn env: UV_PROJECT_ENVIRONMENT points under the state dir, not the plugin dir", async () => {
+  const fakeChild = new FakeChild();
+  let capturedEnv: NodeJS.ProcessEnv | undefined;
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 500,
+    pollIntervalMs: 10,
+    sidecarDir: "/plugin/sidecar",
+    stateDirOverride: "/state",
+    fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+    spawn: ((_cmd: string, _args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
+      capturedEnv = opts?.env;
+      return fakeChild;
+    }) as never,
+  });
+
+  await lc.start({});
+  assert.equal(capturedEnv?.UV_PROJECT_ENVIRONMENT, "/state/memgpt-sidecar-venv");
+  assert.ok(
+    !capturedEnv?.UV_PROJECT_ENVIRONMENT?.includes("/plugin/sidecar"),
+    "venv must not live under the plugin/sidecar dir",
+  );
+});
+
+// §6d.7 — sidecar dir must resolve from ANY entry depth (regression: the bundled
+// `dist/index.js` entry overshot the old fixed `../..`, yielding a non-existent
+// cwd → `spawn uv ENOENT`).
+
+test("findSidecarDir: resolves the plugin's sidecar from source, bundled, and root entries", () => {
+  const root = "/plugins/openclaw-memgpt";
+  const exists = (p: string) => p === `${root}/sidecar/main.py`;
+  // bundled compiled entry → dist/ (the case that broke with a fixed ../..)
+  assert.equal(findSidecarDir(`${root}/dist`, exists), `${root}/sidecar`);
+  // source entry → src/lifecycle/
+  assert.equal(findSidecarDir(`${root}/src/lifecycle`, exists), `${root}/sidecar`);
+  // packaged install root entry
+  assert.equal(findSidecarDir(root, exists), `${root}/sidecar`);
+});
+
+test("findSidecarDir: falls back to climb-two when no marker is found", () => {
+  assert.equal(findSidecarDir("/a/b/src/lifecycle", () => false), "/a/b/sidecar");
+});
+
+// ── Shape A: idempotent start/stop + process-singleton registry ──────────────
+//
+// OpenClaw calls register() multiple times in one process; each call registers
+// a memgpt-sidecar service, so the SDK service runner can invoke start (and
+// stop) N times. With a fresh LifecycleManager per register() this spawned N
+// sidecars and the before_prompt_build hook's :ensure landed on a different
+// sidecar than the tool call → "Agent not resident". These tests pin the fix:
+// start/stop are idempotent, and getOrCreateLifecycle shares ONE manager (hence
+// one sidecar) per namespace so every per-registration client resolves to it.
+
+test("start() is idempotent — N explicit starts spawn once (service-runner calls collapse)", async () => {
+  let spawnCount = 0;
+  let healthzCount = 0;
+  const fakeChild = new FakeChild();
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 1_000,
+    pollIntervalMs: 10,
+    stateDirOverride: "/tmp/oc-test-idempotent-start",
+    fetch: fetchReturning(async () => {
+      healthzCount += 1;
+      return { ok: true, status: 200 };
+    }),
+    spawn: (() => {
+      spawnCount += 1;
+      return fakeChild as never;
+    }) as never,
+  });
+
+  // Sequential repeats (SDK awaits each service.start in turn) …
+  await lc.start({});
+  await lc.start({});
+  // … and concurrent repeats (defensive — interleaved registrations).
+  await Promise.all([lc.start({}), lc.start({})]);
+
+  assert.equal(spawnCount, 1, "spawn must fire exactly once across N starts");
+  assert.equal(healthzCount, 1, "healthz must poll exactly once across N starts");
+  await lc.stop(undefined, {});
+});
+
+test("stop() is idempotent — N stops save + SIGTERM exactly once", async () => {
+  const fakeChild = new FakeChild();
+  fakeChild.exitOnSigterm = true;
+  let saveCount = 0;
+  const client = {
+    save: async () => {
+      saveCount += 1;
+    },
+  };
+  const lc = new LifecycleManager(makeConfig(), makeLogger(), {
+    spawnTimeoutMs: 1_000,
+    pollIntervalMs: 10,
+    sigtermTimeoutMs: 100,
+    saveTimeoutMs: 1_000,
+    stateDirOverride: "/tmp/oc-test-idempotent-stop",
+    fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+    spawn: spawnReturning(fakeChild) as never,
+  });
+
+  await lc.start({});
+  // Three stops (reverse-order service teardown, one per registration).
+  await Promise.all([
+    lc.stop(client, {}),
+    lc.stop(client, {}),
+    lc.stop(client, {}),
+  ]);
+
+  assert.equal(saveCount, 1, "final save must run exactly once");
+  assert.equal(
+    fakeChild.killSignals.filter((s) => s === "SIGTERM").length,
+    1,
+    "SIGTERM must be sent exactly once",
+  );
+});
+
+test("getOrCreateLifecycle: same namespace → same instance; different namespace → distinct", () => {
+  _resetLifecycleRegistry();
+  const logger = makeLogger();
+  const a1 = getOrCreateLifecycle(makeConfig({ namespace: "alpha" }), logger);
+  const a2 = getOrCreateLifecycle(makeConfig({ namespace: "alpha" }), logger);
+  const b1 = getOrCreateLifecycle(makeConfig({ namespace: "beta" }), logger);
+  assert.equal(a1, a2, "same namespace must return the same manager");
+  assert.notEqual(a1, b1, "different namespace must return a distinct manager");
+  _resetLifecycleRegistry();
+});
+
+// Fix 2 — the singleton's emitter is the FIRST registration's (the one whose
+// JSONL sink gets activated in start). Later registrations construct their own
+// emitter, but `lifecycle.emitter` (which index.ts routes all deps through)
+// stays the first — so every hook's events reach the one activated sink, and
+// the JSONL record is complete under multi-register.
+test("getOrCreateLifecycle: emitter is shared (first registration's), not per-call", () => {
+  _resetLifecycleRegistry();
+  const e1 = makeFakeEmitter();
+  const e2 = makeFakeEmitter();
+  const lc1 = getOrCreateLifecycle(makeConfig({ namespace: "shared" }), makeLogger(), { emitter: e1 });
+  const lc2 = getOrCreateLifecycle(makeConfig({ namespace: "shared" }), makeLogger(), { emitter: e2 });
+  assert.equal(lc1, lc2, "same manager");
+  assert.equal(lc1.emitter, e1, "shared manager keeps the first emitter");
+  assert.equal(
+    lc2.emitter, e1,
+    "a later registration must see the first (activated) emitter, not its own e2",
+  );
+  _resetLifecycleRegistry();
+});
+
+test("multi-register: two registrations share one sidecar — agent resident for both", async () => {
+  // Models the real failure: register() fires twice, each builds its own client
+  // but both go through getOrCreateLifecycle. With the singleton, both clients
+  // resolve to the SAME spawned sidecar URL and only one sidecar is spawned, so
+  // an :ensure on one client makes the agent resident for the other's tool call.
+  _resetLifecycleRegistry();
+  let spawnCount = 0;
+  const fakeChild = new FakeChild();
+  const sharedOpts = {
+    spawnTimeoutMs: 1_000,
+    pollIntervalMs: 10,
+    stateDirOverride: "/tmp/oc-test-multi-register",
+    fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+    spawn: (() => {
+      spawnCount += 1;
+      return fakeChild as never;
+    }) as never,
+  };
+
+  // register() call #1 and #2 — same namespace, same process.
+  const lcHook = getOrCreateLifecycle(makeConfig(), makeLogger(), sharedOpts);
+  const lcTool = getOrCreateLifecycle(makeConfig(), makeLogger(), sharedOpts);
+  assert.equal(lcHook, lcTool, "both registrations must share one manager");
+
+  // Per-registration clients close over their registration's resolver. They
+  // must agree on the URL (so residency is shared) — this is what was broken.
+  const hookUrl = await lcHook.resolveBaseUrl();
+  const toolUrl = await lcTool.resolveBaseUrl();
+  assert.equal(hookUrl, toolUrl, "hook and tool must resolve to the same sidecar");
+  assert.equal(spawnCount, 1, "exactly one sidecar spawned across both registrations");
+
+  await lcHook.stop(undefined, {});
+  _resetLifecycleRegistry();
 });

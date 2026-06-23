@@ -36,10 +36,10 @@
  * regime should not generate multi-call assistant messages in practice, but
  * degrading gracefully is preferable to failing the turn if it ever does happen.
  *
- * History: shape (a) support was added after the V1.3 slate surfaced that
- * the prior normalise — written for shape (b) only — silently dropped all
- * toolCall structure from the persisted pickle on Cell C trials. See
- * methodology-bank #20 for the full root-cause record.
+ * History: shape (a) support was added after testing surfaced that the prior
+ * normalise — written for shape (b) only — silently dropped all toolCall
+ * structure from the persisted pickle when an assistant message carried
+ * multiple tool calls.
  */
 
 import type { PyMemGptMessage } from "./client/types.ts";
@@ -311,8 +311,7 @@ function isToolCallBlock(
  * over the split output produces an identical result (each entry is
  * already single-call).
  *
- * Discovered during V1.4 rig fix (methodology-bank #20); see the new
- * normalise.test.ts cases under "9e. multi-toolCall split".
+ * See the normalise.test.ts cases under "9e. multi-toolCall split".
  */
 export function normaliseMessages(
   messages: OpenClawMessage[],

@@ -4,22 +4,45 @@
   "type": "module",
   "description": "MemGPT memory backend for OpenClaw — three-tier memory architecture via pymemgpt sidecar",
   "license": "Apache-2.0",
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
+  "files": [
+    "src/",
+    "dist/",
+    "sidecar/",
+    "!sidecar/tests/**",
+    "!**/__pycache__/**",
+    "!**/*.py[cod]",
+    "!sidecar/.python-version",
+    "!sidecar/litellm_config.yaml",
+    "openclaw.plugin.json",
+    "openclaw-plugin-sdk.d.ts"
+  ],
   "openclaw": {
     "extensions": [
       "./src/index.ts"
     ],
+    "runtimeExtensions": [
+      "./dist/index.js"
+    ],
     "compat": {
       "pluginApi": ">=2026.3.28"
+    },
+    "install": {
+      "minHostVersion": ">=2026.5.31"
     }
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && esbuild src/index.ts --bundle --format=esm --platform=node --packages=external --splitting --outdir=dist",
     "typecheck": "tsc --noEmit",
+    "prepack": "npm run build",
     "test": "node --test tests/*.test.ts tests/*/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.5.1"
   }
 }

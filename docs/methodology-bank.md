@@ -732,6 +732,19 @@ shape of the resolution. Listed in roughly the order they surfaced.
     holds only under coaching (Sense 1) is not the same claim as one the architecture guarantees
     (Sense 3), and an undocumented system's faithful reproduction has to state which it is.
 
+26. **Patched MemGPT published to PyPI as `openclaw-memgpt-sidecar` v1.0.0.**
+    The fork (`xltvy/memgpt-service`) becomes the development-and-methodology trail;
+    the published package becomes the runtime artefact. End users install via standard
+    PyPI channels; methodology bank entries (#12, #20, etc.) reference the published
+    package version for runtime properties and the fork's commit history for development context. Attribution per Apache 2.0 §4: upstream MemGPT credited prominently in fork README and PyPI
+    package metadata; CHANGES.md documents modifications; LICENSE preserved as-is.
+
+27. **Published-package naming reflects role, not contents.** The PyPI artefact openclaw-memgpt-sidecar
+    v1.0.0 contains the patched MemGPT memory library (import memgpt), not the FastAPI sidecar server.
+    The name reflects the package's role in the plugin architecture — it is the dependency the sidecar layer consumes. To avoid local confusion, the plugin's FastAPI sidecar server project was renamed
+    to openclaw-memgpt-sidecar-server at the time of 6d.4 (the plugin dep switch). The local sidecar
+    server is not published; the rename is local-identity-only. Future renames of either component are decoupled.
+
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy
 path) even when behaviour looks obviously wrong — "obvious bug" and "reference's
