@@ -17,6 +17,7 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
+import { takeFirstAnnounce } from "./announce.ts";
 import { parseConfig } from "./config.ts";
 import { SidecarClientImpl } from "./client/sidecarClient.ts";
 import { makeMemgptContextEngine } from "./contextEngine/memgptEngine.ts";
@@ -61,6 +62,11 @@ const memgptPlugin = definePluginEntry({
   register(api: OpenClawPluginApi): void {
     const config = parseConfig(api);
 
+    // First register() for this namespace this process → emit the human-facing
+    // banner (registration line + unconfigured notice). Later calls register
+    // their tools/hooks/service as usual but skip the duplicate logging.
+    const firstAnnounce = takeFirstAnnounce(config.namespace);
+
     // §6.2 observability emitter — constructed with the level now; its JSONL
     // sink is activate()d by LifecycleManager.start once the state dir is known
     // (two-phase init). Shared by tools/hooks (via deps.emit) and lifecycle.
@@ -98,7 +104,7 @@ const memgptPlugin = definePluginEntry({
     // one-time pointer to it when the plugin is unconfigured (auto-detection;
     // see notifyIfUnconfigured for why this notifies rather than auto-launches).
     registerWizardCli(api);
-    notifyIfUnconfigured(api.logger, config);
+    if (firstAnnounce) notifyIfUnconfigured(api.logger, config);
 
     // Resolver closure: SidecarClient calls this once in doInit (at first
     // tool/hook fire — well after registerService.start has resolved the URL).
@@ -139,9 +145,11 @@ const memgptPlugin = definePluginEntry({
       stop: (ctx) => lifecycle.stop(client, ctx),
     });
 
-    api.logger.info(
-      `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end + reply_dispatch hooks + ContextEngine + lifecycle service registered (namespace: ${config.namespace}, observability: ${config.observability})`,
-    );
+    if (firstAnnounce) {
+      api.logger.info(
+        `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end + reply_dispatch hooks + ContextEngine + lifecycle service registered (namespace: ${config.namespace}, observability: ${config.observability})`,
+      );
+    }
   },
 });
 
