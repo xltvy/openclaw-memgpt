@@ -98,7 +98,7 @@ export interface ArchivalInsertResult {
  * NOTE on `total` semantics (§2.6 asymmetry, NOT a deviation):
  * - Archival: page-local count (`EmbeddingArchivalMemory` returns paged-slice length).
  * - Recall: true grand total of matches.
- * Detection-rate metrics must not conflate them.
+ * Observability consumers must not conflate them.
  */
 export interface SearchResult {
   /** Verbatim LLM-facing string from the underlying Agent.*_search method. */

@@ -7,15 +7,13 @@
  * and converted to camelCase here for the client method.
  */
 
-import { SIDECAR_DEAD_MESSAGE } from "../lifecycle/lifecycleManager.ts";
-import type { ToolDeps, ToolHandler } from "./deps.ts";
+import { toolGuard, type ToolDeps, type ToolHandler } from "./deps.ts";
 
 export const conversationSearchDate =
   (deps: ToolDeps): ToolHandler =>
   async (_toolCallId, params) => {
-    if (deps.lifecycle?.isDead) {
-      return { content: [{ type: "text", text: SIDECAR_DEAD_MESSAGE }] };
-    }
+    const blocked = toolGuard(deps);
+    if (blocked) return blocked;
     const startDate = String(params.start_date ?? "");
     const endDate = String(params.end_date ?? "");
     const page = typeof params.page === "number" ? params.page : 0;
@@ -24,6 +22,7 @@ export const conversationSearchDate =
       kind: "conversation_search_date",
       namespace: deps.namespace,
       meta: { total: r.total, page, numPages: r.numPages },
+      content: { query: `${startDate}..${endDate}`, results: r.results },
     });
     return { content: [{ type: "text", text: r.formatted }] };
   };

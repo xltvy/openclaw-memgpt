@@ -1,0 +1,124 @@
+{
+  "cell": "A",
+  "probe_id": "p5",
+  "trial_id": 1,
+  "expected_tier": "recall",
+  "pickle_path": "/Users/altayacar/.memgpt/agents/v1_cell_a_p5_t01/persistence_manager/2026-06-10_02_50_59_AM_.persistence.pickle",
+  "step_count": 3,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name",
+            "request_heartbeat"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 2,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I should store this important project information in my core memory since it seems relevant to the user's work.I've successfully stored the project information. Now I should acknowledge the user's message.",
+      "pre_tool_text": "I should store this important project information in my core memory since it seems relevant to the user's work.",
+      "char_count": 205,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "The user wants something creative and light. I'll compose a short poem about birds for them.",
+      "pre_tool_text": "The user wants something creative and light. I'll compose a short poem about birds for them.",
+      "char_count": 92,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 2,
+      "text": "Perfect opportunity to demonstrate my memory recall. The information is right in my core memory.",
+      "pre_tool_text": "Perfect opportunity to demonstrate my memory recall. The information is right in my core memory.",
+      "char_count": 96,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it! I've noted that down - project code CARDINAL_3987 for milestone Q4. Is this related to your research on AI memory architectures?"
+    },
+    {
+      "step_idx": 1,
+      "text": "Here's a short poem for you:\n\nWings catch the morning light,\nFeathers painted dawn to dusk,\nSongs that pierce the quiet sky\u2014\nFreedom wears a beak of trust."
+    },
+    {
+      "step_idx": 2,
+      "text": "You mentioned project code CARDINAL_3987, which is used for milestone Q4. I have that stored in my memory!"
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 2,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

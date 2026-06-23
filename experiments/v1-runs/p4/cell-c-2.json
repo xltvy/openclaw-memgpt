@@ -1,0 +1,86 @@
+{
+  "cell": "C",
+  "probe_id": "p4",
+  "trial_id": 2,
+  "expected_tier": "recall",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p4/cell-c-2.jsonl"
+  ],
+  "step_count": 2,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "conversation_search": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "conversation_search": [
+          [
+            "page",
+            "query"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I understand! The project code is **BLUEBIRD_5402**. I've noted this important detail.\n\nIs there anything specific you'd like me to help you with regarding this project, or should I store any additional context about what BLUEBIRD_5402 entails?",
+      "pre_tool_text": "I understand! The project code is **BLUEBIRD_5402**. I've noted this important detail.\n\nIs there anything specific you'd like me to help you with regarding this project, or should I store any additional context about what BLUEBIRD_5402 entails?",
+      "char_count": 244,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "",
+      "pre_tool_text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 1,
+      "text": "The project code you mentioned is **BLUEBIRD_5402**."
+    }
+  ],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 1
+      }
+    }
+  ]
+}

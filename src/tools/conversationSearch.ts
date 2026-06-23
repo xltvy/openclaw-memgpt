@@ -7,19 +7,17 @@
  * (architecture name vs LLM-facing name).
  *
  * `total` here is the *true grand total* per §2.6 (recall paginates correctly,
- * unlike archival which returns page-local). Emitted under meta so the
- * detection-rate metric doesn't conflate the two semantics.
+ * unlike archival which returns page-local). Emitted under meta so observability
+ * consumers don't conflate the two semantics.
  */
 
-import { SIDECAR_DEAD_MESSAGE } from "../lifecycle/lifecycleManager.ts";
-import type { ToolDeps, ToolHandler } from "./deps.ts";
+import { toolGuard, type ToolDeps, type ToolHandler } from "./deps.ts";
 
 export const conversationSearch =
   (deps: ToolDeps): ToolHandler =>
   async (_toolCallId, params) => {
-    if (deps.lifecycle?.isDead) {
-      return { content: [{ type: "text", text: SIDECAR_DEAD_MESSAGE }] };
-    }
+    const blocked = toolGuard(deps);
+    if (blocked) return blocked;
     const query = String(params.query ?? "");
     const page = typeof params.page === "number" ? params.page : 0;
     const r = await deps.client.recallSearch(query, page);
@@ -27,6 +25,7 @@ export const conversationSearch =
       kind: "conversation_search",
       namespace: deps.namespace,
       meta: { total: r.total, page, numPages: r.numPages },
+      content: { query, results: r.results },
     });
     return { content: [{ type: "text", text: r.formatted }] };
   };

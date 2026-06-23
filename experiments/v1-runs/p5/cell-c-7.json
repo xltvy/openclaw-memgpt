@@ -1,0 +1,153 @@
+{
+  "cell": "C",
+  "probe_id": "p5",
+  "trial_id": 7,
+  "expected_tier": "recall",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-7-s1.jsonl",
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-7-s2.jsonl"
+  ],
+  "step_count": 4,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 2,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 3,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I'll remember that detail. Let me store it in core memory so I don't forget.",
+      "pre_tool_text": "I'll remember that detail. Let me store it in core memory so I don't forget.",
+      "char_count": 76,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "",
+      "pre_tool_text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 2,
+      "text": "I'll check your core memory for the project code you mentioned.\n\nLooking at my core memory in the `<human>` section, I can see:\n\n**Project code: CARDINAL_3987** (used for milestone Q4)\n\nThis information is stored in my core memory, so I have immediate access to it without needing to search through our conversation history.",
+      "pre_tool_text": "I'll check your core memory for the project code you mentioned.\n\nLooking at my core memory in the `<human>` section, I can see:\n\n**Project code: CARDINAL_3987** (used for milestone Q4)\n\nThis information is stored in my core memory, so I have immediate access to it without needing to search through our conversation history.",
+      "char_count": 324,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 3,
+      "text": "",
+      "pre_tool_text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it \u2014 I've recorded that the project code is CARDINAL_3987 for milestone Q4. \ud83e\udde0"
+    },
+    {
+      "step_idx": 1,
+      "text": "Wings that dance on morning air,\nFeathers bright beyond compare,\nSongs that echo through the trees\u2014\nBirds know freedom on the breeze. \ud83d\udd4a\ufe0f"
+    },
+    {
+      "step_idx": 3,
+      "text": "Project code: CARDINAL_3987 (used for milestone Q4)"
+    }
+  ],
+  "leakage_flags": [
+    {
+      "step_idx": 2,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 2,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 3,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

@@ -141,6 +141,7 @@ vite.config.ts.timestamp-*
 # Markdown
 CLAUDE.md
 API_DESIGN.md
+PR_DESCRIPTION.md
 notes
 
 # Python sidecar
@@ -149,9 +150,18 @@ sidecar/__pycache__/
 sidecar/*.pyc
 sidecar/.python-version
 
+# Python uv envs anywhere in the tree (experiments, cell-a-adapter, proxy)
+**/.venv/
+**/.python-version
+
 # Proxy shim operational artefacts (travel with proxy_shim.py)
 litellm_config.yaml
 litellm.log
+
+# V1.4 institutional-slate safety backup (redundant — institutional p4/p5/p6 data
+# is recoverable from git history; the curated #24 comparison set lives in
+# analysis/institutional_p5_jsonl/). Local safety net only.
+experiments/v1-runs/analysis/institutional_backup/
 
 __pycache__/
 *.py[cod]

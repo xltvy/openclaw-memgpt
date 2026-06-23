@@ -1,0 +1,61 @@
+{
+  "cell": "C",
+  "probe_id": "p1",
+  "trial_id": 3,
+  "expected_tier": "core",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p1/cell-c-3.jsonl"
+  ],
+  "step_count": 1,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_replace": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_replace": [
+          [
+            "name",
+            "new_content",
+            "old_content"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I'll remember that you're working on a dissertation about AI memory architectures.",
+      "pre_tool_text": "I'll remember that you're working on a dissertation about AI memory architectures.",
+      "char_count": 82,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it, Altay. I've updated my memory to note that you're working on a dissertation about AI memory architectures. This will help me provide more relevant context and assistance as you progress with your research. \ud83e\udde0"
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

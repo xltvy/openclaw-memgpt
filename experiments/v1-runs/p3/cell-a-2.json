@@ -1,0 +1,65 @@
+{
+  "cell": "A",
+  "probe_id": "p3",
+  "trial_id": 2,
+  "expected_tier": "archival",
+  "pickle_path": "/Users/altayacar/.memgpt/agents/v1_cell_a_p3_t02/persistence_manager/2026-06-10_02_48_51_AM_.persistence.pickle",
+  "step_count": 1,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "archival_memory_insert": 1,
+        "archival_memory_search": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "archival_memory_insert": [
+          [
+            "content",
+            "request_heartbeat"
+          ]
+        ],
+        "archival_memory_search": [
+          [
+            "page",
+            "query",
+            "request_heartbeat"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I need to store the project code in archival memory and then verify it's there by searching for it.Now I'll search archival memory to confirm the project code was stored successfully.Perfect! The storage and retrieval worked as expected. Time to confirm this with the user.",
+      "pre_tool_text": "I need to store the project code in archival memory and then verify it's there by searching for it.",
+      "char_count": 273,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Done! I've stored the project code PINEAPPLE_8101 in archival memory and confirmed it's there. The search returned 1 result showing \"Project code: PINEAPPLE_8101\" with a timestamp of 2026-06-10 02:48:48 AM. The archival memory system is working correctly."
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 0,
+        "archival": 2,
+        "recall": 0
+      }
+    }
+  ]
+}

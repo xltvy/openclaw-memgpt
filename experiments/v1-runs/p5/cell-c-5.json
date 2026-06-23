@@ -1,0 +1,105 @@
+{
+  "cell": "C",
+  "probe_id": "p5",
+  "trial_id": 5,
+  "expected_tier": "recall",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-5-s1.jsonl",
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-5-s2.jsonl"
+  ],
+  "step_count": 3,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 2,
+      "tools": {},
+      "arg_keys": {}
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I'll update my core memory to store this important project information.Perfect! I've added the project code CARDINAL_3987 and its Q4 milestone association to my core memory about you. This information will persist across our conversations so I can reference it whenever needed.",
+      "pre_tool_text": "I'll update my core memory to store this important project information.",
+      "char_count": 277,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "Here's a short poem about birds:\n\nWings catch morning light,\nFeathers dance on winds unseen,\nSong fills empty sky.",
+      "pre_tool_text": "Here's a short poem about birds:\n\nWings catch morning light,\nFeathers dance on winds unseen,\nSong fills empty sky.",
+      "char_count": 114,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 2,
+      "text": "Looking at your core memory, I can see the project code is **CARDINAL_3987** with milestone Q4.",
+      "pre_tool_text": "Looking at your core memory, I can see the project code is **CARDINAL_3987** with milestone Q4.",
+      "char_count": 95,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 1,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 2,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 2,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

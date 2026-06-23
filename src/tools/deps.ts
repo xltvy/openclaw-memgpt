@@ -23,28 +23,24 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import type { PluginConfig } from "../config.ts";
 import type { SidecarClient } from "../client/sidecarClient.ts";
 import type { LifecycleManager } from "../lifecycle/lifecycleManager.ts";
+import {
+  NOT_CONFIGURED_MESSAGE,
+  SIDECAR_DEAD_MESSAGE,
+} from "../lifecycle/lifecycleManager.ts";
+import type { EventSink, MemoryEvent } from "../observability/events.ts";
 
 // ============================================================================
 // MemoryEvent — observability surface for §6.2
 // ============================================================================
 
 /**
- * Event shape the tool handlers + hooks emit. `kind` is the operation name
- * (e.g. "archival_search", "core_memory_append", "agent_ensured",
- * "emit_failed"). `ts` is the optional ISO-8601 timestamp the §4.2 hook
- * pattern stamps at the call site (so concurrent events keep their actual
- * order in the stream). `meta` carries level-appropriate detail; the
- * level-gated emitter (6d) decides what to surface.
- *
- * Kept structurally open here — the §6.2 emitter owns the precise field set
- * per kind, and tool handlers / hooks just hand it whatever they have.
+ * Re-export of the §6.2 event shape, whose canonical definition lives in
+ * `observability/events.ts` (the spec names that file the schema owner). Tool
+ * handlers + hooks import `MemoryEvent` from here for proximity to `deps.emit`;
+ * the type is the same. The §6.2 level-gated emitter (6d.5) owns which fields
+ * surface at which level (metadata always; `content` at verbose).
  */
-export interface MemoryEvent {
-  kind: string;
-  namespace: string;
-  ts?: string;
-  meta?: Record<string, unknown>;
-}
+export type { MemoryEvent } from "../observability/events.ts";
 
 // ============================================================================
 // ToolHandler — handler shape matching the OpenClaw `.d.ts` execute contract
@@ -76,8 +72,9 @@ export interface ToolDeps {
   emit: (event: MemoryEvent) => void;
   logger: ToolLogger;
   /**
-   * §6.1 lifecycle — tools and hooks consult `lifecycle.isDead` at entry to
-   * short-circuit cleanly when the sidecar has crashed (6c.10a Q4). Optional
+   * §6.1 lifecycle — tools consult it (via `toolGuard`) at entry to
+   * short-circuit cleanly when unconfigured (§6d.6) or when the sidecar has
+   * crashed (6c.10a Q4), and hooks consult `lifecycle.isDead` directly. Optional
    * at this seam so existing tests that build a deps bag by hand keep working
    * without constructing a full LifecycleManager; the entry point always
    * supplies a real one.
@@ -86,24 +83,49 @@ export interface ToolDeps {
 }
 
 /**
- * Build a ToolDeps from the plugin entry's pieces. The `emit` stub is a
- * deliberate no-op until 6d wires the §6.2 level-gated emitter; until then
- * the observability stream is silent rather than emitting unstructured logs
- * the experiment harness can't aggregate.
+ * Build a ToolDeps from the plugin entry's pieces. `emit` is bound to the
+ * §6.2 level-gated emitter (6d.5) when an `emitter` is supplied; absent one
+ * (hand-built test deps) it falls back to a no-op so the observability stream
+ * stays silent rather than emitting unstructured noise. Tool/hook call sites
+ * are unchanged — they hand the emitter whatever they have and the emitter
+ * decides what surfaces at the configured level.
  */
 export function makeToolDeps(
   client: SidecarClient,
   config: PluginConfig,
   api: OpenClawPluginApi,
   lifecycle?: LifecycleManager,
+  emitter?: EventSink,
 ): ToolDeps {
   return {
     client,
     namespace: config.namespace,
-    emit: () => {
-      /* 6d wires the level-gated emitter; no-op until then. */
-    },
+    emit: emitter ? (event) => emitter.emit(event) : () => {},
     logger: api.logger,
     lifecycle,
   };
+}
+
+/**
+ * Readiness gate for the six sidecar-backed tools (§6d.6). Returns a verbatim
+ * tool-result to short-circuit with when the plugin can't serve a memory op:
+ *   - unconfigured (no provider + credential) → `NOT_CONFIGURED_MESSAGE`
+ *     (takes priority — the actionable cause), or
+ *   - sidecar dead → `SIDECAR_DEAD_MESSAGE`.
+ * Returns `null` when ready, including when no lifecycle is wired (hand-built
+ * test deps) — those proceed as before. `isConfigured === false` is an explicit
+ * comparison so stubs that omit the getter (undefined) don't trip the gate.
+ */
+export function toolGuard(
+  deps: ToolDeps,
+): { content: Array<{ type: string; text: string }> } | null {
+  const lc = deps.lifecycle;
+  if (!lc) return null;
+  if (lc.isConfigured === false) {
+    return { content: [{ type: "text", text: NOT_CONFIGURED_MESSAGE }] };
+  }
+  if (lc.isDead) {
+    return { content: [{ type: "text", text: SIDECAR_DEAD_MESSAGE }] };
+  }
+  return null;
 }

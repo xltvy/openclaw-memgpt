@@ -140,6 +140,11 @@ export function registerFlushPressureHook(
       const ctx = (ctxRaw ?? {}) as AgentContext;
       const event = (eventRaw ?? {}) as AgentEndEvent;
 
+      // §6d.6 config gate — skip flush (silently) when unconfigured.
+      if (deps.lifecycle?.isConfigured === false) {
+        if (ctx.sessionKey) capturedTokens.delete(ctx.sessionKey);
+        return;
+      }
       // §6.1 lifecycle — skip silently if the sidecar died (no point
       // attempting :summarize against an unreachable endpoint; the mirror
       // hook's same-turn skip means there's nothing to summarise into
@@ -236,6 +241,10 @@ export function registerFlushPressureHook(
             summaryLength: result.summaryLength,
             hiddenMessageCount: result.hiddenMessageCount,
           },
+          content: {
+            summary: result.summary,
+            summarised: v0Messages.slice(0, result.cutoff),
+          },
         });
 
         // ── Flush metadata write (§4.4 — 6c.6.3) ────────────────────────
@@ -305,6 +314,7 @@ export function registerFlushPressureHook(
               summaryLength: result.summaryLength,
               hiddenMessageCount: result.hiddenMessageCount,
             },
+            content: { summary: result.packagedMessage.content },
           });
         } catch (mirrorErr) {
           // Mirror failure: session metadata is already written. The next

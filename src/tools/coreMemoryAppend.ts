@@ -12,16 +12,14 @@
  */
 
 import { CoreMemoryError } from "../client/errors.ts";
-import { SIDECAR_DEAD_MESSAGE } from "../lifecycle/lifecycleManager.ts";
 import type { CoreMemoryName } from "../client/types.ts";
-import type { ToolDeps, ToolHandler } from "./deps.ts";
+import { toolGuard, type ToolDeps, type ToolHandler } from "./deps.ts";
 
 export const coreMemoryAppend =
   (deps: ToolDeps): ToolHandler =>
   async (_toolCallId, params) => {
-    if (deps.lifecycle?.isDead) {
-      return { content: [{ type: "text", text: SIDECAR_DEAD_MESSAGE }] };
-    }
+    const blocked = toolGuard(deps);
+    if (blocked) return blocked;
     const name = params.name as CoreMemoryName;
     const content = String(params.content ?? "");
     try {
@@ -30,6 +28,7 @@ export const coreMemoryAppend =
         kind: "core_memory_append",
         namespace: deps.namespace,
         meta: { name },
+        content: { text: content },
       });
       return { content: [] };
     } catch (err) {

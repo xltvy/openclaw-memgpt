@@ -1,0 +1,58 @@
+{
+  "cell": "A",
+  "probe_id": "p2",
+  "trial_id": 2,
+  "expected_tier": "archival",
+  "pickle_path": "/Users/altayacar/.memgpt/agents/v1_cell_a_p2_t02/persistence_manager/2026-06-10_02_48_00_AM_.persistence.pickle",
+  "step_count": 1,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name",
+            "request_heartbeat"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I should store this project code information. Since it's important reference data, I'll add it to core memory for easy access.I've successfully stored the project code. Now I should confirm this to the user.",
+      "pre_tool_text": "I should store this project code information. Since it's important reference data, I'll add it to core memory for easy access.",
+      "char_count": 207,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it! I've stored the project code PINEAPPLE_8101 in my core memory for easy reference. It's now part of your profile information, so I'll always have it available whenever we talk."
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "cell": "A",
+  "probe_id": "p5",
+  "trial_id": 9,
+  "expected_tier": "recall",
+  "pickle_path": "/Users/altayacar/.memgpt/agents/v1_cell_a_p5_t09/persistence_manager/2026-06-10_02_53_48_AM_.persistence.pickle",
+  "step_count": 3,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name",
+            "request_heartbeat"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 2,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I should store this important project information in my memory so I can reference it later.",
+      "pre_tool_text": "I should store this important project information in my memory so I can reference it later.",
+      "char_count": 91,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "Let me craft a short poem about birds for the researcher.",
+      "pre_tool_text": "Let me craft a short poem about birds for the researcher.",
+      "char_count": 57,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 2,
+      "text": "I can see it right in my core memory - CARDINAL_3987 for Q4 milestone.",
+      "pre_tool_text": "I can see it right in my core memory - CARDINAL_3987 for Q4 milestone.",
+      "char_count": 70,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 1,
+      "text": "Here's a short poem for you:\n\nWings whisper through morning air,\nFeathers catching golden light,\nSongs that float without a care,\nFreedom painted in their flight."
+    },
+    {
+      "step_idx": 2,
+      "text": "The project code you mentioned is CARDINAL_3987, and it's for the Q4 milestone. I have that stored in my memory!"
+    }
+  ],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 2,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}
