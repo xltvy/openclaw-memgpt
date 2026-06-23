@@ -141,6 +141,7 @@ vite.config.ts.timestamp-*
 # Markdown
 CLAUDE.md
 API_DESIGN.md
+PR_DESCRIPTION.md
 notes
 
 # Python sidecar
