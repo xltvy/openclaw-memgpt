@@ -491,15 +491,23 @@ reinstall() { cd "$REPO" && rm -rf sidecar/.venv && openclaw --dev plugins insta
 > Not a failure; the U-case PASS checks gate on artifacts + the `memgpt` command,
 > not on this flag.
 
-- **U1 `--dry-run`:** `inspect; openclaw --dev memgpt uninstall --dry-run; inspect` → **PASS** = "Dry run — no changes" box; both `inspect` outputs identical.
-- **U2 decline:** `openclaw --dev memgpt uninstall` → answer **No** → **PASS** = "cancelled"; `inspect` unchanged.
-- **U3 accept:** `openclaw --dev memgpt uninstall` → **Yes**. **Check:**
+- **U1 `--dry-run`:** `inspect; openclaw --dev memgpt uninstall --dry-run; inspect` → **PASS** = "Dry run — no changes" box (mentions "an interactive uninstall will offer to keep memgpt-data"); both `inspect` outputs identical.
+- **U2 decline (interactive 3-way prompt):** `openclaw --dev memgpt uninstall` → the prompt offers **Remove everything / Keep my memory data / Cancel — remove nothing**; choose **Cancel — remove nothing** (or press Esc) → **PASS** = "cancelled"; `inspect` unchanged.
+- **U3 accept — remove everything:** `openclaw --dev memgpt uninstall` → choose **Remove everything**. **Check:**
   ```bash
   ls ~/.openclaw-dev/plugins/openclaw-memgpt 2>/dev/null && echo "FAIL: artifacts remain" || echo "PASS: artifacts gone"
+  ls ~/.openclaw-dev/memgpt-data 2>/dev/null && echo "FAIL: data remains" || echo "PASS: data gone"
   openclaw --dev memgpt --help 2>&1 | grep -qi "unknown command" && echo "PASS: command gone" || echo "FAIL"
   ```
   then `reinstall`.
-- **U4 `--force`:** `openclaw --dev memgpt uninstall --force` → same checks as U3, no prompt. then `reinstall`.
+- **U3b interactive keep (no flag):** `openclaw --dev memgpt uninstall` → choose **Keep my memory data**. **Check:**
+  ```bash
+  [ -d ~/.openclaw-dev/memgpt-data ] && echo "PASS: data kept" || echo "FAIL"
+  [ ! -d ~/.openclaw-dev/plugins/openclaw-memgpt ] && echo "PASS: secret dir removed" || echo "FAIL"
+  openclaw --dev memgpt --help 2>&1 | grep -qi "unknown command" && echo "PASS: command gone" || echo "FAIL"
+  ```
+  then `reinstall` (re-add `namespace` in setup to resume the kept data).
+- **U4 `--force`:** `openclaw --dev memgpt uninstall --force` → no prompt; same checks as U3 (everything gone). then `reinstall`.
 - **U5 `--keep-data`:** `openclaw --dev memgpt uninstall --force --keep-data`. **Check:**
   ```bash
   [ -d ~/.openclaw-dev/memgpt-data ] && echo "PASS: data kept" || echo "FAIL"
