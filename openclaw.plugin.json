@@ -43,7 +43,7 @@
       "observability": {
         "type": "string",
         "enum": ["off", "default", "verbose"],
-        "default": "default",
+        "default": "off",
         "description": "Observability event detail level."
       },
       "provider": {
