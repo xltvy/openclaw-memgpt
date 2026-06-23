@@ -392,11 +392,14 @@ echo "$VIA" | grep -q '"via":"create"' && echo "PASS: re-created (no 500)" || { 
 
 **Step 4 — kill the sidecar:** `pkill -f "uvicorn main:app"`
 
-### 7b — Cache eviction → clear error + recovery (DESTRUCTIVE — re-download)
+### 7b — Cache eviction → clear error + recovery (DESTRUCTIVE — ~60s re-download)
+Precondition: the warm-**marker** must be present (→ sidecar goes offline) **and**
+the model cache absent (→ offline load fails). The reset guarantees both.
 **Reset:**
 ```bash
 pkill -f "uvicorn main:app" 2>/dev/null; sleep 1
-rm -rf ~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5   # marker stays → forces offline-miss
+echo "BAAI/bge-small-en-v1.5" > ~/.openclaw-dev/memgpt-data/.embedder-warm   # ensure marker present (forces offline)
+rm -rf ~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5             # cache gone → offline load fails
 ```
 **Run + Check:**
 ```bash
