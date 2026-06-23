@@ -19,14 +19,15 @@ const VALID = {
   human: "User unknown.",
 } as const;
 
-test("parseConfig: happy path returns typed PluginConfig with default observability", () => {
+test("parseConfig: happy path returns typed PluginConfig; observability defaults to off", () => {
   const cfg = parseConfigValue(VALID);
   assert.equal(cfg.namespace, "test-agent");
   assert.equal(cfg.model, "gpt-4");
   assert.equal(cfg.persona, "I am Sam.");
   assert.equal(cfg.human, "User unknown.");
   assert.equal(cfg.sidecarUrl, undefined);
-  assert.equal(cfg.observability, "default");
+  // Unset observability defaults to "off" (matches the wizard default; §6).
+  assert.equal(cfg.observability, "off");
 });
 
 test("parseConfig: happy path with all optional fields set", () => {

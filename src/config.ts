@@ -51,7 +51,7 @@ export interface PluginConfig {
    * Also resolvable from env OPENCLAW_MEMGPT_SIDECAR_URL by the lifecycle layer.
    */
   sidecarUrl?: string;
-  /** Observability emit level. Defaults to "default". (§6) */
+  /** Observability emit level. Defaults to "off". (§6) */
   observability: ObservabilityLevel;
   /**
    * LLM provider for the sidecar (6d.6 wizard). Optional so the plugin still
@@ -140,7 +140,7 @@ function resolveObservability(
   value: Record<string, unknown>,
 ): ObservabilityLevel {
   const raw = value.observability;
-  if (raw === undefined) return "default";
+  if (raw === undefined) return "off";
   if (
     typeof raw !== "string" ||
     !OBSERVABILITY_LEVELS.includes(raw as ObservabilityLevel)
