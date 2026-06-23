@@ -17,6 +17,7 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
+import { takeFirstAnnounce } from "./announce.ts";
 import { parseConfig } from "./config.ts";
 import { SidecarClientImpl } from "./client/sidecarClient.ts";
 import { makeMemgptContextEngine } from "./contextEngine/memgptEngine.ts";
@@ -24,7 +25,7 @@ import { registerFlushPressureHook } from "./hooks/flushPressure.ts";
 import { registerAgentEndHook } from "./hooks/mirror.ts";
 import { registerPromptSectionHook } from "./hooks/promptSection.ts";
 import { registerReplyDispatchHook } from "./hooks/replyDispatch.ts";
-import { LifecycleManager } from "./lifecycle/lifecycleManager.ts";
+import { getOrCreateLifecycle } from "./lifecycle/lifecycleManager.ts";
 import { ObservabilityEmitter } from "./observability/events.ts";
 import { makeToolDeps } from "./tools/deps.ts";
 import { registerTools } from "./tools/index.ts";
@@ -61,6 +62,11 @@ const memgptPlugin = definePluginEntry({
   register(api: OpenClawPluginApi): void {
     const config = parseConfig(api);
 
+    // First register() for this namespace this process → emit the human-facing
+    // banner (registration line + unconfigured notice). Later calls register
+    // their tools/hooks/service as usual but skip the duplicate logging.
+    const firstAnnounce = takeFirstAnnounce(config.namespace);
+
     // §6.2 observability emitter — constructed with the level now; its JSONL
     // sink is activate()d by LifecycleManager.start once the state dir is known
     // (two-phase init). Shared by tools/hooks (via deps.emit) and lifecycle.
@@ -83,7 +89,13 @@ const memgptPlugin = definePluginEntry({
             return env;
           };
 
-    const lifecycle = new LifecycleManager(config, api.logger, {
+    // Process-singleton per namespace: OpenClaw calls register() several times
+    // in one process, and our backend is a spawned sidecar holding in-memory
+    // resident agent state. A fresh manager per call spawned a fresh sidecar,
+    // so the hook's `:ensure` and a tool call could land on different sidecars
+    // → "Agent not resident". Sharing one manager (hence one sidecar) per
+    // namespace fixes it; see getOrCreateLifecycle. (Clients stay per-call.)
+    const lifecycle = getOrCreateLifecycle(config, api.logger, {
       emitter,
       credentialEnv,
     });
@@ -92,14 +104,26 @@ const memgptPlugin = definePluginEntry({
     // one-time pointer to it when the plugin is unconfigured (auto-detection;
     // see notifyIfUnconfigured for why this notifies rather than auto-launches).
     registerWizardCli(api);
-    notifyIfUnconfigured(api.logger, config);
+    if (firstAnnounce) notifyIfUnconfigured(api.logger, config);
 
     // Resolver closure: SidecarClient calls this once in doInit (at first
     // tool/hook fire — well after registerService.start has resolved the URL).
     const client = new SidecarClientImpl(config, async () =>
       lifecycle.resolveBaseUrl(),
     );
-    const deps = makeToolDeps(client, config, api, lifecycle, emitter);
+    // Use the SINGLETON lifecycle's emitter (the one whose JSONL sink is
+    // activated), not this registration's freshly-constructed `emitter` — see
+    // LifecycleManager.emitter. On the first register() they're the same object;
+    // on later register()s `lifecycle.emitter` is the first one (activated) and
+    // the local `emitter` is an unused duplicate. This keeps the JSONL record
+    // complete across all registrations' hooks (§6.2/§6.3).
+    const deps = makeToolDeps(
+      client,
+      config,
+      api,
+      lifecycle,
+      lifecycle.emitter ?? emitter,
+    );
 
     registerTools(api, deps);
     registerPromptSectionHook(api, deps);
@@ -121,9 +145,11 @@ const memgptPlugin = definePluginEntry({
       stop: (ctx) => lifecycle.stop(client, ctx),
     });
 
-    api.logger.info(
-      `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end + reply_dispatch hooks + ContextEngine + lifecycle service registered (namespace: ${config.namespace}, observability: ${config.observability})`,
-    );
+    if (firstAnnounce) {
+      api.logger.info(
+        `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end + reply_dispatch hooks + ContextEngine + lifecycle service registered (namespace: ${config.namespace}, observability: ${config.observability})`,
+      );
+    }
   },
 });
 

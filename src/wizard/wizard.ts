@@ -15,7 +15,9 @@
 
 import { execFile } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+import { findSidecarDir } from "../lifecycle/lifecycleManager.ts";
 import { isEndpointReachable, isLocalUrl } from "../reachability.ts";
 import {
   type ConfigIO,
@@ -61,6 +63,13 @@ export interface RunWizardDeps {
    * Defaults to a real fetch (`isEndpointReachable`). Injected in tests.
    */
   reachable?: (url: string) => Promise<boolean>;
+  /**
+   * Pre-warm the embedder cache by running the sidecar's `--prewarm` mode
+   * (downloads + caches the model, then exits). Resolves true on success.
+   * Defaults to a real `uv run python main.py --prewarm`. Injected in tests so
+   * the wizard suite never spawns a subprocess.
+   */
+  prewarmEmbedder?: (stateDir: string) => Promise<boolean>;
 }
 
 export interface RunWizardResult {
@@ -109,7 +118,16 @@ export async function runWizard(
     await writeApiKeyFile(stateDir, answers.pastedKey, secretIO);
   }
 
-  // 2. Config block.
+  // Conversation-access grant note (surfaced before the write that sets it).
+  // OpenClaw blocks a non-bundled plugin's conversation-reading hooks unless the
+  // user opts in; a memory plugin can't store what it can't read, so setup grants
+  // it. Make the grant visible + revocable.
+  prompter.note(
+    "openclaw-memgpt reads your conversation to store memories, so setup grants it conversation access (sets hooks.allowConversationAccess=true on the plugin entry in your config). Without it, gateway mode silently skips saving/recalling. Remove that flag any time to revoke.",
+    "Conversation access",
+  );
+
+  // 2. Config block (also sets hooks.allowConversationAccess — see mergePluginConfig).
   await mergePluginConfig(
     {
       provider: answers.provider,
@@ -158,24 +176,123 @@ export async function runWizard(
   if (answers.sidecarUrl === undefined) {
     const uvOk = await (deps.checkUv ?? defaultCheckUv)();
     if (!uvOk) {
+      // Without uv we can't run the sidecar (or pre-warm); just flag the
+      // prerequisite and the cold-start cost the first turn will pay.
       prompter.note(
         "`uv` was not found on your PATH. The plugin runs the memory sidecar via `uv run uvicorn`, so install uv before starting an agent:\n  https://docs.astral.sh/uv/  (e.g. `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)\nThis wizard does not install it for you.",
         "Prerequisite missing",
       );
+      prompter.note(
+        "The first agent turn downloads the embedding model (~60–90s) before memory is ready; subsequent runs are fast.",
+        "Heads-up",
+      );
+    } else {
+      // Offer to pre-warm the embedder cache now. A cold (uncached) load is a
+      // ~60s online download that overruns OpenClaw's 15s before_prompt_build
+      // hook on the first `--local` turn; pre-warming downloads it once here so
+      // the first turn finds a warm cache (offline load ~3-4s). Declining is
+      // fine — the first turn just pays the download instead.
+      const wantPrewarm = await prompter.confirm({
+        message:
+          "Pre-download the embedding model now (~60s)? Makes the first agent turn fast; otherwise the first turn pays the download.",
+        initialValue: true,
+      });
+      if (wantPrewarm === true) {
+        prompter.note(
+          "Downloading the embedding model — runs once, may take up to ~60s …",
+          "Pre-warming",
+        );
+        const ok = await (deps.prewarmEmbedder ?? defaultPrewarmEmbedder)(stateDir);
+        prompter.note(
+          ok
+            ? "Embedder cached — the first agent turn will be fast."
+            : "Pre-warm didn't finish; the first agent turn will download the embedding model (~60s) instead. Harmless — subsequent turns are still fast.",
+          ok ? "Ready" : "Heads-up",
+        );
+      } else {
+        // Cancel or decline → skip; note the deferred cost.
+        prompter.note(
+          "Skipped pre-warm. The first agent turn downloads the embedding model (~60s); subsequent runs are fast.",
+          "Heads-up",
+        );
+      }
     }
-    prompter.note(
-      "The first agent turn downloads the embedding model (~60–90s) before memory is ready; subsequent runs are fast.",
-      "Heads-up",
-    );
   }
 
   prompter.outro("openclaw-memgpt configured. Run an agent to start using memory.");
   return { status: "applied", answers };
 }
 
+export interface RunPrewarmDeps {
+  logger?: Logger;
+  stateDir?: string;
+  checkUv?: () => Promise<boolean>;
+  prewarmEmbedder?: (stateDir: string) => Promise<boolean>;
+}
+
+/**
+ * Standalone embedder pre-warm (the `openclaw memgpt prewarm` command). Same
+ * `--prewarm` sidecar mode the wizard offers, exposed separately for recovery
+ * (e.g. after the HF cache is evicted and the runtime sidecar reports the cache
+ * unavailable). Downloads + caches the model and writes the warm-marker so
+ * subsequent cold-starts are offline-fast. Returns true on success.
+ */
+export async function runPrewarm(deps: RunPrewarmDeps = {}): Promise<boolean> {
+  const logger = deps.logger ?? console;
+  const stateDir = deps.stateDir ?? (await defaultStateDir());
+
+  const uvOk = await (deps.checkUv ?? defaultCheckUv)();
+  if (!uvOk) {
+    logger.error(
+      "openclaw-memgpt: `uv` not found on PATH — cannot pre-warm. Install uv (https://docs.astral.sh/uv/) and retry.",
+    );
+    return false;
+  }
+
+  logger.info(
+    "openclaw-memgpt: pre-warming the embedder — downloads once, up to ~60s …",
+  );
+  const ok = await (deps.prewarmEmbedder ?? defaultPrewarmEmbedder)(stateDir);
+  if (ok) {
+    logger.info(
+      "openclaw-memgpt: embedder cached — agent turns will be offline-fast.",
+    );
+  } else {
+    logger.error(
+      "openclaw-memgpt: pre-warm did not complete. The first agent turn will download the model instead (harmless, just slower).",
+    );
+  }
+  return ok;
+}
+
 /** Real `uv` probe — resolves true iff `uv --version` exits 0. */
 function defaultCheckUv(): Promise<boolean> {
   return new Promise((resolve) => {
     execFile("uv", ["--version"], { timeout: 5000 }, (err) => resolve(err == null));
+  });
+}
+
+/**
+ * Real embedder pre-warm — runs the sidecar's `--prewarm` mode (`uv run python
+ * main.py --prewarm`), which downloads + caches the model then exits. Resolves
+ * true iff it exits 0. The sidecar dir is resolved the same way the lifecycle
+ * manager resolves it (walk up to `sidecar/main.py`); the data/venv dirs mirror
+ * the spawn env so the warmed cache is the one the runtime sidecar uses.
+ */
+function defaultPrewarmEmbedder(stateDir: string): Promise<boolean> {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const sidecarDir = findSidecarDir(here);
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    OPENCLAW_MEMGPT_DATA_DIR: path.join(stateDir, "memgpt-data"),
+    UV_PROJECT_ENVIRONMENT: path.join(stateDir, "memgpt-sidecar-venv"),
+  };
+  return new Promise((resolve) => {
+    execFile(
+      "uv",
+      ["run", "python", "main.py", "--prewarm"],
+      { cwd: sidecarDir, env, timeout: 180_000 },
+      (err) => resolve(err == null),
+    );
   });
 }

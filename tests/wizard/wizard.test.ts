@@ -19,7 +19,7 @@ import { PLUGIN_ID } from "../../src/wizard/configStore.ts";
 import type { SecretFileIO } from "../../src/wizard/credentialStore.ts";
 import type { Prompter } from "../../src/wizard/prompts.ts";
 import { notifyIfUnconfigured } from "../../src/wizard/detect.ts";
-import { runWizard } from "../../src/wizard/wizard.ts";
+import { runPrewarm, runWizard } from "../../src/wizard/wizard.ts";
 
 function harness(initial: Record<string, any> = {}) {
   const order: string[] = [];
@@ -55,6 +55,7 @@ function harness(initial: Record<string, any> = {}) {
     secretIO,
     secrets,
     block: () => cfg?.plugins?.entries?.[PLUGIN_ID]?.config ?? {},
+    entry: () => cfg?.plugins?.entries?.[PLUGIN_ID] ?? {},
   };
 }
 
@@ -196,6 +197,29 @@ test("cancelled wizard writes nothing", async () => {
   assert.deepEqual(h.order, []);
 });
 
+test("wizard grants conversation access + surfaces the note", async () => {
+  const h = harness();
+  // full apply, then decline the pre-warm offer (uv present)
+  const prompter = scripted([
+    "anthropic", "paste", "sk-ant-x", "claude-x", "off", "", true, false,
+  ]);
+  const res = await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    reachable: async () => true,
+    checkUv: async () => true,
+    prewarmEmbedder: async () => true,
+  });
+  assert.equal(res.status, "applied");
+  assert.equal(h.entry().hooks.allowConversationAccess, true, "must grant conversation access");
+  assert.ok(
+    prompter.notes.some((n) => /conversation access/i.test(n)),
+    "must surface the conversation-access note",
+  );
+});
+
 // ── prerequisite (uv) + cold-start guidance ──────────────────────────────────
 
 const SPAWN_PASTE_FLOW = [
@@ -229,9 +253,11 @@ test("spawn mode + uv missing → warns about uv and notes cold-start", async ()
   );
 });
 
-test("spawn mode + uv present → no uv warning, still notes cold-start", async () => {
+test("spawn mode + uv present → offers pre-warm; declining notes the deferred cold-start", async () => {
   const h = harness();
-  const prompter = scripted([...SPAWN_PASTE_FLOW]);
+  // …apply=true, then DECLINE the pre-warm confirm.
+  const prompter = scripted([...SPAWN_PASTE_FLOW, false]);
+  let prewarmCalled = false;
   await runWizard({
     prompter,
     configIO: h.configIO,
@@ -239,8 +265,78 @@ test("spawn mode + uv present → no uv warning, still notes cold-start", async 
     stateDir: "/state",
     reachable: async () => true, // stub: don't hit the network in unit tests
     checkUv: async () => true,
+    prewarmEmbedder: async () => {
+      prewarmCalled = true;
+      return true;
+    },
   });
   assert.ok(!prompter.notes.some((n) => n.includes("install uv") || n.includes("`uv`")));
+  assert.equal(prewarmCalled, false, "declining pre-warm must not run it");
+  assert.ok(
+    prompter.notes.some((n) => /Skipped pre-warm|embedding model/.test(n)),
+    "declining must note the deferred download",
+  );
+});
+
+test("spawn mode + uv present + accept pre-warm → runs it; notes ready on success", async () => {
+  const h = harness();
+  const prompter = scripted([...SPAWN_PASTE_FLOW, true]); // accept pre-warm
+  let prewarmStateDir: string | undefined;
+  await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    reachable: async () => true,
+    checkUv: async () => true,
+    prewarmEmbedder: async (sd) => {
+      prewarmStateDir = sd;
+      return true;
+    },
+  });
+  assert.equal(prewarmStateDir, "/state", "pre-warm must receive the state dir");
+  assert.ok(
+    prompter.notes.some((n) => /Embedder cached|first agent turn will be fast/.test(n)),
+    "successful pre-warm must note readiness",
+  );
+});
+
+test("spawn mode + accept pre-warm but it fails → harmless heads-up, wizard still applies", async () => {
+  const h = harness();
+  const prompter = scripted([...SPAWN_PASTE_FLOW, true]);
+  const res = await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    reachable: async () => true,
+    checkUv: async () => true,
+    prewarmEmbedder: async () => false, // simulate prewarm failure
+  });
+  assert.equal(res.status, "applied", "a failed pre-warm must not fail the wizard");
+  assert.ok(
+    prompter.notes.some((n) => /didn't finish|download the embedding model/.test(n)),
+    "failed pre-warm must note the harmless fallback",
+  );
+});
+
+test("spawn mode + uv missing → no pre-warm offered; warns uv + cold-start", async () => {
+  const h = harness();
+  const prompter = scripted([...SPAWN_PASTE_FLOW]);
+  let prewarmCalled = false;
+  await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    reachable: async () => true,
+    checkUv: async () => false,
+    prewarmEmbedder: async () => {
+      prewarmCalled = true;
+      return true;
+    },
+  });
+  assert.equal(prewarmCalled, false, "no pre-warm without uv");
   assert.ok(prompter.notes.some((n) => /60.?90s|embedding model/.test(n)));
 });
 
@@ -343,4 +439,52 @@ test("notifyIfUnconfigured: info (not warn) when non-interactive", () => {
   const cfg = parseConfigValue({});
   assert.equal(notifyIfUnconfigured(logger, cfg, false), true);
   assert.equal(logger.calls[0].level, "info");
+});
+
+// ── runPrewarm (standalone `openclaw memgpt prewarm`) ─────────────────────────
+
+test("runPrewarm: success → returns true, runs prewarm with the state dir, notes ready", async () => {
+  const logger = fakeLogger();
+  let calledWith: string | undefined;
+  const ok = await runPrewarm({
+    logger,
+    stateDir: "/state",
+    checkUv: async () => true,
+    prewarmEmbedder: async (sd) => {
+      calledWith = sd;
+      return true;
+    },
+  });
+  assert.equal(ok, true);
+  assert.equal(calledWith, "/state", "prewarm must receive the state dir");
+  assert.ok(logger.calls.some((c) => /cached|offline-fast/.test(c.msg)));
+});
+
+test("runPrewarm: uv missing → returns false, does not run prewarm", async () => {
+  const logger = fakeLogger();
+  let ran = false;
+  const ok = await runPrewarm({
+    logger,
+    stateDir: "/state",
+    checkUv: async () => false,
+    prewarmEmbedder: async () => {
+      ran = true;
+      return true;
+    },
+  });
+  assert.equal(ok, false);
+  assert.equal(ran, false, "no prewarm without uv");
+  assert.ok(logger.calls.some((c) => c.level === "error" && /uv/.test(c.msg)));
+});
+
+test("runPrewarm: prewarm fails → returns false, notes harmless fallback", async () => {
+  const logger = fakeLogger();
+  const ok = await runPrewarm({
+    logger,
+    stateDir: "/state",
+    checkUv: async () => true,
+    prewarmEmbedder: async () => false,
+  });
+  assert.equal(ok, false);
+  assert.ok(logger.calls.some((c) => c.level === "error" && /download the model/.test(c.msg)));
 });

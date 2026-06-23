@@ -51,6 +51,15 @@ export async function readPluginConfigBlock(
  * `sidecarUrl`); all other current keys (namespace/persona/human, which the
  * wizard does not collect) are preserved. Ensures the plugin entry exists and
  * is enabled.
+ *
+ * Also grants `hooks.allowConversationAccess` (a sibling of `config`, not a
+ * config key). OpenClaw ≥2026.6.x blocks conversation-reading hooks of
+ * non-bundled plugins unless the user opts in here; without it the gateway
+ * silently drops the per-turn recall mirror + save + flush-pressure (the
+ * `agent_end`/`llm_output` hooks). A memory plugin cannot function without
+ * reading the conversation it stores, so configuring it *is* the grant — the
+ * wizard surfaces a note so it's visible, and a user can revoke by removing the
+ * flag. A plugin cannot self-grant this (security model); only user config can.
  */
 export async function mergePluginConfig(
   updates: Record<string, unknown>,
@@ -61,6 +70,8 @@ export async function mergePluginConfig(
     cfg.plugins.entries ??= {};
     const entry = (cfg.plugins.entries[PLUGIN_ID] ??= { enabled: true });
     if (entry.enabled === undefined) entry.enabled = true;
+    entry.hooks ??= {};
+    entry.hooks.allowConversationAccess = true;
     const current = (entry.config ??= {});
     for (const [key, value] of Object.entries(updates)) {
       if (value === undefined) delete current[key];
