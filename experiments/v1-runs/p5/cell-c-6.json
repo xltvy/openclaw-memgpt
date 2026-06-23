@@ -1,0 +1,134 @@
+{
+  "cell": "C",
+  "probe_id": "p5",
+  "trial_id": 6,
+  "expected_tier": "recall",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-6-s1.jsonl",
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-6-s2.jsonl"
+  ],
+  "step_count": 3,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 2,
+      "tools": {
+        "conversation_search": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "conversation_search": [
+          [
+            "page",
+            "query"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I'll update my core memory to include this important project information.",
+      "pre_tool_text": "I'll update my core memory to include this important project information.",
+      "char_count": 73,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "",
+      "pre_tool_text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 2,
+      "text": "I'll search my recall memory for the project code you mentioned.",
+      "pre_tool_text": "I'll search my recall memory for the project code you mentioned.",
+      "char_count": 64,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it! I've recorded the project code CARDINAL_3987 for milestone Q4 in my core memory. I'll remember this for our future conversations."
+    },
+    {
+      "step_idx": 1,
+      "text": "Wings slice through morning air,\nFeathers catch the light just so\u2014\nBrief, perfect, then gone."
+    },
+    {
+      "step_idx": 2,
+      "text": "The project code you mentioned was **CARDINAL_3987**, associated with milestone Q4. I can see it's now stored in my core memory for quick reference."
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 2,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 1
+      }
+    }
+  ]
+}

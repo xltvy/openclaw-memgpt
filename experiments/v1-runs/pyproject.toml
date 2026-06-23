@@ -1,0 +1,33 @@
+[project]
+name = "openclaw-memgpt-v1-runs"
+version = "0.1.0"
+description = "V1.3 experimental driver — A≈C probe protocol against Cell A and Cell C"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "pymemgpt",
+    # HuggingFace embedding-model deps. Both pymemgpt branches use
+    # bge-small-en-v1.5 by default for archival / recall embeddings, so the
+    # transitive set is the same. Listing them directly keeps `uv sync`
+    # deterministic across branch swaps.
+    "transformers",
+    "torch",
+    "sentence-transformers",
+]
+
+[tool.uv.sources]
+# Editable install of the fork; tracks whichever branch is currently checked
+# out in ../../../memgpt-service.
+#
+# IMPORTANT — env-per-cell. The two cells require different pymemgpt branches
+# with incompatible llama-index majors:
+#   - Cell A: v1-cell-a branch (f46cc3b + F2). pymemgpt wants llama-index 0.8.x
+#     (old ServiceContext API). Pins added to dependencies at trial time.
+#   - Cell C: main branch (0c31f10). pymemgpt 0.1.18a1 wants llama-index
+#     0.14.x (Settings API). NO pins required — pymemgpt's own metadata
+#     resolves the right version.
+#
+# Pin policy: leave llama-index UNPINNED here for the Cell C default. For Cell
+# A re-runs, transiently add `langchain==0.0.312` and `llama-index==0.8.62` to
+# dependencies, nuke .venv + uv.lock, `uv sync`, run. Remove pins before
+# switching back to Cell C.
+pymemgpt = { path = "../../../memgpt-service", editable = true }

@@ -1,0 +1,60 @@
+{
+  "cell": "C",
+  "probe_id": "p1",
+  "trial_id": 0,
+  "expected_tier": "core",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p1/cell-c-0.jsonl"
+  ],
+  "step_count": 1,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I'll remember that you're working on a dissertation about AI memory architectures. Let me update my core memory to reflect this important context.",
+      "pre_tool_text": "I'll remember that you're working on a dissertation about AI memory architectures. Let me update my core memory to reflect this important context.",
+      "char_count": 146,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it! I've noted that you're working on a dissertation about AI memory architectures. This is already reflected in your core profile, and I've reinforced it in my memory. \n\nSince you're deep into this research, feel free to bounce ideas off me, test memory scenarios, or explore how the three-tier system (core, recall, archival) works in practice. I'm here to help however you need. \ud83e\udde0"
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

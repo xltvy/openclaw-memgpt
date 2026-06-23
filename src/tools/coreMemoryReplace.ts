@@ -9,11 +9,13 @@
 
 import { CoreMemoryError } from "../client/errors.ts";
 import type { CoreMemoryName } from "../client/types.ts";
-import type { ToolDeps, ToolHandler } from "./deps.ts";
+import { toolGuard, type ToolDeps, type ToolHandler } from "./deps.ts";
 
 export const coreMemoryReplace =
   (deps: ToolDeps): ToolHandler =>
   async (_toolCallId, params) => {
+    const blocked = toolGuard(deps);
+    if (blocked) return blocked;
     const name = params.name as CoreMemoryName;
     const oldContent = String(params.old_content ?? "");
     const newContent = String(params.new_content ?? "");
@@ -23,6 +25,7 @@ export const coreMemoryReplace =
         kind: "core_memory_replace",
         namespace: deps.namespace,
         meta: { name },
+        content: { text: newContent },
       });
       return { content: [] };
     } catch (err) {

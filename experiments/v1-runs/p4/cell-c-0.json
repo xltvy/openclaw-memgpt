@@ -1,0 +1,70 @@
+{
+  "cell": "C",
+  "probe_id": "p4",
+  "trial_id": 0,
+  "expected_tier": "recall",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p4/cell-c-0.jsonl"
+  ],
+  "step_count": 2,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 1,
+      "tools": {},
+      "arg_keys": {}
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I understand. The project code is **BLUEBIRD_5402**. \n\nI've noted this in my working memory. Is there anything specific you'd like me to help with regarding this project?",
+      "pre_tool_text": "I understand. The project code is **BLUEBIRD_5402**. \n\nI've noted this in my working memory. Is there anything specific you'd like me to help with regarding this project?",
+      "char_count": 170,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "The project code you mentioned was **BLUEBIRD_5402**.",
+      "pre_tool_text": "The project code you mentioned was **BLUEBIRD_5402**.",
+      "char_count": 53,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 1,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

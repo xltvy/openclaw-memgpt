@@ -7,9 +7,9 @@
  * within-turn `conversation_search` can find an earlier same-turn message.
  * Here the turn's messages land in `pm.all_messages` atomically at turn end
  * — within-turn recall of same-turn messages is unavailable. Cross-session
- * recall (the property Persival tests) is unaffected because `agent_end`
+ * recall (the load-bearing property) is unaffected because `agent_end`
  * fires well before the next session. The gap is documented in §4.5 as the
- * first suspect if V1 A≈C diverges on the memory-tier-reasoning dimension.
+ * first suspect if cross-session recall behaviour diverges from native MemGPT.
  *
  * Wired via `api.on("agent_end")`, NOT via `MemoryCapabilityConfig.runtime`
  * — the `.d.ts` declares runtime as a plain key/value bag with no declared
@@ -66,6 +66,18 @@ export function registerAgentEndHook(
   deps: ToolDeps,
 ): void {
   api.on("agent_end", async (event: AgentEndEvent, ctx: AgentEndCtx) => {
+    // §6d.6 config gate — skip mirror+save (silently) when unconfigured.
+    if (deps.lifecycle?.isConfigured === false) return;
+    // §6.1 lifecycle — if the sidecar died, skip mirror+save entirely. The
+    // previous turn's save (if any) is the last good on-disk state; trying
+    // to mirror to a dead sidecar would only produce a noisy error.
+    if (deps.lifecycle?.isDead) {
+      deps.logger.warn(
+        "openclaw-memgpt: skipping mirror+save — sidecar dead",
+      );
+      return;
+    }
+
     // ── Guards (§2.3 / §4.5) — skip turns that shouldn't trigger
     // persistence. Wrapped defensively because a ctx shape mismatch
     // shouldn't break the hook; we just skip.

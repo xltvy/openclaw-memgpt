@@ -7,21 +7,24 @@
  * branch isn't applicable; unexpected errors bubble.
  *
  * The emitted MemoryEvent carries `passages` (chunks created) at the verbose
- * level — important for the detection-rate metric (§6.2 / 6d.3), since one
+ * level — useful for observability consumers (§6.2 / 6d.3), since one
  * `content` insert may produce multiple passage entries.
  */
 
-import type { ToolDeps, ToolHandler } from "./deps.ts";
+import { toolGuard, type ToolDeps, type ToolHandler } from "./deps.ts";
 
 export const archivalInsert =
   (deps: ToolDeps): ToolHandler =>
   async (_toolCallId, params) => {
+    const blocked = toolGuard(deps);
+    if (blocked) return blocked;
     const content = String(params.content ?? "");
     const r = await deps.client.archivalInsert(content);
     deps.emit({
       kind: "archival_insert",
       namespace: deps.namespace,
       meta: { passages: r.passages },
+      content: { text: content },
     });
     return { content: [] };
   };

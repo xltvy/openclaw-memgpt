@@ -78,3 +78,53 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
 declare module "openclaw/plugin-sdk/core" {
   export * from "openclaw/plugin-sdk";
 }
+
+// ---------------------------------------------------------------------------
+// SDK subpaths consumed by the 6d.6 install wizard. These are real exported
+// subpaths of the installed `openclaw` package (verified against
+// node_modules/openclaw/package.json `exports`), but `openclaw` is not a
+// dependency of this plugin — it is resolved at runtime by the OpenClaw host
+// process. They are therefore only ever reached via `await import(...)` inside
+// wizard code paths (never during `node --test`, where the host is absent).
+// The signatures below are minimal hand-written ambients matching the bundle.
+// ---------------------------------------------------------------------------
+
+declare module "openclaw/plugin-sdk/config-runtime" {
+  /** Read config snapshot, apply mutator to a clone, write back with hash-based
+   *  conflict detection. Resolves the config path from env internally. */
+  export function updateConfig(
+    mutator: (cfg: Record<string, any>) => Record<string, any>,
+  ): Promise<Record<string, any>>;
+  /** Load the current resolved config object. */
+  export function loadConfig(): Promise<Record<string, any>> | Record<string, any>;
+}
+
+declare module "openclaw/plugin-sdk/secret-file-runtime" {
+  /** Atomic, mode-0600, symlink-rejecting private secret file writer. */
+  export function writePrivateSecretFileAtomic(params: {
+    rootDir: string;
+    filePath: string;
+    content: string;
+  }): Promise<void>;
+  /** Read a secret file's contents (throws on failure). */
+  export function readSecretFileSync(
+    filePath: string,
+    label: string,
+    options?: Record<string, unknown>,
+  ): string;
+  /** Read a secret file's contents, returning undefined on any failure. */
+  export function tryReadSecretFileSync(
+    filePath: string,
+    label: string,
+    options?: Record<string, unknown>,
+  ): string | undefined;
+  export const PRIVATE_SECRET_FILE_MODE: number;
+  export const PRIVATE_SECRET_DIR_MODE: number;
+}
+
+declare module "openclaw/plugin-sdk/state-paths" {
+  /** Resolve the OpenClaw state dir (config-file parent). Honours
+   *  OPENCLAW_STATE_DIR / OPENCLAW_CONFIG_PATH; defaults to ~/.openclaw. */
+  export function resolveStateDir(env?: NodeJS.ProcessEnv): string;
+  export const STATE_DIR: string;
+}

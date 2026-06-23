@@ -42,6 +42,11 @@ class AgentRegistry:
     def agent_ids(self) -> list[str]:
         return list(self._agents.keys())
 
+    def items(self) -> list[tuple[str, Any]]:
+        """Snapshot of (agent_id, agent) pairs — used by the shutdown save-all
+        sweep so iteration is over a stable list, not the live dict."""
+        return list(self._agents.items())
+
 
 # Sidecar-wide singleton.
 registry: AgentRegistry = AgentRegistry()

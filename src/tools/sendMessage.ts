@@ -75,6 +75,7 @@ export const sendMessage =
       kind: "send_message",
       namespace: deps.namespace,
       meta: { length: message.length },
+      content: { text: message },
     });
     return { content: [{ type: "text", text: message }] };
   };

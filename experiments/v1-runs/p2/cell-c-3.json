@@ -1,0 +1,60 @@
+{
+  "cell": "C",
+  "probe_id": "p2",
+  "trial_id": 3,
+  "expected_tier": "archival",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p2/cell-c-3.jsonl"
+  ],
+  "step_count": 1,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I need to think about how to store this information appropriately in my memory system.",
+      "pre_tool_text": "I need to think about how to store this information appropriately in my memory system.",
+      "char_count": 86,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it! I've stored the project code PINEAPPLE_8101 in my core memory for easy reference. \ud83e\udde0"
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

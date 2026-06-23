@@ -1,0 +1,86 @@
+{
+  "cell": "A",
+  "probe_id": "p4",
+  "trial_id": 0,
+  "expected_tier": "recall",
+  "pickle_path": "/Users/altayacar/.memgpt/agents/v1_cell_a_p4_t00/persistence_manager/2026-06-10_02_49_23_AM_.persistence.pickle",
+  "step_count": 2,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name",
+            "request_heartbeat"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "Interesting, the user is sharing a project code. This seems important for their research work. I should acknowledge and store this information.",
+      "pre_tool_text": "Interesting, the user is sharing a project code. This seems important for their research work. I should acknowledge and store this information.",
+      "char_count": 143,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "The user is testing my memory recall. I can see the project code in my core memory clearly.",
+      "pre_tool_text": "The user is testing my memory recall. I can see the project code in my core memory clearly.",
+      "char_count": 91,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 1,
+      "text": "The project code you mentioned is BLUEBIRD_5402. I have it stored in my core memory for easy reference."
+    }
+  ],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "cell": "C",
+  "probe_id": "p5",
+  "trial_id": 1,
+  "expected_tier": "recall",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-1-s1.jsonl",
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p5/cell-c-1-s2.jsonl"
+  ],
+  "step_count": 3,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 2,
+      "tools": {},
+      "arg_keys": {}
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I'll update my core memory with this project information.",
+      "pre_tool_text": "I'll update my core memory with this project information.",
+      "char_count": 57,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "",
+      "pre_tool_text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 2,
+      "text": "Looking at your core memory, I can see the project code is **CARDINAL_3987** with milestone Q4.",
+      "pre_tool_text": "Looking at your core memory, I can see the project code is **CARDINAL_3987** with milestone Q4.",
+      "char_count": 95,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it! I've saved the project code CARDINAL_3987 for your Q4 milestone to my core memory. I'll remember this for our future conversations."
+    },
+    {
+      "step_idx": 1,
+      "text": "Wings spread wide across the sky,\nFeathers catching light on high,\nSongs that echo through the trees,\nDancing freely on the breeze.\n\nSilent gliders, morning callers,\nTiny sprites and graceful trawlers,\nEvery bird a fleeting art\u2014\nNature's freedom, taking heart."
+    }
+  ],
+  "leakage_flags": [
+    {
+      "step_idx": 2,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 2,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

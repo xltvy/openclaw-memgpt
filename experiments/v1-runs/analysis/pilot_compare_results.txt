@@ -1,0 +1,52 @@
+
+===== p4 (corrected trials [0, 1, 2, 3, 4]) =====
+ t0: tier  A=core     C_stale=archival C_corr=archival  | match_A=False changed=False  monoJacc(A,Ccorr)=0.08
+       tools A={'core_memory_append': 1, 'send_message': 1}
+             C_stale={'conversation_search': 2, 'archival_memory_insert': 1, 'send_message': 2, 'archival_memory_search': 1}
+             C_corr ={'conversation_search': 1, 'archival_memory_insert': 1, 'send_message': 2}
+ t1: tier  A=core     C_stale=recall   C_corr=none      | match_A=False changed=True  monoJacc(A,Ccorr)=0.12
+       tools A={'core_memory_append': 1, 'send_message': 1}
+             C_stale={'conversation_search': 3, 'send_message': 2, 'core_memory_append': 1}
+             C_corr ={}
+ t2: tier  A=core     C_stale=recall   C_corr=none      | match_A=False changed=True  monoJacc(A,Ccorr)=0.07
+       tools A={'core_memory_append': 1, 'send_message': 2}
+             C_stale={'conversation_search': 2, 'core_memory_append': 1, 'send_message': 2}
+             C_corr ={'send_message': 1}
+ t3: tier  A=core     C_stale=recall   C_corr=none      | match_A=False changed=True  monoJacc(A,Ccorr)=0.06
+       tools A={'core_memory_append': 1, 'send_message': 1}
+             C_stale={'conversation_search': 1, 'send_message': 2}
+             C_corr ={}
+ t4: tier  A=none     C_stale=recall   C_corr=recall    | match_A=False changed=False  monoJacc(A,Ccorr)=0.13
+       tools A={'send_message': 2}
+             C_stale={'conversation_search': 3, 'core_memory_append': 1, 'archival_memory_insert': 1, 'send_message': 2}
+             C_corr ={'conversation_search': 1, 'exec': 1}
+
+===== p5 (corrected trials [0, 1, 2, 3, 4, 5]) =====
+ t0: tier  A=core     C_stale=core     C_corr=core      | match_A=True changed=False  monoJacc(A,Ccorr)=0.16
+       tools A={'core_memory_append': 1, 'send_message': 3}
+             C_stale={'core_memory_append': 1, 'send_message': 3}
+             C_corr ={'core_memory_append': 1, 'send_message': 1}
+ t1: tier  A=core     C_stale=archival C_corr=core      | match_A=True changed=True  monoJacc(A,Ccorr)=0.24
+       tools A={'core_memory_append': 1, 'send_message': 3}
+             C_stale={'archival_memory_insert': 1, 'send_message': 3, 'conversation_search': 1}
+             C_corr ={'core_memory_append': 1, 'send_message': 1}
+ t2: tier  A=core     C_stale=core     C_corr=core      | match_A=True changed=False  monoJacc(A,Ccorr)=0.25
+       tools A={'core_memory_append': 1, 'send_message': 2}
+             C_stale={'core_memory_append': 1, 'send_message': 3, 'conversation_search': 1}
+             C_corr ={'core_memory_append': 1, 'send_message': 1}
+ t3: tier  A=core     C_stale=archival C_corr=core      | match_A=True changed=True  monoJacc(A,Ccorr)=0.20
+       tools A={'core_memory_append': 1, 'send_message': 3}
+             C_stale={'archival_memory_insert': 1, 'send_message': 3, 'conversation_search': 1}
+             C_corr ={'core_memory_append': 1, 'send_message': 2}
+ t4: tier  A=core     C_stale=archival C_corr=core      | match_A=True changed=True  monoJacc(A,Ccorr)=0.23
+       tools A={'core_memory_append': 1, 'send_message': 3}
+             C_stale={'archival_memory_insert': 1, 'send_message': 3, 'conversation_search': 1}
+             C_corr ={'core_memory_append': 1, 'send_message': 2, 'conversation_search': 1}
+ t5: tier  A=core     C_stale=core     C_corr=core      | match_A=True changed=False  monoJacc(A,Ccorr)=0.12
+       tools A={'core_memory_append': 1, 'send_message': 3}
+             C_stale={'core_memory_append': 1, 'send_message': 3, 'conversation_search': 1}
+             C_corr ={'core_memory_append': 1, 'send_message': 3}
+
+===== SUMMARY =====
+p4: n=5  C_corr tier matches A: 0/5  |  tier changed by correction: 3/5  |  monologue Jaccard>=0.5 (A vs C_corr): 0/5
+p5: n=6  C_corr tier matches A: 6/6  |  tier changed by correction: 3/6  |  monologue Jaccard>=0.5 (A vs C_corr): 0/6

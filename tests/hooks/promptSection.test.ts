@@ -6,7 +6,8 @@
  *   - ensure called first, then getSystemPromptSection
  *   - return = {prependSystemContext: static, prependContext: dynamic}
  *   - one agent_ensured event per turn, carrying via
- *   - error asymmetry: ensure swallows + emits emit_failed; getSystemPromptSection propagates
+ *   - ensure failure propagates (residency call) + emits emit_failed before throwing;
+ *     getSystemPromptSection failure propagates too. Only the via *emit* is best-effort.
  *   - persona/human edits move dynamic, leave static unchanged (the load-bearing test)
  *
  * Live-sidecar round-trip lives in promptSectionIntegration.test.ts so this
@@ -254,30 +255,35 @@ test("persona/human edits surface in prependContext; prependSystemContext unchan
 
 // ── 6. error asymmetry per §4.2 ────────────────────────────────────────────
 
-test("ensure failure → swallowed; logger.warn + emit_failed event; turn continues", async () => {
-  // §4.2: telemetry can be lossy. ensure's job is to surface via for the
-  // detection-rate metric — a transient sidecar restart is exactly the
-  // condition this surfaces, so failing the turn over it would defeat the
-  // purpose. Behaviour: log warn, emit emit_failed, continue to step 2.
+test("ensure failure → propagates; logger.error + emit_failed event; turn fails", async () => {
+  // ensure is the residency call: a failed ensure means the agent is NOT
+  // resident, so swallowing it would only defer the failure to a misleading
+  // "not resident" 404 in step 2 / the tools (the masking that hid the
+  // multi-sidecar bug). Behaviour: log error, emit emit_failed, re-throw the
+  // original. Step 2 must never run.
+  const ensureErr = new Error("sidecar 503");
+  let step2Called = false;
   const deps = makeDeps({
     ensure: async () => {
-      throw new Error("sidecar 503");
+      throw ensureErr;
     },
-    getSystemPromptSection: async () => ({
-      section: "S+D",
-      static: "S",
-      dynamic: "D",
-    }),
+    getSystemPromptSection: async () => {
+      step2Called = true;
+      return { section: "S+D", static: "S", dynamic: "D" };
+    },
   });
   const { handler } = captureHookHandler(deps);
-  const r = (await handler({}, {})) as { prependSystemContext: string };
-  // Hook completed normally — turn did not fail.
-  assert.equal(r.prependSystemContext, "S");
-  // Warn logged with the error.
-  assert.equal(deps.logger.warned.length, 1);
-  assert.match(deps.logger.warned[0], /agent_ensured emit failed/);
-  assert.match(deps.logger.warned[0], /sidecar 503/);
-  // Telemetry event emitted with the operation + reason.
+  await assert.rejects(
+    () => handler({}, {}),
+    (err) => err === ensureErr,
+  );
+  // Step 2 short-circuited — an un-resident agent isn't asked for its prompt.
+  assert.equal(step2Called, false);
+  // Error logged with the real cause (not a misleading "emit failed").
+  assert.equal(deps.logger.errored.length, 1);
+  assert.match(deps.logger.errored[0], /agent ensure failed/);
+  assert.match(deps.logger.errored[0], /sidecar 503/);
+  // Telemetry event still emitted with the operation + reason before the throw.
   assert.equal(deps.emitted.length, 1);
   assert.equal(deps.emitted[0].kind, "emit_failed");
   assert.equal(deps.emitted[0].meta?.operation, "ensure");
@@ -305,21 +311,28 @@ test("getSystemPromptSection failure → propagates; logger.error called first",
   assert.match(deps.logger.errored[0], /getSystemPromptSection 500/);
 });
 
-test("ensure failure + getSystemPromptSection success → still returns valid contribution", async () => {
-  // The asymmetry composes correctly: ensure swallows, step 2 runs normally,
-  // the hook returns the prompt contribution. Without this, a transient
-  // ensure failure would corrupt the prompt path even though §4.2 explicitly
-  // splits them.
-  const deps = makeDeps({
-    ensure: async () => {
-      throw new Error("transient");
+test("via emit is best-effort — a throwing emit does not fail an otherwise-good turn", async () => {
+  // The residency call is load-bearing, but *recording* its `via` telemetry is
+  // not. If the emitter throws on the success-path agent_ensured event, the
+  // turn must still return the prompt contribution (ensure already succeeded).
+  const logger = makeLogger();
+  let emitCalls = 0;
+  const deps: ToolDeps & { logger: ReturnType<typeof makeLogger> } = {
+    client: {
+      ensure: async () => ({ agentId: "test-ns", via: "resident" as const }),
+      getSystemPromptSection: async () => ({
+        section: "S+D",
+        static: "STATIC",
+        dynamic: "DYNAMIC",
+      }),
+    } as unknown as SidecarClient,
+    namespace: "test-ns",
+    emit: () => {
+      emitCalls++;
+      throw new Error("emitter down");
     },
-    getSystemPromptSection: async () => ({
-      section: "S+D",
-      static: "STATIC",
-      dynamic: "DYNAMIC",
-    }),
-  });
+    logger,
+  };
   const { handler } = captureHookHandler(deps);
   const r = (await handler({}, {})) as {
     prependSystemContext: string;
@@ -329,4 +342,5 @@ test("ensure failure + getSystemPromptSection success → still returns valid co
     prependSystemContext: "STATIC",
     prependContext: "DYNAMIC",
   });
+  assert.equal(emitCalls, 1, "the success-path via emit was attempted");
 });

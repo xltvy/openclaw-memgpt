@@ -1,0 +1,91 @@
+{
+  "cell": "A",
+  "probe_id": "p4",
+  "trial_id": 2,
+  "expected_tier": "recall",
+  "pickle_path": "/Users/altayacar/.memgpt/agents/v1_cell_a_p4_t02/persistence_manager/2026-06-10_02_49_46_AM_.persistence.pickle",
+  "step_count": 2,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name",
+            "request_heartbeat"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "Interesting, a project code. I should note this important detail about the researcher's work.I've noted the project code. Time to acknowledge and engage with the researcher.",
+      "pre_tool_text": "Interesting, a project code. I should note this important detail about the researcher's work.",
+      "char_count": 173,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "Easy recall - it's right there in my core memory!",
+      "pre_tool_text": "Easy recall - it's right there in my core memory!",
+      "char_count": 49,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it! I've recorded BLUEBIRD_5402 as your project code. Since you're researching AI memory architectures, I'm guessing this relates to your work. Is there anything specific about memory systems you'd like to explore or discuss today?"
+    },
+    {
+      "step_idx": 1,
+      "text": "The project code you mentioned is BLUEBIRD_5402."
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

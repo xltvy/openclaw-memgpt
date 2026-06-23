@@ -4,18 +4,20 @@
  * Returns the sidecar's `formatted` verbatim (the §2.5 LLM-facing string,
  * "Showing N of M results (page p/0): [...]" or "No results found."). The
  * §2.5 page-local `total` semantic is faithful — emitted under `meta.total`
- * so the detection-rate metric can interpret it correctly per §2.6's
+ * so observability consumers can interpret it correctly per §2.6's
  * archival/recall asymmetry note.
  *
  * No CoreMemoryError branch — archival search doesn't produce 409s; transport
  * failures bubble.
  */
 
-import type { ToolDeps, ToolHandler } from "./deps.ts";
+import { toolGuard, type ToolDeps, type ToolHandler } from "./deps.ts";
 
 export const archivalSearch =
   (deps: ToolDeps): ToolHandler =>
   async (_toolCallId, params) => {
+    const blocked = toolGuard(deps);
+    if (blocked) return blocked;
     const query = String(params.query ?? "");
     const page = typeof params.page === "number" ? params.page : 0;
     const r = await deps.client.archivalSearch(query, page);
@@ -23,6 +25,7 @@ export const archivalSearch =
       kind: "archival_search",
       namespace: deps.namespace,
       meta: { total: r.total, page, numPages: r.numPages },
+      content: { query, results: r.results },
     });
     return { content: [{ type: "text", text: r.formatted }] };
   };

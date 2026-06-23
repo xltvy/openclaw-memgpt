@@ -1,0 +1,60 @@
+{
+  "cell": "C",
+  "probe_id": "p6",
+  "trial_id": 3,
+  "expected_tier": "ambiguous(core|archival)",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p6/cell-c-3.jsonl"
+  ],
+  "step_count": 1,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I'll update my core memory to note your typical work schedule.",
+      "pre_tool_text": "I'll update my core memory to note your typical work schedule.",
+      "char_count": 62,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it \u2014 I've noted that you usually work in the evening. That helps me understand your schedule better."
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

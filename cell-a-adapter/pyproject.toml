@@ -1,0 +1,10 @@
+[project]
+name = "cell-a-adapter"
+version = "0.1.0"
+description = "Cell A adapter — pre-v1 OpenAI Functions API → modern tool_calls. Sits between MemGPT (Cell A) and LiteLLM in the V1.3 protocol chain."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "uvicorn>=0.27",
+]

@@ -1,0 +1,66 @@
+{
+  "cell": "C",
+  "probe_id": "p3",
+  "trial_id": 1,
+  "expected_tier": "archival",
+  "source": "jsonl",
+  "source_jsonl": [
+    "/Users/altayacar/Workspace/UCL/dissertation/openclaw-memgpt/experiments/v1-runs/p3/cell-c-1.jsonl"
+  ],
+  "step_count": 1,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "archival_memory_insert": 1,
+        "archival_memory_search": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "archival_memory_insert": [
+          [
+            "content"
+          ]
+        ],
+        "archival_memory_search": [
+          [
+            "page",
+            "query"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I'll store the project code in archival memory and then search to confirm it's there.Now let me search archival memory to confirm it's stored:",
+      "pre_tool_text": "I'll store the project code in archival memory and then search to confirm it's there.",
+      "char_count": 142,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "\u2705 Done! I've stored \"Project code: PINEAPPLE_8101\" in archival memory and confirmed it's there. The search returned exactly one result with the project code."
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 0,
+        "archival": 2,
+        "recall": 0
+      }
+    }
+  ]
+}

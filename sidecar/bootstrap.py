@@ -74,24 +74,73 @@ def ensure_memgpt_config() -> None:
 
 # ── 3. Eager embedder load ─────────────────────────────────────────────────
 
-def load_embedder():
-    """Load bge-small-en-v1.5 at startup; raises loudly on any failure.
+def _write_warm_marker() -> None:
+    """Record that the embedder model is cached (content = model name, so a
+    future model change auto-invalidates it — see settings._embedder_cached).
+    Next process reads this in settings._apply_offline_env to force HF offline."""
+    from settings import embedder_marker_path
 
-    A warm-up embedding is issued so weight loading completes here, not
-    during the first archival:insert.  Returns the loaded embedding model.
-    """
+    try:
+        os.makedirs(settings.data_dir, exist_ok=True)
+        with open(embedder_marker_path(settings.data_dir), "w", encoding="utf-8") as f:
+            f.write(EMBEDDING_MODEL)
+    except OSError as exc:
+        logger.warning("Could not write embedder warm-marker: %s", exc)
+
+
+def _clear_warm_marker() -> None:
+    from settings import embedder_marker_path
+
+    try:
+        os.remove(embedder_marker_path(settings.data_dir))
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("Could not clear embedder warm-marker: %s", exc)
+
+
+def load_embedder():
+    """Load the embedder at startup; raises loudly on any failure. Returns the
+    loaded embedding model. Writes the warm-marker on success.
+
+    OFFLINE-FIRST (cold-start mitigation). settings._apply_offline_env has
+    already forced HF offline (process-wide) iff the model was cached — so this
+    load, and every per-agent load inside `:load`, reads the local cache (~0.6s)
+    instead of an HF Hub round-trip (~11–56s, which overruns OpenClaw's 15s
+    before_prompt_build hook). The env is the lever because per-agent loads go
+    through the fork's `embedding_model()`, which we can't parametrize.
+
+    A fresh install runs ONLINE (no marker) and downloads once; we then write
+    the marker so the next process is offline-fast. If we were running OFFLINE
+    (marker present) and the load fails — the cache was evicted under us — we
+    clear the marker (so the next start re-downloads online) and raise an
+    actionable error, because the env is import-locked and we can't switch to
+    online in this process."""
     from memgpt.embeddings import embedding_model
 
-    logger.info("Loading embedding model %s/%s …", EMBEDDING_PROVIDER, EMBEDDING_MODEL)
+    offline = os.environ.get("HF_HUB_OFFLINE") == "1"
+    logger.info(
+        "Loading embedding model %s/%s (%s) …",
+        EMBEDDING_PROVIDER, EMBEDDING_MODEL, "offline cache" if offline else "online",
+    )
     try:
         embedder = embedding_model()
         _ = embedder.get_text_embedding("startup probe")
     except Exception as exc:
+        if offline:
+            _clear_warm_marker()
+            raise RuntimeError(
+                "Embedder model cache appears unavailable. "
+                "Run `openclaw memgpt prewarm` or restart to re-download."
+            ) from exc
         raise RuntimeError(
             f"Embedder load failed — cannot start sidecar. "
-            f"provider={EMBEDDING_PROVIDER} model={EMBEDDING_MODEL}. "
-            f"Cause: {exc}"
+            f"provider={EMBEDDING_PROVIDER} model={EMBEDDING_MODEL}. Cause: {exc}"
         ) from exc
 
-    logger.info("Embedder ready (dim=%d)", EMBEDDING_DIM)
+    _write_warm_marker()
+    logger.info(
+        "Embedder ready (dim=%d, %s)",
+        EMBEDDING_DIM, "offline cache hit" if offline else "downloaded + cached",
+    )
     return embedder
