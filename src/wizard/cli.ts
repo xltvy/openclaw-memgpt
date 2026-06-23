@@ -71,7 +71,10 @@ export function registerWizardCli(api: OpenClawPluginApi): void {
           "Remove openclaw-memgpt: its credentials, memory data, config, and registration",
         )
         .option("--force", "Skip the confirmation prompt", false)
-        .option("--keep-data", "Keep the MemGPT memory data dir", false)
+        .option(
+          "--keep-data",
+          "Keep the MemGPT memory data dir (interactive uninstall also offers this)",
+        )
         .option("--dry-run", "Show what would be removed without changing anything", false)
         .action(async (opts: { force?: boolean; keepData?: boolean; dryRun?: boolean }) => {
           try {

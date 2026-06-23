@@ -188,11 +188,128 @@ test("runUninstall --dry-run: changes nothing", async () => {
   assert.ok(get().plugins.entries[PLUGIN_ID], "entry still present after dry-run");
 });
 
-test("runUninstall: declining the confirm removes nothing", async () => {
+test("runUninstall interactive (no flag): cancel choice removes nothing", async () => {
+  const { fs, removed } = fakeFs();
+  const { io, get } = fakeConfigIO(fullConfig());
+  const decliner: Prompter = {
+    ...forcePrompter,
+    async select() {
+      return "cancel" as never;
+    },
+  };
+  const res = await runUninstall({
+    prompter: decliner,
+    configIO: io,
+    fs,
+    stateDir: "/state",
+    isInteractive: true,
+  });
+  assert.equal(res.status, "cancelled");
+  assert.equal(removed.length, 0);
+  assert.ok(get().plugins.entries[PLUGIN_ID]);
+});
+
+test("runUninstall interactive (no flag): cancel sentinel removes nothing", async () => {
+  const { fs, removed } = fakeFs();
+  const { io, get } = fakeConfigIO(fullConfig());
+  const canceller: Prompter = {
+    ...forcePrompter,
+    async select() {
+      return CANCEL;
+    },
+  };
+  const res = await runUninstall({
+    prompter: canceller,
+    configIO: io,
+    fs,
+    stateDir: "/state",
+    isInteractive: true,
+  });
+  assert.equal(res.status, "cancelled");
+  assert.equal(removed.length, 0);
+  assert.ok(get().plugins.entries[PLUGIN_ID]);
+});
+
+test("runUninstall interactive (no flag): 'keep' choice preserves the data dir", async () => {
+  const { fs, removed } = fakeFs();
+  const { io, get } = fakeConfigIO(fullConfig());
+  const keeper: Prompter = {
+    ...forcePrompter,
+    async select() {
+      return "keep" as never;
+    },
+  };
+  const res = await runUninstall({
+    prompter: keeper,
+    configIO: io,
+    fs,
+    stateDir: "/state",
+    isInteractive: true,
+  });
+  assert.equal(res.status, "removed");
+  assert.equal(removed.length, 3, "data dir kept; others removed");
+  assert.ok(!removed.some((p) => p.endsWith("/memgpt-data")), "data dir preserved");
+  assert.ok(removed.some((p) => p.endsWith("/memgpt-sidecar-venv")), "venv still removed");
+  assert.equal(get().plugins.entries[PLUGIN_ID], undefined, "still de-registered");
+});
+
+test("runUninstall interactive (no flag): 'remove' choice removes everything", async () => {
+  const { fs, removed } = fakeFs();
+  const { io, get } = fakeConfigIO(fullConfig());
+  const remover: Prompter = {
+    ...forcePrompter,
+    async select() {
+      return "remove" as never;
+    },
+  };
+  const res = await runUninstall({
+    prompter: remover,
+    configIO: io,
+    fs,
+    stateDir: "/state",
+    isInteractive: true,
+  });
+  assert.equal(res.status, "removed");
+  assert.equal(removed.length, 4, "data dir + others all removed");
+  assert.ok(removed.some((p) => p.endsWith("/memgpt-data")));
+  assert.equal(get().plugins.entries[PLUGIN_ID], undefined);
+});
+
+test("runUninstall interactive (--keep-data flag): confirm path still used", async () => {
+  const { fs, removed } = fakeFs();
+  const { io } = fakeConfigIO(fullConfig());
+  // Flag given → no select offered; a plain confirm gates the destructive op.
+  let selectCalled = false;
+  const confirmer: Prompter = {
+    ...forcePrompter,
+    async select() {
+      selectCalled = true;
+      return "remove" as never;
+    },
+    async confirm() {
+      return true;
+    },
+  };
+  const res = await runUninstall({
+    keepData: true,
+    prompter: confirmer,
+    configIO: io,
+    fs,
+    stateDir: "/state",
+    isInteractive: true,
+  });
+  assert.equal(res.status, "removed");
+  assert.equal(selectCalled, false, "flag given → no keep-vs-remove select");
+  assert.equal(removed.length, 3, "data dir kept per --keep-data");
+  assert.ok(!removed.some((p) => p.endsWith("/memgpt-data")));
+});
+
+test("runUninstall interactive (--keep-data flag): declining the confirm removes nothing", async () => {
   const { fs, removed } = fakeFs();
   const { io, get } = fakeConfigIO(fullConfig());
   const decliner: Prompter = { ...forcePrompter, async confirm() { return false; } };
   const res = await runUninstall({
+    keepData: true,
     prompter: decliner,
     configIO: io,
     fs,

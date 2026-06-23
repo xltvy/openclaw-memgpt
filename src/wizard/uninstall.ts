@@ -120,7 +120,9 @@ export interface UninstallResult {
 /**
  * Run the uninstall. Removes artifacts, then de-registers from config (SDK
  * update → direct-write fallback). `--dry-run` reports without changing
- * anything; `--keep-data` preserves the MemGPT data dir.
+ * anything; `--keep-data` preserves the MemGPT data dir. When `--keep-data`
+ * is not given, an interactive run offers a keep-vs-remove choice in the
+ * confirmation prompt (memory data is irreversible to recover once removed).
  */
 export async function runUninstall(
   deps: UninstallDeps = {},
@@ -134,14 +136,22 @@ export async function runUninstall(
   const interactive =
     deps.isInteractive ?? Boolean(process.stdout?.isTTY && process.stdin?.isTTY);
 
-  const artifacts = artifactPaths(stateDir, { keepData: deps.keepData });
+  // The --keep-data flag is authoritative when given; when it's absent
+  // (undefined) the interactive prompt offers the choice (below). --force /
+  // non-interactive fall back to the destructive default (remove everything).
+  let keepData = deps.keepData ?? false;
 
   if (deps.dryRun) {
+    const artifacts = artifactPaths(stateDir, { keepData });
     prompter.note(
       [
         "Would remove these artifacts:",
         ...artifacts.map((a) => `  - ${a}`),
-        deps.keepData ? "  (memgpt-data kept: --keep-data)" : "",
+        keepData
+          ? "  (memgpt-data kept: --keep-data)"
+          : deps.keepData === undefined
+            ? "  (an interactive uninstall will offer to keep memgpt-data)"
+            : "",
         `And de-register the plugin from ${configPath}.`,
       ]
         .filter(Boolean)
@@ -158,17 +168,50 @@ export async function runUninstall(
         "openclaw-memgpt: uninstall needs confirmation — re-run with --force in a non-interactive shell.",
       );
     }
-    const ok = await prompter.confirm({
-      message: deps.keepData
-        ? "Remove openclaw-memgpt's credentials + config and unregister it (keeping memory data)?"
-        : "Remove openclaw-memgpt's credentials, memory data, and config, and unregister it?",
-      initialValue: false,
-    });
-    if (prompter.isCancel(ok) || ok === false) {
-      prompter.cancel("Uninstall cancelled — nothing was removed.");
-      return { status: "cancelled", artifactsRemoved: [] };
+    if (deps.keepData === undefined) {
+      // No flag → fold the keep-vs-remove decision into the destructive prompt
+      // as a 3-way choice. Removed memory data isn't recoverable, so keeping it
+      // is offered up-front rather than hidden behind a flag the user must know.
+      const dataDir = path.join(stateDir, "memgpt-data");
+      const choice = await prompter.select<"remove" | "keep" | "cancel">({
+        message:
+          "Uninstall openclaw-memgpt — what should happen to your memory data?",
+        options: [
+          {
+            value: "remove",
+            label: "Remove everything",
+            hint: "credentials, memory data, and config",
+          },
+          {
+            value: "keep",
+            label: "Keep my memory data",
+            hint: `preserve ${dataDir}; remove credentials + config`,
+          },
+          { value: "cancel", label: "Cancel — remove nothing" },
+        ],
+        initialValue: "remove",
+      });
+      if (prompter.isCancel(choice) || choice === "cancel") {
+        prompter.cancel("Uninstall cancelled — nothing was removed.");
+        return { status: "cancelled", artifactsRemoved: [] };
+      }
+      keepData = choice === "keep";
+    } else {
+      // Flag explicitly given → a plain destructive confirm reflecting it.
+      const ok = await prompter.confirm({
+        message: keepData
+          ? "Remove openclaw-memgpt's credentials + config and unregister it (keeping memory data)?"
+          : "Remove openclaw-memgpt's credentials, memory data, and config, and unregister it?",
+        initialValue: false,
+      });
+      if (prompter.isCancel(ok) || ok === false) {
+        prompter.cancel("Uninstall cancelled — nothing was removed.");
+        return { status: "cancelled", artifactsRemoved: [] };
+      }
     }
   }
+
+  const artifacts = artifactPaths(stateDir, { keepData });
 
   // 1. Remove on-disk artifacts (idempotent; missing paths are fine).
   const removed: string[] = [];
