@@ -392,20 +392,28 @@ echo "$VIA" | grep -q '"via":"create"' && echo "PASS: re-created (no 500)" || { 
 
 **Step 4 — kill the sidecar:** `pkill -f "uvicorn main:app"`
 
-### 7b — Cache eviction → clear error + recovery (DESTRUCTIVE — ~60s re-download)
-Precondition: the warm-**marker** must be present (→ sidecar goes offline) **and**
-the model cache absent (→ offline load fails). The reset guarantees both.
-**Reset:**
-```bash
-pkill -f "uvicorn main:app" 2>/dev/null; sleep 1
-echo "BAAI/bge-small-en-v1.5" > ~/.openclaw-dev/memgpt-data/.embedder-warm   # ensure marker present (forces offline)
-rm -rf ~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5             # cache gone → offline load fails
-```
+### 7b — Cache eviction → clear error + recovery
+> **The error half is automated-only.** Triggering a real cache miss on demand is
+> unreliable on macOS: `bge-small` reloads from a persistent HF/sentence-transformers
+> cache that neither `rm -rf …/hub/models--BAAI…` nor `HF_HOME=<empty>` evicts
+> deterministically. The offline-fail → "cache appears unavailable" + marker-clear
+> path is covered by the automated test
+> `sidecar/tests/test_embedder_offline.py::test_load_embedder_offline_failure_clears_marker_and_raises`
+> (mocks the load failure). Verify that once:
+> ```bash
+> cd "$REPO" && UV_PROJECT_ENVIRONMENT=~/.openclaw-dev/memgpt-sidecar-venv \
+>   uv run --project sidecar pytest sidecar/tests/test_embedder_offline.py -q 2>&1 | tail -2
+> ```
+> **PASS:** `7 passed`.
+
+**Manual half — the recovery path (reliable):** `prewarm` re-establishes the
+warm cache + marker, so a subsequent turn is offline-fast.
 **Run + Check:**
 ```bash
-source ~/.secrets && openclaw --dev agent --local --agent main --message "hi" --json > /tmp/t7b.log 2>&1
-grep -qi "prewarm\|cache appears unavailable" /tmp/t7b.log && echo "PASS: actionable error" || echo "FAIL"
-openclaw --dev memgpt prewarm > /tmp/t7b_pw.log 2>&1 && echo "PASS: prewarm recovered" || echo "FAIL"
+rm -f ~/.openclaw-dev/memgpt-data/.embedder-warm
+openclaw --dev memgpt prewarm > /tmp/t7b.log 2>&1; echo "exit=$?"
+[ "$(cat ~/.openclaw-dev/memgpt-data/.embedder-warm 2>/dev/null)" = "BAAI/bge-small-en-v1.5" ] \
+  && grep -qi "cached" /tmp/t7b.log && echo "PASS: prewarm recovered (marker + cache)" || echo "FAIL"
 ```
 
 ### 7c — Sidecar-dead degradation (fail-fast, not 120s hang)
