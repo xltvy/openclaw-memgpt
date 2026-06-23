@@ -1,8 +1,27 @@
 {
   "name": "openclaw-memgpt",
-  "version": "0.1.0",
+  "version": "1.0.0-rc1",
   "type": "module",
   "description": "MemGPT memory backend for OpenClaw — three-tier memory architecture via pymemgpt sidecar",
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "memory",
+    "memgpt",
+    "ai-memory",
+    "long-term-memory",
+    "agent-memory",
+    "llm"
+  ],
+  "homepage": "https://github.com/xltvy/openclaw-memgpt#readme",
+  "bugs": {
+    "url": "https://github.com/xltvy/openclaw-memgpt/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xltvy/openclaw-memgpt.git"
+  },
+  "author": "Altay Acar",
   "license": "Apache-2.0",
   "main": "./dist/index.js",
   "engines": {
