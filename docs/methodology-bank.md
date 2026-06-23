@@ -745,6 +745,22 @@ shape of the resolution. Listed in roughly the order they surfaced.
     to openclaw-memgpt-sidecar-server at the time of 6d.4 (the plugin dep switch). The local sidecar
     server is not published; the rename is local-identity-only. Future renames of either component are decoupled.
 
+28. **The 6d build-pipeline change silently flipped the dev loading model from `src/` to compiled `dist/`.**
+    Pre-6d, the plugin shipped TS source only and OpenClaw's jiti runner loaded `src/index.ts` directly,
+    so a `--link` dev install ran live source — CLAUDE.md's "edits to `src/` are live without
+    reinstalling" held. The 6d packaging commit added `package.json` `openclaw.runtimeExtensions:
+    ["./dist/index.js"]` alongside the existing `openclaw.extensions: ["./src/index.ts"]`. Empirically
+    (OpenClaw 2026.6.8), when both are present **the runtime loads the compiled `dist/index.js`, even for
+    a `--link` install** — confirmed by `memgpt uninstall --help` rendering a *stale* `--keep-data`
+    description (from a `dist/` built before the source edit) until `npm run build` was re-run, after which
+    help matched source. **Consequence:** dev iteration now requires `npm run build` after every `src/`
+    edit; the old "live edits" instruction is wrong post-6d. **Shipping is unaffected:** `dist/` is
+    gitignored and `prepack` rebuilds it from current `src/` at publish, so the published package always
+    reflects HEAD source. The trap is dev-local only — running stale compiled code while believing source
+    edits are live — and it surfaces silently (no error; just old behaviour). Caught by verifying `--help`
+    output against the source rather than assuming the symlink made edits live. CLAUDE.md's RUNNING THE
+    VERTICAL SLICE section needs the correction (queued for 6d.8).
+
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy
 path) even when behaviour looks obviously wrong — "obvious bug" and "reference's
