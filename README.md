@@ -142,7 +142,7 @@ memoryEvents.on(MEMORY_EVENT_CHANNEL, (e) => {
 
 ## Contributing
 
-This is a release candidate (`1.0.0-rc1`). Bug reports and feedback are very welcome before the `1.0.0` stable release — please open an issue on [GitHub](https://github.com/xltvy/openclaw-memgpt/issues).
+This is the first public release of `openclaw-memgpt`. Bug reports and feedback are very welcome — future versions will incorporate user reports and iterate on the plugin's design. Please open an issue on [GitHub](https://github.com/xltvy/openclaw-memgpt/issues).
 
 ## Acknowledgements
 
