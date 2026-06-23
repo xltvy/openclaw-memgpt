@@ -484,6 +484,12 @@ inspect() {
 }
 reinstall() { cd "$REPO" && rm -rf sidecar/.venv && openclaw --dev plugins install --link . >/dev/null 2>&1 && openclaw --dev memgpt setup; }
 ```
+> **`install: false` is normal for a dev `--link` install** — what loads the
+> plugin is `load.paths` + `entry.enabled` + the `memory` `slot` (all present).
+> The `plugins.installs` map is install-provenance bookkeeping that a **packaged**
+> install (Test 1a) writes but `--link` doesn't re-add after a `memgpt uninstall`.
+> Not a failure; the U-case PASS checks gate on artifacts + the `memgpt` command,
+> not on this flag.
 
 - **U1 `--dry-run`:** `inspect; openclaw --dev memgpt uninstall --dry-run; inspect` → **PASS** = "Dry run — no changes" box; both `inspect` outputs identical.
 - **U2 decline:** `openclaw --dev memgpt uninstall` → answer **No** → **PASS** = "cancelled"; `inspect` unchanged.
