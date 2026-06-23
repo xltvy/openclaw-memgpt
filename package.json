@@ -50,6 +50,7 @@
       "pluginApi": ">=2026.3.28"
     },
     "install": {
+      "npmSpec": "openclaw-memgpt",
       "minHostVersion": ">=2026.5.31"
     }
   },
