@@ -348,10 +348,11 @@ source ~/.secrets && openclaw --dev agent --local --agent main --message "What i
 ## 7 — Edge cases
 
 ### 7a — Corrupt/truncated saved state → re-creates, never 500
-Fully self-contained: starts its own sidecar, creates + saves a fresh test agent
-(real pickle on disk), corrupts the pickle, **restarts** the sidecar so the agent
-is no longer resident (forcing `:ensure` to read disk), then checks `:ensure`
-re-creates instead of 500'ing. No dependence on `$NS` from earlier tests.
+Self-contained. Note: **P4 re-saves the resident agent on every sidecar
+shutdown**, so you must corrupt the pickles *after* the final save — otherwise
+`:ensure` just loads the fresh P4 save. Sequence: create + mutate → kill (P4
+writes the saved state) → corrupt **all** pickles → fresh sidecar → `:ensure`
+must re-create. No dependence on `$NS` from earlier tests.
 
 A reusable start helper (paste once per shell):
 ```bash
@@ -362,29 +363,29 @@ start_sc() {
   until curl -sf http://127.0.0.1:8765/healthz >/dev/null; do sleep 1; done; echo "sidecar up on 8765"
 }
 ```
-> **zsh note:** in curls below, the namespace before `:save`/`:ensure` is wrapped
-> as `${N7}` — bare `$N7:save` makes zsh try a `:s` history-modifier ("bad
-> substitution"). `$N7/core_memory:append` (slash after the var) is fine as-is.
+> **zsh note:** the namespace before `:ensure` is wrapped as `${N7}` — bare
+> `$N7:ensure` makes zsh try a `:e` history-modifier ("bad substitution").
+> `$N7/core_memory:append` (slash after the var) is fine as-is.
 
-**Step 1 — start the sidecar + create/save a test agent + corrupt its pickle:**
+**Step 1 — clean slate + create + mutate a test agent:**
 ```bash
+D="$HOME/.openclaw-dev/memgpt-data"; N7=edge-7a
+rm -rf "$D/agents/$N7"          # remove any stale state from a prior run
 start_sc
-N7=edge-7a
 curl -s -XPOST "http://127.0.0.1:8765/agents" -H 'content-type: application/json' -d "{\"name\":\"$N7\",\"model\":\"gpt-4\"}" >/dev/null
 curl -s -XPOST "http://127.0.0.1:8765/agents/$N7/core_memory:append" -H 'content-type: application/json' -d '{"name":"human","content":"edge-7a marker"}' >/dev/null
-curl -s -XPOST "http://127.0.0.1:8765/agents/${N7}:save" >/dev/null
-PK=$(find ~/.openclaw-dev/memgpt-data/agents/$N7/persistence_manager -name '*.pickle' | head -1)
-[ -n "$PK" ] && : > "$PK" && echo "pickle truncated: $PK"
 ```
 
-**Step 2 — restart the sidecar (so the agent isn't resident → `:ensure` reads disk):**
+**Step 2 — kill (P4 saves on shutdown), wait, then corrupt ALL pickles:**
+```bash
+pkill -f "uvicorn main:app"; sleep 3
+for f in "$D/agents/$N7/persistence_manager/"*.pickle; do : > "$f"; done
+ls -la "$D/agents/$N7/persistence_manager/"*.pickle | awk '{print $5, $NF}'   # all should be 0 bytes
+```
+
+**Step 3 — fresh sidecar → `:ensure` must re-create (not 500):**
 ```bash
 start_sc
-```
-
-**Step 3 — Run + Check** (`:ensure` must re-create, not 500):
-```bash
-N7=edge-7a
 VIA=$(curl -s -XPOST "http://127.0.0.1:8765/agents/${N7}:ensure" -H 'content-type: application/json' -d '{}')
 echo "$VIA" | grep -q '"via":"create"' && echo "PASS: re-created (no 500)" || { echo "FAIL"; echo "$VIA"; }
 ```
