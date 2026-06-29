@@ -1,6 +1,6 @@
 {
   "name": "openclaw-memgpt",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "MemGPT memory backend for OpenClaw — three-tier memory architecture via pymemgpt sidecar",
   "keywords": [

@@ -155,6 +155,62 @@ class TestCutoffEquivalence:
         )
 
 
+# ── system-less buffer (production shape) — 1.0.1 regression ──────────────────
+
+
+class TestSystemlessBuffer:
+    """
+    1.0.1 regression. In Shape B, OpenClaw owns the conversation buffer and injects the
+    system prompt separately (promptBuilder), so the buffer POSTed to :summarize is
+    *system-less* — it begins with the first user message. Before 1.0.1 this tripped
+    select_cutoff's `messages[0]["role"] == "system"` assertion → 500 on every
+    flush-pressure summarisation. The sidecar now prepends agent.system internally to
+    restore the native shape select_cutoff was written for. The whole pre-1.0.1 suite
+    missed this because every other test feeds the native-shaped _BUFFER (system at [0]).
+    """
+
+    # _BUFFER minus its leading system message — exactly what OpenClaw sends.
+    _SYSTEMLESS = _BUFFER[1:]
+
+    def test_systemless_buffer_succeeds(self, client, summarize_agent):
+        """The bug repro: a system-less buffer returns 200, not 500."""
+        assert self._SYSTEMLESS[0]["role"] != "system"  # guard: this is the production shape
+        with patch("memgpt.memory.create", return_value=_make_mock_response(_CANNED_SUMMARY)):
+            r = _call_summarize(client, summarize_agent, messages=self._SYSTEMLESS)
+        assert r["cutoff"] >= 1
+        assert isinstance(r["summary"], str) and len(r["summary"]) > 0
+        assert r["packaged_message"]["role"] == "user"
+
+    def test_systemless_cutoff_is_native_space(self, client, summarize_agent):
+        """
+        Returned cutoff is native-space: equals select_cutoff applied to the buffer with a
+        system message prepended. The prepended system's content is irrelevant (index 0 is
+        token-counted then discarded), so any system message yields the same cutoff.
+        """
+        from memgpt.agent import select_cutoff
+
+        native = [_SYSTEM_MSG] + self._SYSTEMLESS
+        expected_cutoff = select_cutoff(native, "gpt-4")
+
+        with patch("memgpt.memory.create", return_value=_make_mock_response(_CANNED_SUMMARY)):
+            r = _call_summarize(client, summarize_agent, messages=self._SYSTEMLESS)
+
+        assert r["cutoff"] == expected_cutoff, (
+            f"endpoint cutoff {r['cutoff']} != native-space select_cutoff {expected_cutoff}"
+        )
+
+    def test_systemless_and_native_same_cutoff(self, client, summarize_agent):
+        """
+        A system-less buffer and its system-led equivalent (same real messages) yield the
+        same cutoff — proving the conditional prepend is idempotent and content-independent.
+        """
+        with patch("memgpt.memory.create", return_value=_make_mock_response(_CANNED_SUMMARY)):
+            r_systemless = _call_summarize(client, summarize_agent, messages=self._SYSTEMLESS)
+            r_native = _call_summarize(client, summarize_agent, messages=_BUFFER)
+
+        assert r_systemless["cutoff"] == r_native["cutoff"]
+
+
 # ── response structure ────────────────────────────────────────────────────────
 
 

@@ -40,12 +40,14 @@
  *     is structurally compatible — { role: string; content: unknown; [key]: unknown }
  *     accepts any user/assistant/tool-result message shape.
  *
- *   Buffer shape after virtual trim (faithful to MemGPT's native post-summarise shape):
- *     [messages[0] (system anchor), packagedMessage, ...messages.slice(cutoff)]
- *   MemGPT's summarize_messages_inplace always keeps messages[0] (system prompt) at
- *   position 0 and prepends the packaged preamble immediately after. select_cutoff
- *   accounts for the system message at [0]; cutoff >= 1 is always guaranteed
- *   (values < 1 result in a 422 at the sidecar, which we no-op per §2.8).
+ *   Buffer shape after virtual trim (system-less — OpenClaw owns the system prompt):
+ *     [packagedMessage, ...messages.slice(cutoff - 1)]
+ *   OpenClaw injects the system prompt separately (promptBuilder), so this buffer is
+ *   system-less; we prepend only the packaged summary and keep the post-cutoff tail.
+ *   The sidecar returns `cutoff` in native space (it internally prepends agent.system
+ *   before select_cutoff), so `cutoff - 1` maps it onto this system-less buffer. cutoff
+ *   >= 1 is always guaranteed (values < 1 result in a 422 at the sidecar, which we
+ *   no-op per §2.8), so cutoff - 1 >= 0 is a valid slice index.
  *
  *   ingest(): no-op (returns { ingested: false }). The agent_end mirror hook handles
  *     message persistence into the sidecar's recall corpus; a second write from
@@ -241,13 +243,23 @@ export function makeMemgptContextEngine(
         };
       }
 
-      // Virtual trim — faithful to MemGPT's native post-summarise buffer shape:
-      //   [messages[0] (system anchor), packagedSummary, ...messages.slice(cutoff)]
+      // Virtual trim — system-less post-summarise buffer shape (1.0.1):
+      //   [packagedSummary, ...messages.slice(cutoff - 1)]
       //
-      // MemGPT's `summarize_messages_inplace` always keeps messages[0] (the system
-      // prompt) at position 0 and prepends the packaged preamble immediately after.
-      // select_cutoff accounts for the system message being at [0]; cutoff >= 1
-      // is guaranteed (values < 1 would have resulted in a 422 at the sidecar).
+      // OpenClaw owns the conversation buffer and injects the system prompt
+      // separately (promptBuilder), so the buffer here is *system-less* — index 0
+      // is the first real (user) message, not a system anchor. We therefore prepend
+      // only the packaged summary and keep the post-cutoff tail; OpenClaw adds the
+      // system prompt on top, so re-adding it here would double it.
+      //
+      // The sidecar returns `cutoff` in *native space* — it internally prepends
+      // agent.system before select_cutoff (see routes/agents.py:summarize), so cutoff
+      // indexes [system, ...thisBuffer]. The `- 1` maps it back onto this system-less
+      // buffer: native messages_native[cutoff:] === thisBuffer[cutoff - 1:]. Native
+      // space is kept (rather than the sidecar pre-subtracting) so the F1 cutoff
+      // equivalence test stays a direct identical-inputs/identical-outputs check.
+      // cutoff >= 1 is guaranteed by select_cutoff (values < 1 would 422 at the
+      // sidecar), so cutoff - 1 >= 0 is a valid slice index.
       // Defensive: guard against empty buffer (unreachable in normal operation).
       if (messages.length === 0 || memoryFlushCutoff < 1) {
         deps.logger.debug(
@@ -259,9 +271,8 @@ export function makeMemgptContextEngine(
         };
       }
       const trimmed = [
-        messages[0],
         packagedMessage,
-        ...messages.slice(memoryFlushCutoff),
+        ...messages.slice(memoryFlushCutoff - 1),
       ];
       deps.logger.debug(
         `openclaw-memgpt: virtual trim applied for sessionKey=${sessionKey ?? "?"}: ${messages.length} → ${trimmed.length} messages (cutoff=${memoryFlushCutoff})`,
