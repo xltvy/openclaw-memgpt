@@ -134,9 +134,9 @@ def main() -> int:
     if "p4_patterns_post" in p4:
         pre = p4["p4_patterns_pre"]
         post = p4["p4_patterns_post"]
-        print(f"\np4 #18-signature counts — A: {pre['a_methodology_18']}"
-              f" | C pre: {pre['c_methodology_18']}"
-              f" | C post: {post['c_methodology_18']}")
+        print(f"\np4 #18-signature counts — A: {pre['a_methodology_18_matches']}"
+              f" | C pre: {pre['c_methodology_18_matches']}"
+              f" | C post: {post['c_methodology_18_matches']}")
         print(f"p4 C post per-trial patterns: {post['c_per_trial_patterns']}")
     print(f"\nwrote {out}")
     return 0

@@ -1,0 +1,196 @@
+{
+  "cell": "C",
+  "probe_id": "p4",
+  "trial_id": 0,
+  "expected_tier": "recall",
+  "pickle_path": "/private/tmp/openclaw-v2.1-verify/memgpt-data/agents/v1-cell-c-p4-t00/persistence_manager/2026-07-06_12_20_33_AM_.persistence.pickle",
+  "step_count": 4,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "conversation_search": 1,
+        "read": 1,
+        "core_memory_append": 1,
+        "archival_memory_insert": 1,
+        "write": 1
+      },
+      "arg_keys": {
+        "conversation_search": [
+          [
+            "page",
+            "query"
+          ]
+        ],
+        "read": [
+          [
+            "path"
+          ]
+        ],
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "archival_memory_insert": [
+          [
+            "content"
+          ]
+        ],
+        "write": [
+          [
+            "content",
+            "path"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "conversation_search": 1,
+        "read": 1,
+        "core_memory_append": 1,
+        "archival_memory_insert": 1,
+        "write": 1
+      },
+      "arg_keys": {
+        "conversation_search": [
+          [
+            "page",
+            "query"
+          ]
+        ],
+        "read": [
+          [
+            "path"
+          ]
+        ],
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "archival_memory_insert": [
+          [
+            "content"
+          ]
+        ],
+        "write": [
+          [
+            "content",
+            "path"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 2,
+      "tools": {},
+      "arg_keys": {}
+    },
+    {
+      "step_idx": 3,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I'll help you understand the memory systems available in this workspace. Let me check the current state of my memory and project context.I can see you've shared project code **BLUEBIRD_5402**. I notice this is our first interaction in this session, and my IDENTITY.md file hasn't been filled out yet.\n\nGiven that you're researching AI memory architectures and we're working with the BLUEBIRD_5402 project, let me:\n\n1. **Update my core memory** with the project code\n2. **Store this in archival memory** for long-term reference  \n3. **Set up my identity** to reflect this work contextPerfect! I've stored the **BLUEBIRD_5402** project code across multiple memory systems:\n\n\u2705 **Core memory** (human section) \u2014 Always visible, for essential context  \n\u2705 **Archival memory** \u2014 Searchable long-term storage with project details  \n\u2705 **IDENTITY.md** \u2014 My workspace file documenting who I am in this context\n\nSince you're researching AI memory architectures, I should mention the different memory systems I have access to:\n\n1. **Core Memory** (limited, always visible) \u2014 Persona + key human details\n2. **Recall Memory** (conversation history) \u2014 Searchable past messages\n3. **Archival Memory** (infinite, searchable) \u2014 Long-term structured storage\n4. **Workspace Files** \u2014 Persistent documents like SOUL.md, USER.md, daily memory logs\n\nHow would you like to proceed with BLUEBIRD_5402? I'm ready to help explore memory systems, test architectures, or document findings. \ud83e\udde0",
+      "pre_tool_text": "I'll help you understand the memory systems available in this workspace. Let me check the current state of my memory and project context.",
+      "char_count": 1461,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "I'll help you understand the memory systems available in this workspace. Let me check the current state of my memory and project context.I can see you've shared project code **BLUEBIRD_5402**. I notice this is our first interaction in this session, and my IDENTITY.md file hasn't been filled out yet.\n\nGiven that you're researching AI memory architectures and we're working with the BLUEBIRD_5402 project, let me:\n\n1. **Update my core memory** with the project code\n2. **Store this in archival memory** for long-term reference  \n3. **Set up my identity** to reflect this work contextPerfect! I've stored the **BLUEBIRD_5402** project code across multiple memory systems:\n\n\u2705 **Core memory** (human section) \u2014 Always visible, for essential context  \n\u2705 **Archival memory** \u2014 Searchable long-term storage with project details  \n\u2705 **IDENTITY.md** \u2014 My workspace file documenting who I am in this context\n\nSince you're researching AI memory architectures, I should mention the different memory systems I have access to:\n\n1. **Core Memory** (limited, always visible) \u2014 Persona + key human details\n2. **Recall Memory** (conversation history) \u2014 Searchable past messages\n3. **Archival Memory** (infinite, searchable) \u2014 Long-term structured storage\n4. **Workspace Files** \u2014 Persistent documents like SOUL.md, USER.md, daily memory logs\n\nHow would you like to proceed with BLUEBIRD_5402? I'm ready to help explore memory systems, test architectures, or document findings. \ud83e\udde0",
+      "pre_tool_text": "I'll help you understand the memory systems available in this workspace. Let me check the current state of my memory and project context.",
+      "char_count": 1461,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 2,
+      "text": "The project code you mentioned is **BLUEBIRD_5402**.\n\nI can see it's stored in my core memory (human section) and I have it noted in my archival memory as well. This demonstrates the multi-layered memory system working correctly \u2014 the information persists across different memory stores even though this appears to be a fresh context window.",
+      "pre_tool_text": "The project code you mentioned is **BLUEBIRD_5402**.\n\nI can see it's stored in my core memory (human section) and I have it noted in my archival memory as well. This demonstrates the multi-layered memory system working correctly \u2014 the information persists across different memory stores even though this appears to be a fresh context window.",
+      "char_count": 341,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 3,
+      "text": "",
+      "pre_tool_text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 3,
+      "text": "The project code you mentioned is **BLUEBIRD_5402**.\n\nI can see it's stored in my core memory (human section) and I have it noted in my archival memory as well. This demonstrates the multi-layered memory system working correctly \u2014 the information persists across different memory stores even though this appears to be a fresh context window."
+    }
+  ],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 1,
+      "reason": "no send_message at chain terminus"
+    },
+    {
+      "step_idx": 2,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 1,
+        "recall": 1
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 1,
+        "archival": 1,
+        "recall": 1
+      }
+    },
+    {
+      "step_idx": 2,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 3,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

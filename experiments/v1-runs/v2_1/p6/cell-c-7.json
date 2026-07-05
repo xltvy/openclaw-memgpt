@@ -1,0 +1,85 @@
+{
+  "cell": "C",
+  "probe_id": "p6",
+  "trial_id": 7,
+  "expected_tier": "ambiguous(core|archival)",
+  "pickle_path": "/private/tmp/openclaw-v2.1-verify/memgpt-data/agents/v1-cell-c-p6-t07/persistence_manager/2026-07-06_12_26_49_AM_.persistence.pickle",
+  "step_count": 2,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I'll update my understanding of your working patterns.Noted! I've recorded that you typically work in the evenings. This helps me understand your likely availability patterns and when you might be most active on the project. \ud83c\udf19",
+      "pre_tool_text": "I'll update my understanding of your working patterns.",
+      "char_count": 226,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "",
+      "pre_tool_text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 1,
+      "text": "Noted! I've recorded that you typically work in the evenings. This helps me understand your likely availability patterns and when you might be most active on the project. \ud83c\udf19"
+    }
+  ],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}
