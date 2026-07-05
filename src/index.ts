@@ -21,10 +21,11 @@ import { takeFirstAnnounce } from "./announce.ts";
 import { parseConfig } from "./config.ts";
 import { SidecarClientImpl } from "./client/sidecarClient.ts";
 import { makeMemgptContextEngine } from "./contextEngine/memgptEngine.ts";
+import { registerFinalizeGuardHook } from "./hooks/finalizeGuard.ts";
 import { registerFlushPressureHook } from "./hooks/flushPressure.ts";
 import { registerAgentEndHook } from "./hooks/mirror.ts";
+import { registerPayloadGuardHook } from "./hooks/payloadGuard.ts";
 import { registerPromptSectionHook } from "./hooks/promptSection.ts";
-import { registerReplyDispatchHook } from "./hooks/replyDispatch.ts";
 import { getOrCreateLifecycle } from "./lifecycle/lifecycleManager.ts";
 import { ObservabilityEmitter } from "./observability/events.ts";
 import { makeToolDeps } from "./tools/deps.ts";
@@ -129,7 +130,14 @@ const memgptPlugin = definePluginEntry({
     registerPromptSectionHook(api, deps);
     registerFlushPressureHook(api, deps);
     registerAgentEndHook(api, deps);
-    registerReplyDispatchHook(api, deps);
+    // V2.1 send_message discipline enforcement (INVESTIGATION_REPORT §7):
+    // finalizeGuard = bouncer (before_agent_finalize revise + turn-flag reset
+    // on before_prompt_build); payloadGuard = suspenders (reply_payload_sending
+    // cancel). The V1 reply_dispatch hook was retired — under the current SDK
+    // it fired pre-model-pass and would drop the next user turn in gateway
+    // multi-turn mode.
+    registerFinalizeGuardHook(api, deps);
+    registerPayloadGuardHook(api, deps);
 
     // Register the ContextEngine — exclusive slot; only one active at a time.
     // api.registerContextEngine is on OpenClawPluginApi via the index-signature
@@ -147,7 +155,7 @@ const memgptPlugin = definePluginEntry({
 
     if (firstAnnounce) {
       api.logger.info(
-        `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end + reply_dispatch hooks + ContextEngine + lifecycle service registered (namespace: ${config.namespace}, observability: ${config.observability})`,
+        `openclaw-memgpt: 7 tools + before_prompt_build (prompt-section + flush-pressure) + agent_end + finalize-guard + payload-guard hooks + ContextEngine + lifecycle service registered (namespace: ${config.namespace}, observability: ${config.observability})`,
       );
     }
   },

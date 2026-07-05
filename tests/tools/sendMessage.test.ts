@@ -1,32 +1,35 @@
 /**
- * send_message handler tests — the §4.3 output tool.
+ * send_message handler tests — the §4.3 output tool + V2.1 turn-flag seam.
  *
  * Asserts:
- *   - invocation sets the suppression flag (for 6c.7's reply_dispatch to consume)
+ *   - invocation sets the turn-scoped fired-flag (peeked by finalizeGuard /
+ *     payloadGuard, cleared at turn start)
  *   - the message text is returned verbatim as the tool-result content
  *   - the client is NOT called (§4.3: "send_message does not call the sidecar —
  *     output goes to the user via OpenClaw, never to the memory substrate")
- *   - takeSuppress consumes the flag (single-shot semantics)
- *   - SUPPRESS_V1_KEY is the same on both seam halves
+ *   - peek is non-consuming (both V2.1 hooks may read the same turn's flag)
+ *   - clear resets the flag (the turn-boundary semantics)
+ *   - SEND_MESSAGE_V1_KEY is the same on all seam halves
  */
 
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  SUPPRESS_V1_KEY,
-  _resetSuppressionForTests,
-  markSuppress,
+  SEND_MESSAGE_V1_KEY,
+  _resetSendMessageFlagsForTests,
+  clearSendMessageFired,
+  markSendMessageFired,
+  peekSendMessageFired,
   sendMessage,
-  takeSuppress,
 } from "../../src/tools/sendMessage.ts";
 import type { SidecarClient } from "../../src/client/sidecarClient.ts";
 import type { ToolDeps } from "../../src/tools/deps.ts";
 
-// Ensure suppression state doesn't bleed between tests (a previous test's
-// markSuppress otherwise leaks into the next test's takeSuppress).
+// Ensure flag state doesn't bleed between tests (a previous test's
+// markSendMessageFired otherwise leaks into the next test's peek).
 beforeEach(() => {
-  _resetSuppressionForTests();
+  _resetSendMessageFlagsForTests();
 });
 
 function makeDeps(): ToolDeps {
@@ -51,11 +54,11 @@ test("sendMessage: returns the message text verbatim as the tool-result content"
   assert.deepEqual(r, { content: [{ type: "text", text: "hello user" }] });
 });
 
-test("sendMessage: invocation sets suppression flag at SUPPRESS_V1_KEY", async () => {
+test("sendMessage: invocation sets the fired-flag at SEND_MESSAGE_V1_KEY", async () => {
   const handler = sendMessage(makeDeps());
   await handler("tc-1", { message: "hi" });
-  // 6c.7's reply_dispatch hook will consume this on the same key.
-  assert.equal(takeSuppress(SUPPRESS_V1_KEY), true);
+  // finalizeGuard / payloadGuard peek this on the same key.
+  assert.equal(peekSendMessageFired(SEND_MESSAGE_V1_KEY), true);
 });
 
 test("sendMessage: does NOT touch the sidecar client (§4.3 contract)", async () => {
@@ -65,29 +68,35 @@ test("sendMessage: does NOT touch the sidecar client (§4.3 contract)", async ()
   await assert.doesNotReject(() => handler("tc-1", { message: "x" }));
 });
 
-test("takeSuppress: single-shot — consuming clears the flag; second take returns false", () => {
-  markSuppress(SUPPRESS_V1_KEY);
-  assert.equal(takeSuppress(SUPPRESS_V1_KEY), true);
+test("peekSendMessageFired: non-consuming — repeated peeks all see the flag", () => {
+  markSendMessageFired(SEND_MESSAGE_V1_KEY);
+  assert.equal(peekSendMessageFired(SEND_MESSAGE_V1_KEY), true);
   assert.equal(
-    takeSuppress(SUPPRESS_V1_KEY),
-    false,
-    "second take should return false — single-shot semantics",
+    peekSendMessageFired(SEND_MESSAGE_V1_KEY),
+    true,
+    "second peek must still see the flag — both V2.1 hooks read the same turn state",
   );
 });
 
-test("takeSuppress: returns false when no mark was set (default behaviour)", () => {
-  assert.equal(takeSuppress("nothing-here"), false);
+test("clearSendMessageFired: resets the flag (turn-boundary semantics)", () => {
+  markSendMessageFired(SEND_MESSAGE_V1_KEY);
+  clearSendMessageFired(SEND_MESSAGE_V1_KEY);
+  assert.equal(peekSendMessageFired(SEND_MESSAGE_V1_KEY), false);
 });
 
-test("markSuppress / takeSuppress: distinct keys are independent (Map-keyed shape preserved for V2)", () => {
-  // V1 uses SUPPRESS_V1_KEY; V2 will use real sessionKeys. Preserving Map-
-  // independence between keys is what makes the V2 switch a key change only,
-  // not a re-architecture.
-  markSuppress("session-a");
-  markSuppress("session-b");
-  assert.equal(takeSuppress("session-a"), true);
-  assert.equal(takeSuppress("session-b"), true);
-  assert.equal(takeSuppress("session-a"), false);
+test("peekSendMessageFired: returns false when no mark was set (default behaviour)", () => {
+  assert.equal(peekSendMessageFired("nothing-here"), false);
+});
+
+test("mark / peek / clear: distinct keys are independent (Map-keyed shape preserved for multi-session V2)", () => {
+  // V1 uses SEND_MESSAGE_V1_KEY; the multi-session topology will use real
+  // sessionKeys. Preserving Map-independence between keys is what makes that
+  // switch a key change only, not a re-architecture.
+  markSendMessageFired("session-a");
+  markSendMessageFired("session-b");
+  clearSendMessageFired("session-a");
+  assert.equal(peekSendMessageFired("session-a"), false);
+  assert.equal(peekSendMessageFired("session-b"), true);
 });
 
 test("sendMessage: empty / unicode messages pass through verbatim", async () => {
@@ -95,7 +104,7 @@ test("sendMessage: empty / unicode messages pass through verbatim", async () => 
   const emptyR = await handler("tc-1", { message: "" });
   assert.deepEqual(emptyR, { content: [{ type: "text", text: "" }] });
 
-  _resetSuppressionForTests();
+  _resetSendMessageFlagsForTests();
   const unicodeR = await handler("tc-2", { message: "héllo 👋 🦊" });
   assert.deepEqual(unicodeR, {
     content: [{ type: "text", text: "héllo 👋 🦊" }],
