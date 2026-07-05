@@ -54,9 +54,31 @@ export async function findFreePort(): Promise<number> {
  * Throws if the child exits before ready, or if ready isn't reached in
  * READY_TIMEOUT_MS.
  */
-export async function startSidecar(): Promise<SidecarHandle> {
+export interface StartSidecarOptions {
+  /**
+   * Reuse an existing data dir instead of creating a fresh one — the
+   * cross-session tests restart the sidecar against the same on-disk state
+   * (the V1-protocol session boundary: sidecar restart, not key rotation).
+   */
+  dataDir?: string;
+  /**
+   * Leave the data dir in place on stop() so a follow-up
+   * startSidecar({dataDir}) can rehydrate from it. The last owner cleans up.
+   */
+  keepDataDirOnStop?: boolean;
+}
+
+export async function startSidecar(
+  options: StartSidecarOptions = {},
+): Promise<SidecarHandle> {
   const port = await findFreePort();
-  const dataDir = await mkdtemp(join(tmpdir(), "openclaw-memgpt-test-"));
+  const ownsDataDir = options.dataDir === undefined;
+  const dataDir =
+    options.dataDir ?? (await mkdtemp(join(tmpdir(), "openclaw-memgpt-test-")));
+  const keepDataDir = options.keepDataDirOnStop === true;
+  // Never delete a caller-provided dir on failure paths either — the caller
+  // may want post-mortem access to the state that broke the restart.
+  const removeOnFailure = ownsDataDir && !keepDataDir;
 
   const proc = spawn(
     "uv",
@@ -99,7 +121,7 @@ export async function startSidecar(): Promise<SidecarHandle> {
   while (Date.now() < deadline) {
     if (proc.exitCode !== null) {
       process.off("exit", killOnExit);
-      await rm(dataDir, { recursive: true, force: true });
+      if (removeOnFailure) await rm(dataDir, { recursive: true, force: true });
       throw new Error(
         `sidecar exited before ready (code=${proc.exitCode}); stderr:\n${stderr}`,
       );
@@ -114,7 +136,7 @@ export async function startSidecar(): Promise<SidecarHandle> {
             dataDir,
             stop: async () => {
               process.off("exit", killOnExit);
-              await stopSidecar(proc, dataDir);
+              await stopSidecar(proc, dataDir, keepDataDir);
             },
           };
         }
@@ -131,7 +153,7 @@ export async function startSidecar(): Promise<SidecarHandle> {
   // Timed out — kill and clean up
   process.off("exit", killOnExit);
   proc.kill("SIGTERM");
-  await rm(dataDir, { recursive: true, force: true });
+  if (removeOnFailure) await rm(dataDir, { recursive: true, force: true });
   throw new Error(
     `sidecar not ready within ${READY_TIMEOUT_MS}ms (last: ${String(lastErr)}); stderr:\n${stderr}`,
   );
@@ -140,6 +162,7 @@ export async function startSidecar(): Promise<SidecarHandle> {
 async function stopSidecar(
   proc: ChildProcess,
   dataDir: string,
+  keepDataDir = false,
 ): Promise<void> {
   if (proc.exitCode === null) {
     proc.kill("SIGTERM");
@@ -153,7 +176,7 @@ async function stopSidecar(
       }, SHUTDOWN_GRACE_MS);
     });
   }
-  await rm(dataDir, { recursive: true, force: true });
+  if (!keepDataDir) await rm(dataDir, { recursive: true, force: true });
 }
 
 function sleep(ms: number): Promise<void> {
