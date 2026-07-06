@@ -134,12 +134,12 @@ memoryEvents.on(MEMORY_EVENT_CHANNEL, (e) => {
 
 The send_message enforcement's re-prompt behaves differently across OpenClaw versions, because OpenClaw's replay-safety policy — which decides when a plugin may ask for another model pass — changed between releases:
 
-- **OpenClaw ≤ 2026.6.8** — full recovery. The re-prompt fires whenever a turn would end in free-form text without `send_message`, including turns that ran memory tools first.
-- **OpenClaw ≥ 2026.6.10** — the re-prompt fires only on turns that ran no tools. Turns that executed a tool first cannot be re-prompted: the host treats any plugin-tool execution as a potential side effect and declines the extra model pass.
+- **OpenClaw ≤ 2026.6.8** — the re-prompt fires for turns that end in free-form text after a single memory-tool call (the common shape: one `core_memory_append`, then text). Turns with multiple tool calls in one message, or long sessions with accumulated tool activity, may still hit the host's replay-safety path and finalize without a re-prompt — models that batch several tool calls per turn (e.g. Claude Sonnet 4.6) encounter this more often.
+- **OpenClaw ≥ 2026.6.10** — the replay-safety policy tightened further: the re-prompt fires only on turns that ran no tools at all. Any turn that executed a tool first cannot be re-prompted; the host treats plugin-tool execution as a potential side effect and declines the extra model pass.
 
 The inner-monologue suppression on channel deliveries holds on all versions, as does everything about memory storage and recall.
 
-This is a characterised property of the OpenClaw host, not a plugin defect — the same scenario produces a re-prompt on 2026.6.8 and a logged `requested revision after potential side effects` refusal on 2026.6.10. See `docs/v1-results.md` (V2.1 update) in the repository for the verification detail.
+This is a characterised property of the OpenClaw host, not a plugin defect — the same single-tool scenario produces a re-prompt on 2026.6.8 and a logged `requested revision after potential side effects` refusal on 2026.6.10, and the refusal line is the marker to look for in the host log when a re-prompt didn't fire. See `docs/v1-results.md` (V2.1 update) in the repository for the verification detail.
 
 ## Troubleshooting
 

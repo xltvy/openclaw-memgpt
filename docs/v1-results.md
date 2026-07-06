@@ -16,9 +16,10 @@ analysis), `…/provider_compare.py` (the #24 provider-equivalence check),
 ## 0. Executive verdict — A≈C holds for the *memory architecture*; send_message is an I/O-layer divergence
 
 **The plugin preserves MemGPT's memory architecture; as of V2.1 it also enforces MemGPT's
-send_message I/O discipline plugin-side — fully on hosts ≤2026.6.8, display-layer for
-tool-bearing turns on ≥2026.6.10 (replay-safety policy, characterised in methodology bank
-#30).** The V1.4 verdict below stands as the pre-enforcement record: the layers are
+send_message I/O discipline plugin-side — on hosts ≤2026.6.8 for single-tool-call chained
+turns (multi-tool-call turns can still hit the host's replay-safety path; pre-publish
+finding under Sonnet 4.6), display-layer only for tool-bearing turns on ≥2026.6.10
+(replay-safety policy, characterised in methodology bank #30).** The V1.4 verdict below stands as the pre-enforcement record: the layers are
 different, and V1.4's central result is that the original four-dimension gate conflated
 them.
 
