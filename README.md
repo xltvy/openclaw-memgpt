@@ -126,9 +126,20 @@ memoryEvents.on(MEMORY_EVENT_CHANNEL, (e) => {
 
 ## Known behaviour
 
-- **The agent replies to you conversationally.** Unlike MemGPT's reference CLI, which forces every reply through a `send_message` tool call, this plugin lets the agent answer in free-form text. This is purely a user-experience choice and does not affect how memory is stored or recalled.
+- **The agent replies through `send_message`, like native MemGPT.** As of 1.1.0 the plugin enforces MemGPT's I/O discipline structurally: a turn that would end in free-form text without a `send_message` call is re-prompted (up to 3 attempts, using MemGPT's own base-prompt wording), and on channel deliveries any remaining free-form assistant text is treated as inner monologue — suppressed from the chat and recorded in the observability log as `monologue_suppressed` events (with the text at `verbose`). Memory storage and recall are unaffected.
 - **First-run cold start (~60 s).** The first time the embedding model is needed it is downloaded and cached. Run `openclaw memgpt prewarm` (or accept the wizard's offer) to get this out of the way; every run after that is fast.
 - **One-shot `--local` mode.** Either run `openclaw memgpt prewarm` first, or accept the one-time cold-start cost on the first turn — it works normally afterwards.
+
+### Host version compatibility
+
+The send_message enforcement's re-prompt behaves differently across OpenClaw versions, because OpenClaw's replay-safety policy — which decides when a plugin may ask for another model pass — changed between releases:
+
+- **OpenClaw ≤ 2026.6.8** — full recovery. The re-prompt fires whenever a turn would end in free-form text without `send_message`, including turns that ran memory tools first.
+- **OpenClaw ≥ 2026.6.10** — the re-prompt fires only on turns that ran no tools. Turns that executed a tool first cannot be re-prompted: the host treats any plugin-tool execution as a potential side effect and declines the extra model pass.
+
+The inner-monologue suppression on channel deliveries holds on all versions, as does everything about memory storage and recall.
+
+This is a characterised property of the OpenClaw host, not a plugin defect — the same scenario produces a re-prompt on 2026.6.8 and a logged `requested revision after potential side effects` refusal on 2026.6.10. See `docs/v1-results.md` (V2.1 update) in the repository for the verification detail.
 
 ## Troubleshooting
 
