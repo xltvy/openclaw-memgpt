@@ -839,6 +839,34 @@ shape of the resolution. Listed in roughly the order they surfaced.
     no send_message; same plugin build): 2026.6.10 logs `requested revision after potential
     side effects; finalizing` (leak finalizes); 2026.6.8 logs `requested one more pass:
     attempt=1/3` and the revise pass delivers via `send_message`.
+    *Empirical scope characterisation from manual pre-publish testing (2026-07-06, OpenClaw
+    2026.6.8, Claude Sonnet 4.6, fresh throwaway profiles).* The version-scoped statement
+    above ("2026.6.8 permits revision after non-mutating tool calls") holds for the shape
+    the smokes and probes exercised — **one memory-tool call, then free text** — and is
+    narrower than first stated for other shapes:
+    - **Test A (single-tool-call fresh turn):** `core_memory_append: 1` → free text →
+      bouncer fired (`requested one more pass: attempt=1/3`) → revision honored →
+      `send_message: 1`. Discipline recovered; refusal marker absent. Matches the scripted
+      smoke and the p1/p6 probe record.
+    - **Test B (multi-tool-call turn, and/or accumulated multi-turn tool activity):**
+      `core_memory_append: 2` in one turn, after several prior turns in the session →
+      bouncer fired but revision refused (`requested revision after potential side effects;
+      finalizing`). Discipline not recovered on that turn.
+    Consequence for the scope framing: on 2026.6.8, call-layer recovery is verified for
+    single-tool-call chained turns; multi-tool-call turns and long accumulated sessions can
+    hit the stricter replay-safety path even there. **Hypothesis (unverified; requires
+    empirical test on 2026.6.8 with a controlled multi-tool-call scenario):** from the V2.1
+    code reading, visible block replies emitted between tool calls
+    (`visibleBlockReplyCount > 0` via the compaction-retry path) fold into
+    `hadDeterministicSideEffect` on 2026.6.8 independently of the mutating-action rule —
+    i.e. the trigger may be the free text *between* the batched tool calls, not the tool
+    count itself. Committed in advance per the pre-registration discipline (#34); outcome
+    to be captured when tested.
+    Model interaction: Sonnet 4.6 batches multiple tool calls per turn far more often than
+    the models the probe record was built on, so this scope boundary is more load-bearing
+    for real-world 1.1.0 users than the probe numbers alone suggest. README (1.1.0) and the
+    dissertation framing state the scope as single-tool-call-verified rather than "full
+    recovery".
     *Suspenders scope (empirical).* The `openclaw agent` RPC surface returns payloads
     without traversing the dispatcher beforeDeliver chain — a scripted gateway turn with
     trailing text after `send_message` leaked "Done." to the RPC result with no
@@ -855,6 +883,103 @@ shape of the resolution. Listed in roughly the order they surfaced.
     scanner (>10k dirs) on both versions — install from the npm-packed tarball; gateway
     lane resolves model auth from auth profiles (`openclaw models auth paste-api-key`),
     not env-backed credentials.
+
+31. **1.0.1 patch: MemGPT's contract restored at the sidecar boundary rather than by
+    modifying the fork algorithm.** Post-1.0.0 publication, the real-world smoke surfaced
+    `Sidecar 500 from /agents/default:summarize` on every flush-pressure summarisation.
+    Root cause was a Shape-B contract mismatch, not a wire bug: OpenClaw owns the
+    conversation buffer and injects the system prompt separately, so the buffer POSTed to
+    `:summarize` is system-less — while `select_cutoff` (F1, unmodified) asserts
+    `messages[0]["role"] == "system"` and excludes index 0 from the summarised slice,
+    because it was written against native `self._messages` where index 0 is always the
+    system prompt. Two candidate fix loci: (a) adapt `select_cutoff` to tolerate
+    system-less buffers — rejected outright (violates NON-NEGOTIABLE #2; breaks F1
+    byte-equivalence; every future fork rebase re-opens the diff); (b) reconstruct the
+    native shape at the boundary — chosen: the sidecar route conditionally prepends
+    `{role:"system", content: agent.system}` before calling the unchanged algorithm. The
+    prepend is idempotent (a system-led buffer passes through, so the F1 equivalence test
+    remains an identical-inputs/identical-outputs check) and the content is irrelevant to
+    the algorithm (index 0 is token-counted then discarded — only presence and slot
+    matter); the returned cutoff stays native-space. Pattern: when a consumed component
+    asserts an invariant your architecture removed, restore the invariant at the boundary
+    — the adapter absorbs the shape difference; the verified core stays byte-identical.
+    Evidence: commit `d59c9b9`; API_DESIGN.md §2.8 reconciled to the resolved shape;
+    chapter guide Section 5 case study.
+
+32. **Green tests never exercised the production input shape — the 1.0.1 bug shipped
+    through a fully passing suite.** The F1 cutoff-equivalence test (and the sidecar
+    summarise tests) fed *native-shaped* buffers — system message at index 0, the shape
+    `select_cutoff` was extracted from — and passed, byte-for-byte. Production fed the
+    system-less buffer that Shape B actually produces (#31), and 500'd on the first real
+    flush. The suite verified the algorithm against its own home shape and never against
+    the boundary shape the architecture delivers; the equivalence tests were doing exactly
+    their job (F1 fidelity), but nothing owned the question "what shape arrives here in
+    production?". Fix included a test at the production shape. Pattern to watch: green
+    tests on native-shaped inputs while production feeds boundary-shaped inputs — every
+    adapter seam needs at least one test fed with the *consumer-side* shape, not just the
+    *provider-side* shape. Same failure class as #29: a mechanism is only validated for
+    the input region the test environment actually expresses ("verified" against inputs
+    that cannot occur is not verified). Evidence: commit `d59c9b9`; cross-ref #31, #29.
+
+33. **Fixing the summarise 500 unmasked a second, latent bug that the first had been
+    silencing.** The plugin's `assemble()` carried the same anchor assumption as the
+    unadapted `select_cutoff` path — it treated the buffer as if a system slot existed and
+    kept a bogus user-message "anchor" when trimming at `memoryFlushCutoff`. It had never
+    fired in production for a load-bearing reason: the summarise 500 meant
+    `memoryFlushCutoff` was never written, so the trim branch never executed. Repairing
+    summarise would have activated the broken trim on the very next flush. Caught because
+    the 1.0.1 fix traced the *contract* (system-less buffer, native-space cutoff) through
+    every consumer of the flush metadata rather than stopping at the reproducing call
+    site; `assemble()` was corrected in the same commit to the system-less post-flush
+    shape `[packagedMessage, ...messages.slice(cutoff - 1)]`. Pattern: an upstream failure
+    can act as a *guard* for downstream bugs sharing the same wrong assumption — when
+    fixing the upstream failure, audit everything the newly-unblocked path feeds before
+    shipping, because "never fired in production" is not "correct". Evidence: commit
+    `d59c9b9`; cross-ref #31.
+
+34. **Pre-registration applied to engineering verification: predictions committed before
+    the experiment, results measured against the committed claims.** V2.1 banked
+    `experiments/v1-runs/v2_1_predictions.md` (commit `7142e53`) before any probe
+    execution: per-probe predicted rates, the expected mechanism signatures (which log
+    lines attribute a recovery to the bouncer), and an explicit falsifier (`requested
+    revision after potential side effects` appearing on a memory-tool turn under 2026.6.8
+    would invalidate the version-scoping analysis — stop and re-investigate). The re-run
+    then answered "did results match the pre-committed predictions?" rather than the
+    post-hoc "did it work?" — p6 1.00 landed *against a stated ≥0.9 target*, the p4
+    `user_leakage` flags were adjudicated against a *pre-existing* rubric procedure rather
+    than an after-the-fact rationalisation, and the falsifier's zero hits carried
+    evidential weight precisely because tripping it had a pre-committed consequence. When
+    pre-publish testing later *did* surface a scope boundary (#30 refinement), the
+    discipline extended naturally: the mechanism hypothesis was committed as
+    explicitly-unverified with the test that would settle it, outcome to be captured when
+    run. Small procedural cost (one document, written before spending); the gain is that
+    verification results become comparisons, not narratives. Imported from empirical
+    research practice; for verification-heavy engineering the transfer is direct.
+    Evidence: `7142e53`, `experiments/v1-runs/v2_1_predictions.md`, #25 closure table;
+    cross-ref #30, #35.
+
+35. **Manual pre-publish testing under real Sonnet 4.6 (V2.1 → 1.1.0 release gate) surfaced
+    a scope boundary that probe replay could not.**
+    The 1.1.0 release gate repeated the discipline that 1.0.0 lacked (the summarise 500
+    surfaced *post*-publish and forced the 1.0.1 patch — #31): manual end-to-end testing on
+    a fresh throwaway profile per scenario — eliminating accumulated-state confounders —
+    against the current production model, before `npm publish`. It caught a real
+    documentation error: the V2.1 probe re-run (claude-sonnet-4-5-20250929, single-append
+    turn shapes) had supported "full call-layer recovery on ≤2026.6.8", but Sonnet 4.6's
+    multi-tool-call turns hit the replay-safety refusal on the same host version (see #30
+    refinement — Test B). The README caveat was corrected pre-publish from "full recovery"
+    to single-tool-call-verified scope.
+    **Methodology lesson.** Probe replay is model-pinned evidence: a behavioural scope
+    verified under one model's response structure does not automatically generalise to
+    models with different tool-calling habits. Sonnet 4.5 at the probe settings rarely
+    batched tool calls, so the probe matrix structurally under-sampled the multi-tool-call
+    region where the host's replay-safety policy binds; Sonnet 4.6 samples it constantly.
+    Pre-publish manual testing against the production model — the release-gate extension of
+    the pre-registration discipline banked in #34 — is therefore not a redundant re-run of
+    the probe gate: it provides a different signal (new model, longer sessions,
+    uncontrolled turn shapes) and belongs in the release discipline permanently. Same
+    pattern class as #29: a property is only verified for the region of behaviour the
+    validation environment can actually express. Cross-ref #34, #30, #31, #29.
 
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy
