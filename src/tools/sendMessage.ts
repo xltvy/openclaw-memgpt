@@ -5,63 +5,71 @@
  * the user, and the *only* tool with no sidecar endpoint. Output goes to
  * the user via OpenClaw, never to the memory substrate. The handler:
  *
- *   1. Marks a turn-termination suppression flag (read in 6c.7's
- *      `reply_dispatch` hook, which swallows OpenClaw's trailing
- *      no-tool-call dispatch and ends the turn cleanly — the S0.1-confirmed
- *      mechanism since there is no native stop in `AgentToolResult`).
+ *   1. Marks the turn-scoped "send_message fired" flag (read by the V2.1
+ *      discipline hooks: `finalizeGuard` peeks it to decide whether to
+ *      request a revision pass, `payloadGuard` records it as provenance on
+ *      suppressed-monologue events).
  *   2. Returns `params.message` verbatim as the tool-result text — that is
- *      what reaches the user inline in CLI mode (§4.3 CLI vs channel note);
- *      channels will dispatch explicitly in 6c.7 wiring.
+ *      what reaches the user inline in CLI mode (§4.3 CLI vs channel note).
  *
- * **Suppression-key choice (V1).** §4.3 specifies session-keyed suppression
- * for multi-session safety. The current OpenClaw SDK's `execute` signature
- * is `(toolCallId, params)` — no `ctx.sessionKey`. V1 is single-session per
- * §4.3 ("Single-session validation (V1) wouldn't expose it; the multi-agent
- * experiment topology would"), so 6c.3 uses the SUPPRESS_V1_KEY sentinel
- * on both halves of the seam (this file marks; 6c.7's `reply_dispatch`
- * hook takes). When the multi-session V2 topology or an expanded SDK
- * `execute` contract surfaces `sessionKey`, both sides switch to the real
- * key together — the `markSuppress` / `takeSuppress` exports stay as the
- * seam. The Map-keyed shape is preserved here for that V2 extension.
+ * **Seam history (V1 → V2.1).** V1 shipped a `markSuppress`/`takeSuppress`
+ * suppression registry consumed by a `reply_dispatch` hook, on the S0.1-era
+ * premise that `reply_dispatch` fires after the model pass and can swallow
+ * the trailing free-text reply. The V2.1 investigation (INVESTIGATION_REPORT
+ * §2) showed that under the current SDK `reply_dispatch` fires *before* the
+ * model runs — the V1 hook was retired, and the seam became this turn-flag:
+ * write side here, non-consuming reads in the two V2.1 hooks, cleared at
+ * turn start (`before_prompt_build` in finalizeGuard.ts).
  *
- * The export of `markSuppress` / `takeSuppress` co-locates the two halves
- * of the suppression mechanism (write side: this handler; read side:
- * 6c.7's `reply_dispatch` hook) and makes the seam testable in isolation.
+ * **Key choice (V1 topology, unchanged).** §4.3 specifies session-keyed state
+ * for multi-session safety, but the SDK's tool `execute` signature is
+ * `(toolCallId, params)` — no session context reaches the write side. V1 is
+ * single-session per §4.3, so both halves of the seam use the
+ * SEND_MESSAGE_V1_KEY sentinel. The Map-keyed shape is preserved so the
+ * multi-session V2 topology is a key change, not a re-architecture.
  */
 
 import type { ToolDeps, ToolHandler } from "./deps.ts";
 
-// ── suppression registry ────────────────────────────────────────────────────
+// ── turn-flag registry ──────────────────────────────────────────────────────
 
 /**
- * Sentinel key for V1's single-session topology. Both halves of the
- * suppression seam use this key; revisit when V2 multi-session lands or the
- * SDK exposes session context to `execute`.
+ * Sentinel key for V1's single-session topology. All seam participants use
+ * this key; revisit when the multi-session topology lands or the SDK exposes
+ * session context to `execute`.
  */
-export const SUPPRESS_V1_KEY = "__v1_single_session__";
+export const SEND_MESSAGE_V1_KEY = "__v1_single_session__";
 
-const suppressionFlags = new Map<string, boolean>();
+const firedFlags = new Map<string, boolean>();
 
-/** Write side — sendMessage handler calls this on every invocation. */
-export function markSuppress(sessionKey: string): void {
-  suppressionFlags.set(sessionKey, true);
+/** Write side — the sendMessage handler calls this on every invocation. */
+export function markSendMessageFired(sessionKey: string): void {
+  firedFlags.set(sessionKey, true);
 }
 
 /**
- * Read side — 6c.7's `reply_dispatch` hook calls this. Returns true if a
- * suppression was pending for this key and clears it; false otherwise.
- * Single-shot semantics: a `markSuppress` is consumed by exactly one
- * `takeSuppress`.
+ * Read side — non-consuming. `finalizeGuard` (bouncer) and `payloadGuard`
+ * (suspenders) both peek; neither may clear, because they can fire multiple
+ * times per turn (one finalize check per model pass, one payload check per
+ * outbound payload) and each needs the true turn state.
  */
-export function takeSuppress(sessionKey: string): boolean {
-  const v = suppressionFlags.get(sessionKey) ?? false;
-  if (v) suppressionFlags.delete(sessionKey);
-  return v;
+export function peekSendMessageFired(sessionKey: string): boolean {
+  return firedFlags.get(sessionKey) ?? false;
+}
+
+/**
+ * Turn-boundary reset — called from the `before_prompt_build` registration in
+ * finalizeGuard.ts so the flag cannot leak across turns in a long-lived
+ * gateway process. (Exactly that leak, consumed pre-model-pass, was the V1
+ * reply_dispatch latent bug.)
+ */
+export function clearSendMessageFired(sessionKey: string): void {
+  firedFlags.delete(sessionKey);
 }
 
 /** Test-only — reset the registry between cases so they don't bleed state. */
-export function _resetSuppressionForTests(): void {
-  suppressionFlags.clear();
+export function _resetSendMessageFlagsForTests(): void {
+  firedFlags.clear();
 }
 
 // ── handler ────────────────────────────────────────────────────────────────
@@ -70,7 +78,7 @@ export const sendMessage =
   (deps: ToolDeps): ToolHandler =>
   async (_toolCallId, params) => {
     const message = String(params.message ?? "");
-    markSuppress(SUPPRESS_V1_KEY);
+    markSendMessageFired(SEND_MESSAGE_V1_KEY);
     deps.emit({
       kind: "send_message",
       namespace: deps.namespace,

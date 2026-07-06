@@ -1,0 +1,228 @@
+{
+  "probes": {
+    "p1": {
+      "discipline": {
+        "A": {
+          "rate": 1.0,
+          "fails": [],
+          "n": 5
+        },
+        "C_pre": {
+          "rate": 1.0,
+          "fails": [],
+          "n": 5
+        },
+        "C_post": {
+          "rate": 1.0,
+          "fails": [],
+          "n": 3
+        }
+      },
+      "mechanism": {
+        "honored_total": 3,
+        "refused_total": 0,
+        "per_trial": {
+          "t0": {
+            "honored": 1,
+            "refused": 0
+          },
+          "t1": {
+            "honored": 1,
+            "refused": 0
+          },
+          "t2": {
+            "honored": 1,
+            "refused": 0
+          }
+        }
+      }
+    },
+    "p4": {
+      "discipline": {
+        "A": {
+          "rate": 1.0,
+          "fails": [],
+          "n": 5
+        },
+        "C_pre": {
+          "rate": 0.4,
+          "fails": [
+            "t0: no send_message call",
+            "t1: user_leakage flag set",
+            "t3: no send_message call"
+          ],
+          "n": 5
+        },
+        "C_post": {
+          "rate": 0.6,
+          "fails": [
+            "t1: user_leakage flag set",
+            "t4: user_leakage flag set"
+          ],
+          "n": 5
+        }
+      },
+      "mechanism": {
+        "honored_total": 8,
+        "refused_total": 2,
+        "per_trial": {
+          "t0": {
+            "honored": 1,
+            "refused": 1
+          },
+          "t1": {
+            "honored": 2,
+            "refused": 0
+          },
+          "t2": {
+            "honored": 1,
+            "refused": 1
+          },
+          "t3": {
+            "honored": 2,
+            "refused": 0
+          },
+          "t4": {
+            "honored": 2,
+            "refused": 0
+          }
+        }
+      },
+      "p4_patterns_pre": {
+        "a_per_trial_patterns": [
+          "memory-only-no-send_message | active-context-read",
+          "memory-only-no-send_message | active-context-read",
+          "memory-chained-send_message | active-context-read",
+          "memory-only-no-send_message | active-context-read",
+          "send_message-only | active-context-read"
+        ],
+        "c_per_trial_patterns": [
+          "other([]) | other([])",
+          "memory-chained-send_message | active-context-read",
+          "other([]) | recall-chained-send_message",
+          "other([]) | other([])",
+          "send_message-only | active-context-read"
+        ],
+        "a_pattern_frequencies": {
+          "memory-only-no-send_message | active-context-read": 3,
+          "memory-chained-send_message | active-context-read": 1,
+          "send_message-only | active-context-read": 1
+        },
+        "c_pattern_frequencies": {
+          "other([]) | other([])": 2,
+          "memory-chained-send_message | active-context-read": 1,
+          "other([]) | recall-chained-send_message": 1,
+          "send_message-only | active-context-read": 1
+        },
+        "a_methodology_18_matches": 3,
+        "c_methodology_18_matches": 0,
+        "graduation_verdict": "reject"
+      },
+      "p4_patterns_post": {
+        "a_per_trial_patterns": [
+          "memory-only-no-send_message | active-context-read",
+          "memory-only-no-send_message | active-context-read",
+          "memory-chained-send_message | active-context-read",
+          "memory-only-no-send_message | active-context-read",
+          "send_message-only | active-context-read"
+        ],
+        "c_per_trial_patterns": [
+          "memory-only-no-send_message | recall-only",
+          "memory-only-no-send_message | active-context-read",
+          "memory-only-no-send_message | recall-only",
+          "other([]) | active-context-read",
+          "memory-only-no-send_message | active-context-read"
+        ],
+        "a_pattern_frequencies": {
+          "memory-only-no-send_message | active-context-read": 3,
+          "memory-chained-send_message | active-context-read": 1,
+          "send_message-only | active-context-read": 1
+        },
+        "c_pattern_frequencies": {
+          "memory-only-no-send_message | recall-only": 2,
+          "memory-only-no-send_message | active-context-read": 2,
+          "other([]) | active-context-read": 1
+        },
+        "a_methodology_18_matches": 3,
+        "c_methodology_18_matches": 2,
+        "graduation_verdict": "reject"
+      }
+    },
+    "p6": {
+      "discipline": {
+        "A": {
+          "rate": 1.0,
+          "fails": [],
+          "n": 10
+        },
+        "C_pre": {
+          "rate": 0.2,
+          "fails": [
+            "t0: no send_message call",
+            "t1: no send_message call",
+            "t2: no send_message call",
+            "t4: no send_message call",
+            "t5: no send_message call",
+            "t7: no send_message call",
+            "t8: no send_message call",
+            "t9: no send_message call"
+          ],
+          "n": 10
+        },
+        "C_post": {
+          "rate": 1.0,
+          "fails": [],
+          "n": 10
+        }
+      },
+      "mechanism": {
+        "honored_total": 9,
+        "refused_total": 0,
+        "per_trial": {
+          "t0": {
+            "honored": 1,
+            "refused": 0
+          },
+          "t1": {
+            "honored": 1,
+            "refused": 0
+          },
+          "t2": {
+            "honored": 1,
+            "refused": 0
+          },
+          "t3": {
+            "honored": 1,
+            "refused": 0
+          },
+          "t4": {
+            "honored": 1,
+            "refused": 0
+          },
+          "t6": {
+            "honored": 1,
+            "refused": 0
+          },
+          "t7": {
+            "honored": 1,
+            "refused": 0
+          },
+          "t8": {
+            "honored": 1,
+            "refused": 0
+          },
+          "t9": {
+            "honored": 1,
+            "refused": 0
+          }
+        }
+      },
+      "tier_post": {
+        "core": 10
+      },
+      "tier_pre": {
+        "core": 10
+      }
+    }
+  }
+}

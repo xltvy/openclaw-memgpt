@@ -8,7 +8,7 @@
  *      live sidecar, writes flush metadata to the in-memory session store,
  *      and mirrors the packaged summary to recall (messagesAppend).
  *   3. ContextEngine.assemble() reads the metadata and returns the virtually-
- *      trimmed buffer: [messages[0] (system anchor), packagedMessage, tail...].
+ *      trimmed system-less buffer: [packagedMessage, ...messages.slice(cutoff - 1)].
  *   4. Recall search finds the packaged summary text.
  *
  * Requirements:
@@ -241,12 +241,10 @@ test(
     // buffers cause a 422 → BufferTooSmallError, treated as no-op per §2.8).
     // Including a system message at [0] mirrors the real OpenClaw buffer shape.
 
+    // System-less — the production shape OpenClaw passes (it injects the system prompt
+    // separately via promptBuilder; the session buffer begins with the first user
+    // message). The sidecar prepends agent.system internally for select_cutoff (1.0.1).
     const eventMessages = [
-      {
-        role: "system",
-        content:
-          "You are a helpful AI assistant with MemGPT memory. [System note: core memory follows]",
-      },
       { role: "user", content: "Tell me about the Eiffel Tower." },
       {
         role: "assistant",
@@ -342,38 +340,34 @@ test(
       messages: eventMessages as AgentMessage[],
     });
 
-    // Shape: [messages[0] (system anchor), packagedMessage, ...messages.slice(cutoff)]
-    // Total length: 1 (anchor) + 1 (packed) + (eventMessages.length - cutoff)
+    // Shape (1.0.1 system-less): [packagedMessage, ...messages.slice(cutoff - 1)]
+    // cutoff is native-space (sidecar prepended a system message before select_cutoff),
+    // so the tail starts at cutoff - 1 on this system-less buffer. No system anchor —
+    // OpenClaw injects the system prompt separately.
+    // Total length: 1 (packed) + (eventMessages.length - (cutoff - 1))
     assert.equal(
       result.messages.length,
-      2 + (eventMessages.length - cutoff),
-      `expected ${2 + eventMessages.length - cutoff} messages (1 anchor + 1 packed + ${eventMessages.length - cutoff} tail); got ${result.messages.length}`,
+      1 + (eventMessages.length - (cutoff - 1)),
+      `expected ${1 + (eventMessages.length - (cutoff - 1))} messages (1 packed + ${eventMessages.length - (cutoff - 1)} tail); got ${result.messages.length}`,
     );
 
-    // messages[0]: system anchor preserved verbatim
-    assert.deepStrictEqual(
-      result.messages[0],
-      eventMessages[0],
-      "messages[0] should be the original system anchor",
-    );
-
-    // messages[1]: packagedMessage (role: user, content: the preamble + summary)
+    // messages[0]: packagedMessage (role: user, content: the preamble + summary). No anchor.
     assert.equal(
-      result.messages[1].role,
+      result.messages[0].role,
       "user",
-      "packagedMessage should have role: user",
+      "messages[0] should be the packagedMessage (role: user) — no system anchor",
     );
     assert.ok(
-      typeof result.messages[1].content === "string" &&
-        (result.messages[1].content as string).length > 0,
+      typeof result.messages[0].content === "string" &&
+        (result.messages[0].content as string).length > 0,
       "packagedMessage content should be a non-empty string",
     );
 
-    // messages[2:]: post-cutoff tail from the original buffer
+    // messages[1:]: post-cutoff tail from the original buffer (native-space cutoff → cutoff-1)
     assert.deepStrictEqual(
-      result.messages.slice(2),
-      (eventMessages as AgentMessage[]).slice(cutoff),
-      "tail should be messages.slice(cutoff) verbatim",
+      result.messages.slice(1),
+      (eventMessages as AgentMessage[]).slice(cutoff - 1),
+      "tail should be messages.slice(cutoff - 1) verbatim",
     );
 
     // estimatedTokens reflects the trimmed buffer (char-count / 4 heuristic)

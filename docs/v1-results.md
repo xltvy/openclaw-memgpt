@@ -15,9 +15,13 @@ analysis), `…/provider_compare.py` (the #24 provider-equivalence check),
 
 ## 0. Executive verdict — A≈C holds for the *memory architecture*; send_message is an I/O-layer divergence
 
-**The plugin preserves MemGPT's memory architecture; it does not preserve MemGPT's
-send_message I/O discipline.** These are different layers, and V1.4's central result is
-that the original four-dimension gate conflated them.
+**The plugin preserves MemGPT's memory architecture; as of V2.1 it also enforces MemGPT's
+send_message I/O discipline plugin-side — on hosts ≤2026.6.8 for single-tool-call chained
+turns (multi-tool-call turns can still hit the host's replay-safety path; pre-publish
+finding under Sonnet 4.6), display-layer only for tool-bearing turns on ≥2026.6.10
+(replay-safety policy, characterised in methodology bank #30).** The V1.4 verdict below stands as the pre-enforcement record: the layers are
+different, and V1.4's central result is that the original four-dimension gate conflated
+them.
 
 - **Memory architecture — preserved (Sense 3, architectural).** Tier reasoning is faithful
   on every memory-compelling probe (p1 core, p3 multi-tier, p6 ambiguous→core all match
@@ -31,6 +35,21 @@ that the original four-dimension gate conflated them.
   calling `send_message` (p6: 8/10 trials do `core_memory_append` then free-text; p4: 2/5).
   This is an **architectural gap in the I/O layer**, not a memory finding and not a
   measurement artefact (§4).
+- **V2.1 update (2026-07-06) — I/O-layer Sense 3 recovered via plugin-side enforcement,
+  host-version-scoped.** V2.1 implemented the missing suspenders + bouncer analogues
+  (methodology bank #25 closure, #30): `reply_payload_sending` cancels free-text
+  final/block payloads on the channel delivery path (assistant content is structurally
+  monologue, as in native `handle_ai_response`), and `before_agent_finalize` re-prompts a
+  turn that would finalize in free text without `send_message` (belt sentence verbatim as
+  the corrective instruction, ≤3 attempts). Re-run on the V1.4 environment
+  (openclaw@2026.6.8, Sonnet 4.5, uncoached §3 persona): **p6 discipline 10/10** (was
+  2/10; tier reasoning 10/10 unchanged), p1 3/3, p4 5/5 post-rubric (raw 0.60; both flags
+  adjudicated as the re-prompt duplication artefact) with #18-signature path agreement
+  2/5 (was 0/5; Cell A 3/5); gateway arm: full disciplined chain on the dispatcher lane
+  with 0 assistant free-text payloads. The recovery is **host-version-scoped**: from
+  OpenClaw 2026.6.10 the embedded runtime's replay-safety tightening blocks same-turn
+  re-prompt after any plugin-tool execution (bank #30), leaving display-layer suppression
+  (channel deliveries) as the guarantee for tool-bearing turns on newer hosts.
 
 The unified gate as numerically specified in V1.0 §5 **does not pass uniformly** (all four
 dimension rates miss their thresholds). But the dimensions cluster cleanly into a

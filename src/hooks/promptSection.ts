@@ -56,8 +56,10 @@ interface PromptSectionContribution {
 }
 
 /**
- * Remove the trailing synthetic empty assistant message that OpenClaw writes
- * after `reply_dispatch` claims the turn (§4.3 mechanism). This message has
+ * Remove the trailing synthetic empty assistant message that OpenClaw wrote
+ * after the (retired, V2.1) `reply_dispatch` hook claimed a turn. Kept as a
+ * defensive repair: sessions written under plugin 1.0.x may still carry the
+ * artefact, and the check is a no-op on clean sessions. The message has
  * `content: []` and zero token usage — it's a session-close record, not a
  * real LLM response. Its presence at the end of the JSONL causes the next
  * turn to record as "abandoned" even when the tool (send_message) delivered

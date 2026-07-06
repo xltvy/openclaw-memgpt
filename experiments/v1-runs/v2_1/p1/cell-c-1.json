@@ -1,0 +1,86 @@
+{
+  "cell": "C",
+  "probe_id": "p1",
+  "trial_id": 1,
+  "expected_tier": "core",
+  "pickle_path": "/private/tmp/openclaw-v2.1-verify/memgpt-data/agents/v1-cell-c-p1-t01/persistence_manager/2026-07-06_12_18_45_AM_.persistence.pickle",
+  "step_count": 2,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_replace": 1
+      },
+      "arg_keys": {
+        "core_memory_replace": [
+          [
+            "name",
+            "new_content",
+            "old_content"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I've updated your core memory to reflect that you're working on a dissertation about AI memory architectures. This will help me keep that context in mind during our conversations.Since you're working on a dissertation about AI memory architectures, I imagine you're diving into topics like:\n\n- Different memory systems (working memory, episodic, semantic, procedural)\n- Storage and retrieval mechanisms\n- Context management and context window challenges\n- Long-term memory persistence approaches\n- Memory editing and updating strategies\n\nIs there anything specific about memory architectures you'd like to explore or discuss? I'd be happy to help with research, brainstorming, or testing memory-related concepts.",
+      "pre_tool_text": "I've updated your core memory to reflect that you're working on a dissertation about AI memory architectures. This will help me keep that context in mind during our conversations.",
+      "char_count": 712,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "",
+      "pre_tool_text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 1,
+      "text": "I've updated your core memory to reflect that you're working on a dissertation about AI memory architectures. This will help me keep that context in mind during our conversations.\n\nSince you're working on a dissertation about AI memory architectures, I imagine you're diving into topics like:\n\n- Different memory systems (working memory, episodic, semantic, procedural)\n- Storage and retrieval mechanisms\n- Context management and context window challenges\n- Long-term memory persistence approaches\n- Memory editing and updating strategies\n\nIs there anything specific about memory architectures you'd like to explore or discuss? I'd be happy to help with research, brainstorming, or testing memory-related concepts."
+    }
+  ],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

@@ -732,6 +732,34 @@ shape of the resolution. Listed in roughly the order they surfaced.
     holds only under coaching (Sense 1) is not the same claim as one the architecture guarantees
     (Sense 3), and an undocumented system's faithful reproduction has to state which it is.
 
+    **V2.1 closure (2026-07-06).** The forward-looking sentence resolved: V2.1 implemented
+    the suspenders + bouncer analogues (#30) and retired the mis-premised reply_dispatch
+    hook (#29 — the Track-2 sketch above named the `reply_dispatch` boundary; the
+    investigation showed that boundary fires pre-model-pass and was never the reply
+    boundary). Pre-registered predictions (experiments/v1-runs/v2_1_predictions.md, banked
+    before any probe execution) vs observed — primary `--local` re-run, openclaw@2026.6.8,
+    claude-sonnet-4-5-20250929, uncoached §3 persona:
+    - p1 discipline: predicted 3/3 → **3/3** (bouncer honored 3, refusals 0).
+    - p6 discipline: 0.20 pre → predicted ≥0.9 target 1.0 → **1.00 (10/10)**; 9 trials
+      bouncer-recovered, 1 natively disciplined; tier reasoning **10/10 core** (pre 10/10 —
+      no regression from the revise instruction).
+    - p4: raw analyser 0.60 (2 `user_leakage` flags) → rubric review (documented §3.3
+      procedure for flagged cases) adjudicated both as the **re-prompt duplication
+      artefact** — the suppressed pre-bounce free text is mirrored as monologue and reused
+      verbatim as the revised pass's send_message payload; the user saw the text once, via
+      send_message — → **5/5**. #18-signature path agreement: A 3/5, C pre 0/5 →
+      **C post 2/5** (pre-registered target ≥2/5).
+    - Refusal falsifier: predicted 0 memory-tool-turn refusals → **0** (the two p4
+      refusals trace to stock `write`/`exec` turns — the model filling workspace identity
+      files — which are mutating actions within the 2026.6.8 model).
+    - Gateway supplementary arm (p6, real model): full disciplined chain on the dispatcher
+      lane (`core_memory_append` → revise honored → `send_message` → mirror+save; the
+      flush-pressure summariser also fired in-gateway) with **zero assistant free-text
+      payloads**; suspenders scope characterised in #30.
+    Verdict shift: "Sense 3 memory + Sense 1 send_message gap" → "Sense 3 across memory
+    and I/O layers on the pinned host; I/O call-layer recovery is host-version-scoped
+    (#30); display-layer guarantee applies to channel deliveries."
+
 26. **Patched MemGPT published to PyPI as `openclaw-memgpt-sidecar` v1.0.0.**
     The fork (`xltvy/memgpt-service`) becomes the development-and-methodology trail;
     the published package becomes the runtime artefact. End users install via standard
@@ -760,6 +788,73 @@ shape of the resolution. Listed in roughly the order they surfaced.
     edits are live — and it surfaces silently (no error; just old behaviour). Caught by verifying `--help`
     output against the source rather than assuming the symlink made edits live. CLAUDE.md's RUNNING THE
     VERTICAL SLICE section needs the correction (queued for 6d.8).
+
+29. **The V1 `reply_dispatch` suppression hook assumed hook semantics that don't match SDK
+    reality; the mismatch was invisible in V1.4 because the probe methodology sidesteps the
+    failure mode; characterised and retired through the V2.1 investigation.**
+    The S0.1 spike concluded `reply_dispatch` + `{handled:true}` swallows the LLM's trailing
+    no-tool-call reply after `send_message` (the §4.3 turn-termination mechanism); 6c.3/6c.7
+    built the suppression seam on that premise, and 1.0.0/1.0.1 shipped it. Against the
+    installed SDKs (verified line-level on both the 2026.6.8 and 2026.6.10 dists),
+    `reply_dispatch` fires per inbound message **before the reply resolver runs the model**
+    ("Allows plugins to own reply dispatch before the default model path runs" — hook-runner
+    doc), with the only post-run site gated behind an ACP post-reset flag. Consequence of
+    the real semantics: in a long-lived gateway process, turn N's `send_message` set the
+    suppression flag, and turn N+1's pre-model `reply_dispatch` consumed it and returned
+    `{handled:true}` — **silently dropping the user's next message** (recorded as
+    `"skipped", reason: "send_message handled output"`). V1.4 never observed this because
+    every `--local` probe turn is a fresh process: the in-memory flag could not persist
+    across turns, so the hook was a no-op in the exact environment used to validate it. The
+    V1-protocol attribution of `payloads:0` + `livenessState:"abandoned"` to the
+    reply_dispatch claim was also wrong — the artefact's true cause is the
+    CORE_MESSAGING_TOOLS gap alone (#10). V2.1 retired the hook (plain removal) and moved
+    I/O discipline to `before_agent_finalize` + `reply_payload_sending`. Pattern class:
+    6d.5 spec-vs-brief / 6d.6 SDK-vs-brief — when a prior assumption diverges from SDK
+    reality, SDK reality wins; a spike's conclusion is only as durable as the SDK surface it
+    was tested against, and a mechanism whose failure mode the validation environment
+    structurally cannot express is unvalidated even when "verified".
+
+30. **V2.1 implementation: send_message discipline enforced plugin-side via
+    `before_agent_finalize` (bouncer) + `reply_payload_sending` (suspenders); the bouncer's
+    coverage is host-version-scoped by OpenClaw's replay-safety policy, and the suspenders
+    gate channel deliveries, not the RPC result surface.**
+    *Fix loci.* Bouncer: when a turn would finalize with visible free text and no
+    `send_message` fired, the hook returns `{action:"revise"}` with the belt sentence
+    verbatim (memgpt_base.txt:19) + one imperative as the instruction, maxAttempts 3
+    (runtime hard cap). Suspenders: `final`/`block` free-text payloads are cancelled
+    unconditionally on the dispatcher delivery path (assistant content is structurally
+    monologue, per native `handle_ai_response`); `tool` payloads (send_message's own text),
+    errors, status notices and media pass through. Turn-scoped fired-flag seam in
+    sendMessage.ts, reset at `before_prompt_build`. All plugin-side; F1 fork untouched
+    (equivalence tests 8/8 post-implementation).
+    *Version-scoped constraint (empirical).* The runtime refuses revision after "potential
+    side effects", and the definition tightened between versions: 2026.6.8 counts
+    *completed mutating* tool calls (`isMutatingToolCall` — name/args-based; **false for
+    every memory tool**; `write`/non-read-only `exec` count), while 2026.6.10 counts *any
+    non-replay-safe execution* — and plugin tools are excluded from replay trust by core
+    policy (`recordStructuredReplayTrustForToolCall` early-returns on plugin tools; the
+    codex harness, by contrast, honors manifest `toolMetadata.replaySafe` at instance
+    level — an upstream inconsistency worth filing with V2-followup #6). Confirmed with an
+    identical scripted scenario (mock LLM: successful `core_memory_append` → free text →
+    no send_message; same plugin build): 2026.6.10 logs `requested revision after potential
+    side effects; finalizing` (leak finalizes); 2026.6.8 logs `requested one more pass:
+    attempt=1/3` and the revise pass delivers via `send_message`.
+    *Suspenders scope (empirical).* The `openclaw agent` RPC surface returns payloads
+    without traversing the dispatcher beforeDeliver chain — a scripted gateway turn with
+    trailing text after `send_message` leaked "Done." to the RPC result with no
+    `monologue_suppressed` event. The display guarantee therefore covers **channel
+    deliveries** (where `reply_payload_sending` is installed); CLI/RPC consumers see raw
+    payloads. On the real-model gateway probe this was moot: the bouncer fixed the turn
+    upstream and zero free-text payloads appeared.
+    *Environment recipe deltas (for future throwaway profiles).* Conversation-scoped hooks
+    (`agent_end`, `before_agent_finalize`) silently don't fire without
+    `plugins.entries.<id>.hooks.allowConversationAccess: true`; provider/model registration
+    lives in `openclaw.json` `models.providers` + `agents.defaults.models` (custom entries
+    need explicit `api`, e.g. `anthropic-messages` — the gateway lane 404s/mis-routes
+    without it); `plugins install` from a working directory is blocked by the manifest
+    scanner (>10k dirs) on both versions — install from the npm-packed tarball; gateway
+    lane resolves model auth from auth profiles (`openclaw models auth paste-api-key`),
+    not env-backed credentials.
 
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "V1.3 experimental driver — A≈C probe protocol against Cell A and Cell C"
 requires-python = ">=3.11,<3.12"
 dependencies = [
-    "pymemgpt",
+    "openclaw-memgpt-sidecar",
     # HuggingFace embedding-model deps. Both pymemgpt branches use
     # bge-small-en-v1.5 by default for archival / recall embeddings, so the
     # transitive set is the same. Listing them directly keeps `uv sync`
@@ -30,4 +30,4 @@ dependencies = [
 # A re-runs, transiently add `langchain==0.0.312` and `llama-index==0.8.62` to
 # dependencies, nuke .venv + uv.lock, `uv sync`, run. Remove pins before
 # switching back to Cell C.
-pymemgpt = { path = "../../../memgpt-service", editable = true }
+openclaw-memgpt-sidecar = { path = "../../../memgpt-service", editable = true }

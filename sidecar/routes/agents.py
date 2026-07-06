@@ -766,9 +766,31 @@ def summarize(agent_id: str, body: SummarizeRequest) -> SummarizeResponse:
     Those are "the two named operations" owned by OpenClaw in Shape B.
 
     Orchestration:
-      1. select_cutoff(messages, agent.model)          — F1 callable (e2c8c93 lineage)
-      2. summarize_messages(agent.model, messages[1:cutoff])
+      1. select_cutoff(messages_native, agent.model)    — F1 callable (e2c8c93 lineage)
+      2. summarize_messages(agent.model, messages_native[1:cutoff])
       3. package_summarize_message(summary, summary_message_count, hidden_message_count, total)
+
+    Native-invariant restoration (1.0.1 fix).  select_cutoff (F1, unmodified) asserts
+    messages[0]["role"] == "system" and excludes index 0 from the summarised slice — it
+    was written against native MemGPT's self._messages, where index 0 is always the
+    system prompt.  In Shape B, OpenClaw owns the conversation buffer and injects the
+    system prompt separately (promptBuilder), so the buffer POSTed here is *system-less*
+    (it begins with the first user message).  Feeding that to select_cutoff tripped its
+    assertion → 500 on every flush-pressure summarisation.
+
+    Fix: reconstruct the native shape internally by prepending the agent's static system
+    string (agent.system — the same attribute system_prompt_section reads, populated
+    unconditionally at construction and after :load).  select_cutoff token-counts index 0
+    then discards it, so agent.system's *content* is irrelevant to the algorithm — only
+    its presence (assertion) and slot (the [1:] offset) matter.  The prepend is
+    conditional: if a caller already supplies a system-led buffer (e.g. the F1 equivalence
+    test's native _BUFFER), we pass it through unchanged — idempotent, no double-system.
+
+    The returned `cutoff` is native-space (relative to messages_native, system at 0); the
+    plugin's ContextEngine.assemble() compensates with messages.slice(cutoff - 1) on its
+    system-less buffer.  Keeping cutoff native-space leaves the F1 equivalence test
+    (test_cutoff_matches_direct_call) directly verifiable — identical outputs on identical
+    inputs, no coordinate transformation.
 
     agent.model is read from the resident agent's config (read-only, §5.5 "one model for
     both").  The endpoint touches no buffer state — agent._messages, pm.messages,
@@ -786,18 +808,24 @@ def summarize(agent_id: str, body: SummarizeRequest) -> SummarizeResponse:
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not resident")
 
+    # Native-invariant restoration: prepend agent.system unless the caller already
+    # supplied a system-led buffer (idempotent — see docstring).  cutoff is native-space.
     messages = body.messages
+    if messages and messages[0].get("role") == "system":
+        messages_native = messages
+    else:
+        messages_native = [{"role": "system", "content": agent.system}] + messages
 
     try:
-        cutoff = select_cutoff(messages, agent.model)
+        cutoff = select_cutoff(messages_native, agent.model)
     except LLMError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    message_sequence_to_summarize = messages[1:cutoff]
+    message_sequence_to_summarize = messages_native[1:cutoff]
     summary = summarize_messages(agent.model, message_sequence_to_summarize)
 
     summary_message_count = len(message_sequence_to_summarize)
-    remaining_message_count = len(messages[cutoff:])
+    remaining_message_count = len(messages_native[cutoff:])
     hidden_message_count = body.total_message_count - remaining_message_count
 
     packaged_json = package_summarize_message(

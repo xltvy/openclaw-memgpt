@@ -347,45 +347,46 @@ test("packagedMessage with unexpected shape (not role:user) → pass-through + w
 
 // ── assemble: virtual-trim path ───────────────────────────────────────────────
 
-test("flush metadata present → assemble returns [messages[0] (system anchor), packagedMessage, ...messages.slice(cutoff)]", async () => {
-  // Faithful to MemGPT's native post-summarise buffer shape: system stays at [0],
-  // packaged summary is prepended after it, tail starts at cutoff.
+test("flush metadata present → assemble returns system-less [packagedMessage, ...messages.slice(cutoff - 1)]", async () => {
+  // 1.0.1 shape. OpenClaw's buffer is system-less (makeMessages[0] is a user message,
+  // the production shape); OpenClaw injects the system prompt separately, so no anchor
+  // is kept. The sidecar returns native-space cutoff, so the tail starts at cutoff - 1.
   const logger = makeLogger();
   const deps = makeDeps(logger);
-  const cutoff = 3;
+  const cutoff = 3; // native-space (counts the sidecar's internally-prepended system)
   const { api } = makeMockApi({
     [SESSION_KEY]: makeFlushEntry({ memoryFlushCutoff: cutoff }),
   });
 
   const engine = await createEngine(deps, api);
-  const messages = makeMessages(6); // indices 0-5
+  const messages = makeMessages(6); // indices 0-5, all user/assistant (system-less)
+  assert.notEqual(messages[0].role, "system"); // guard: production shape, no anchor
   const result = await engine.assemble({
     sessionId: SESSION_ID,
     sessionKey: SESSION_KEY,
     messages,
   });
 
-  // messages[0] is the system anchor — preserved at position 0
-  assert.deepStrictEqual(result.messages[0], messages[0]);
-  // messages[1] is the packagedMessage (role: user, content: the summary string)
-  assert.equal(result.messages[1].role, "user");
+  // messages[0] is the packagedMessage (role: user, content: the summary string) —
+  // NO system anchor (OpenClaw owns the system prompt).
+  assert.equal(result.messages[0].role, "user");
   assert.equal(
-    result.messages[1].content,
+    result.messages[0].content,
     "Summary: the previous 3 messages discussed X.",
   );
-  // messages[2:] is messages.slice(cutoff)
-  assert.deepStrictEqual(result.messages.slice(2), messages.slice(cutoff));
-  // Total length = 1 (anchor) + 1 (packaged) + (6 - 3) = 5
-  assert.equal(result.messages.length, 2 + (messages.length - cutoff));
+  // messages[1:] is messages.slice(cutoff - 1) — native-space cutoff mapped back.
+  assert.deepStrictEqual(result.messages.slice(1), messages.slice(cutoff - 1));
+  // Total length = 1 (packaged) + (6 - (cutoff - 1)) = 5
+  assert.equal(result.messages.length, 1 + (messages.length - (cutoff - 1)));
 });
 
 test("virtual trim: estimatedTokens is derived from the returned messages, not the full input", async () => {
   // Pins the invariant that estimatedTokens is computed from assemble()'s returned
   // messages, not the original input.
-  // Returned set: [messages[0] (anchor), packagedMessage, messages[3..5]] = 5 messages.
+  // Returned set (1.0.1 system-less shape): [packagedMessage, messages[2..5]] = 5 messages.
   const logger = makeLogger();
   const deps = makeDeps(logger);
-  const cutoff = 3;
+  const cutoff = 3; // native-space
   const { api } = makeMockApi({
     [SESSION_KEY]: makeFlushEntry({ memoryFlushCutoff: cutoff }),
   });
@@ -398,8 +399,8 @@ test("virtual trim: estimatedTokens is derived from the returned messages, not t
     messages,
   });
 
-  // Verify the returned set is the trimmed one: [anchor, packed, tail...]
-  assert.equal(result.messages.length, 2 + (6 - cutoff));
+  // Verify the returned set is the trimmed one: [packed, tail...] (no anchor)
+  assert.equal(result.messages.length, 1 + (6 - (cutoff - 1)));
 
   // Manually compute expected tokens from the returned messages
   let chars = 0;

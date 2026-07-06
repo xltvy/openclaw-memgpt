@@ -126,15 +126,239 @@ memoryEvents.on(MEMORY_EVENT_CHANNEL, (e) => {
 
 ## Known behaviour
 
-- **The agent replies to you conversationally.** Unlike MemGPT's reference CLI, which forces every reply through a `send_message` tool call, this plugin lets the agent answer in free-form text. This is purely a user-experience choice and does not affect how memory is stored or recalled.
+- **The agent replies through `send_message`, like native MemGPT.** As of 1.1.0 the plugin enforces MemGPT's I/O discipline structurally: a turn that would end in free-form text without a `send_message` call is re-prompted (up to 3 attempts, using MemGPT's own base-prompt wording), and on channel deliveries any remaining free-form assistant text is treated as inner monologue — suppressed from the chat and recorded in the observability log as `monologue_suppressed` events (with the text at `verbose`). Memory storage and recall are unaffected.
 - **First-run cold start (~60 s).** The first time the embedding model is needed it is downloaded and cached. Run `openclaw memgpt prewarm` (or accept the wizard's offer) to get this out of the way; every run after that is fast.
 - **One-shot `--local` mode.** Either run `openclaw memgpt prewarm` first, or accept the one-time cold-start cost on the first turn — it works normally afterwards.
+
+### Host version compatibility
+
+The send_message enforcement's re-prompt behaves differently across OpenClaw versions, because OpenClaw's replay-safety policy — which decides when a plugin may ask for another model pass — changed between releases:
+
+- **OpenClaw ≤ 2026.6.8** — the re-prompt fires for turns that end in free-form text after a single memory-tool call (the common shape: one `core_memory_append`, then text). Turns with multiple tool calls in one message, or long sessions with accumulated tool activity, may still hit the host's replay-safety path and finalize without a re-prompt — models that batch several tool calls per turn (e.g. Claude Sonnet 4.6) encounter this more often.
+- **OpenClaw ≥ 2026.6.10** — the replay-safety policy tightened further: the re-prompt fires only on turns that ran no tools at all. Any turn that executed a tool first cannot be re-prompted; the host treats plugin-tool execution as a potential side effect and declines the extra model pass.
+
+The inner-monologue suppression on channel deliveries holds on all versions, as does everything about memory storage and recall.
+
+This is a characterised property of the OpenClaw host, not a plugin defect — the same single-tool scenario produces a re-prompt on 2026.6.8 and a logged `requested revision after potential side effects` refusal on 2026.6.10, and the refusal line is the marker to look for in the host log when a re-prompt didn't fire. See `docs/v1-results.md` (V2.1 update) in the repository for the verification detail.
 
 ## Troubleshooting
 
 - **"The agent doesn't remember things across sessions."** Check that your API key is correct — that the configured environment variable is set, or the stored key is valid. Memory operations silently no-op if the sidecar can't reach the LLM.
 - **"My first turn times out (cold start)."** Run `openclaw memgpt prewarm` to download and cache the embedding model up front, or wait through the first ~60 s.
 - **"Embedder cache appears unavailable."** Run `openclaw memgpt prewarm` to re-download the embedding model.
+
+Common issues encountered when installing and running `openclaw-memgpt`, based on real setup experience.
+
+---
+
+### Plugin loads but MemGPT tools are not available to the agent
+
+**Symptom:** The gateway logs show the plugin registering correctly —
+
+```
+openclaw-memgpt: 7 tools + before_prompt_build ... + ContextEngine + lifecycle service registered
+```
+
+— but the agent reports only file-based tools (`read`, `write`, `exec`, etc.) and denies having `core_memory_append`, `archival_memory_search`, etc.
+
+**Cause:** The plugin's tools are blocked by OpenClaw's tool allowlist, or the memory slot is still set to `memory-core`.
+
+**Fix:**
+
+```bash
+# Allow the plugin's tools explicitly
+openclaw config set tools.alsoAllow '["core_memory_append","core_memory_replace","archival_memory_insert","archival_memory_search","conversation_search","conversation_search_date","send_message"]' --strict-json
+
+# Ensure the memory slot points to this plugin
+openclaw config set plugins.slots.memory "openclaw-memgpt"
+
+# Silence the auto-load warning and lock in the plugin
+openclaw config set plugins.allow '["openclaw-memgpt"]' --strict-json
+
+openclaw gateway restart
+```
+
+Verify with:
+
+```bash
+openclaw agent --agent main --message "List every tool you have available right now."
+```
+
+---
+
+### `openclaw memgpt setup` — Unknown command
+
+**Symptom:**
+
+```
+[openclaw] Reason: Unknown command: openclaw memgpt. No built-in command or plugin CLI metadata owns "memgpt".
+```
+
+**Cause:** The plugin does not currently register a CLI command via `api.registerCli`. The `openclaw memgpt setup` wizard is not yet implemented.
+
+**Fix:** Configure the plugin manually via `openclaw config set`:
+
+```bash
+openclaw config set plugins.entries.openclaw-memgpt.config.provider "anthropic"
+openclaw config set plugins.entries.openclaw-memgpt.config.namespace "default"
+openclaw config set plugins.entries.openclaw-memgpt.config.credential '{"source":"env","var":"ANTHROPIC_API_KEY"}' --strict-json
+openclaw gateway restart
+```
+
+---
+
+### Plugin is installed but disabled — `memory slot set to "memory-core"`
+
+**Symptom:** `openclaw plugins inspect openclaw-memgpt --runtime --json` shows:
+
+```json
+"activated": false,
+"activationReason": "memory slot set to \"memory-core\""
+```
+
+**Cause:** OpenClaw's memory slot is occupied by the default `memory-core` plugin. Memory is an exclusive slot — only one plugin can own it at a time.
+
+**Fix:**
+
+```bash
+openclaw config set plugins.slots.memory "openclaw-memgpt"
+openclaw gateway restart
+```
+
+---
+
+### Sidecar not found / MemGPT tools registered but agent uses file-based memory anyway
+
+**Symptom:** Tools appear in the agent's toolset but the agent reports it is using file-based memory, or core memory blocks are empty (`"The user."`).
+
+**Cause:** The Python sidecar (`openclaw-memgpt-sidecar`) is not installed or not running.
+
+**Fix:** Install the sidecar into a Python 3.11 environment (the package requires `>=3.11,<3.12`):
+
+```bash
+# If you use pyenv and are on Python 3.12+
+pyenv install 3.11
+~/.pyenv/versions/3.11.*/bin/python3 -m venv ~/.venvs/openclaw-memgpt-sidecar
+source ~/.venvs/openclaw-memgpt-sidecar/bin/activate
+pip install openclaw-memgpt-sidecar
+```
+
+If you want to run the sidecar manually and point the plugin to it:
+
+```bash
+# In a separate terminal, with the venv active
+source ~/.venvs/openclaw-memgpt-sidecar/bin/activate
+python -m openclaw_memgpt_sidecar  # note the port it binds to
+
+# Then tell the plugin where to find it
+openclaw config set plugins.entries.openclaw-memgpt.config.sidecarUrl "http://localhost:<port>"
+openclaw gateway restart
+```
+
+> **Note for macOS users:** `pip show <package> --break-system-packages` is not a valid flag for `pip show`. Use plain `pip show <package>` to inspect installed packages.
+
+---
+
+### `openclaw memgpt` command unavailable after install
+
+**Symptom:**
+
+```
+[openclaw] The `openclaw memgpt` command is unavailable
+```
+
+**Cause:** Either the plugin is not in `plugins.allow`, or the CLI descriptors are not registered. Check both:
+
+```bash
+openclaw config get plugins.allow
+openclaw plugins inspect openclaw-memgpt --runtime --json | grep -E '"cliCommands"|"commands"'
+```
+
+**Fix:** Add the plugin to the allow list:
+
+```bash
+openclaw config set plugins.allow '["openclaw-memgpt"]' --strict-json
+openclaw gateway restart
+```
+
+---
+
+### No target session — missing `--agent` flag
+
+**Symptom:**
+
+```
+Error: No target session selected. Use --agent <id>, --session-key <key>, --session-id <id>, or --to <E.164>.
+```
+
+**Cause:** `openclaw agent` requires an explicit agent target. There is no config key for a default agent ID — it is hardcoded as `main`.
+
+**Fix:** Always pass `--agent main`:
+
+```bash
+openclaw agent --agent main --message "your message"
+```
+
+For convenience, add a shell alias to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+alias oc='openclaw agent --agent main'
+```
+
+---
+
+### How to disable file-based memory and use MemGPT exclusively
+
+To ensure the agent only uses MemGPT tools and cannot fall back to file-based memory:
+
+```bash
+openclaw config set plugins.slots.memory "openclaw-memgpt"
+openclaw config set agents.defaults.memorySearch.enabled false
+openclaw config set agents.defaults.contextInjection "never"
+openclaw gateway restart
+```
+
+> **Note:** `contextInjection: "never"` also disables injection of `SOUL.md`, `AGENTS.md`, and `USER.md`. If you want to keep persona files active but only disable memory file injection, check `agents.defaults.bootstrap` for finer-grained controls.
+
+---
+
+### How to verify the plugin is active in a session
+
+```bash
+# Check runtime activation status
+openclaw plugins inspect openclaw-memgpt --runtime --json | grep -E '"activated"|"status"|"toolNames"'
+
+# Check which plugin owns the memory slot
+openclaw config get plugins.slots
+
+# Ask the agent directly
+openclaw agent --agent main --message "List every tool you have available right now."
+```
+
+The agent should list `core_memory_append`, `core_memory_replace`, `archival_memory_insert`, `archival_memory_search`, `conversation_search`, `conversation_search_date`, and `send_message` among its tools.
+
+---
+
+### How to start a fresh session
+
+Use `--session-key` with a unique name:
+
+```bash
+openclaw agent --agent main --session-key test-1 --message "your message"
+```
+
+Each unique key starts an isolated session with no in-context history. Cross-session memory (core, recall, archival) still persists via the sidecar.
+
+---
+
+### Enable verbose observability for debugging
+
+```bash
+openclaw config set plugins.entries.openclaw-memgpt.config.observability "verbose"
+openclaw gateway restart
+```
+
+The gateway logs will then emit per-turn memory events, sidecar interactions, and hook firing details, which makes it much easier to confirm the plugin is doing real work rather than falling back silently.
 
 ## License
 

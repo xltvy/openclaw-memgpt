@@ -1,0 +1,85 @@
+{
+  "cell": "C",
+  "probe_id": "p6",
+  "trial_id": 3,
+  "expected_tier": "ambiguous(core|archival)",
+  "pickle_path": "/private/tmp/openclaw-v2.1-verify/memgpt-data/agents/v1-cell-c-p6-t03/persistence_manager/2026-07-06_12_25_43_AM_.persistence.pickle",
+  "step_count": 2,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ]
+      }
+    },
+    {
+      "step_idx": 1,
+      "tools": {
+        "send_message": 1
+      },
+      "arg_keys": {
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I'll update your core memory to note your evening work schedule.Got it! I've noted that you typically work in the evening. This helps me understand your schedule and timing preferences.",
+      "pre_tool_text": "I'll update your core memory to note your evening work schedule.",
+      "char_count": 185,
+      "within_cap": true,
+      "user_leakage": false
+    },
+    {
+      "step_idx": 1,
+      "text": "",
+      "pre_tool_text": "",
+      "char_count": 0,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 1,
+      "text": "Got it! I've noted that you typically work in the evening. This helps me understand your schedule and timing preferences."
+    }
+  ],
+  "leakage_flags": [
+    {
+      "step_idx": 0,
+      "reason": "no send_message at chain terminus"
+    }
+  ],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    },
+    {
+      "step_idx": 1,
+      "tiers": {
+        "core": 0,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

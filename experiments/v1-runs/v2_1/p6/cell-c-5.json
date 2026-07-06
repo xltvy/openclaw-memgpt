@@ -1,0 +1,57 @@
+{
+  "cell": "C",
+  "probe_id": "p6",
+  "trial_id": 5,
+  "expected_tier": "ambiguous(core|archival)",
+  "pickle_path": "/private/tmp/openclaw-v2.1-verify/memgpt-data/agents/v1-cell-c-p6-t05/persistence_manager/2026-07-06_12_26_16_AM_.persistence.pickle",
+  "step_count": 1,
+  "tools_by_step": [
+    {
+      "step_idx": 0,
+      "tools": {
+        "core_memory_append": 1,
+        "send_message": 1
+      },
+      "arg_keys": {
+        "core_memory_append": [
+          [
+            "content",
+            "name"
+          ]
+        ],
+        "send_message": [
+          [
+            "message"
+          ]
+        ]
+      }
+    }
+  ],
+  "monologue_by_step": [
+    {
+      "step_idx": 0,
+      "text": "I need to update my understanding of your schedule in my memory systems.",
+      "pre_tool_text": "I need to update my understanding of your schedule in my memory systems.",
+      "char_count": 72,
+      "within_cap": true,
+      "user_leakage": false
+    }
+  ],
+  "send_message_calls": [
+    {
+      "step_idx": 0,
+      "text": "Got it! I've noted that you typically work in the evening. This helps me understand your schedule better \u2014 I'll keep that in mind for timing-related things like reminders or when to check in during heartbeats. \ud83c\udf19"
+    }
+  ],
+  "leakage_flags": [],
+  "tiers_by_step": [
+    {
+      "step_idx": 0,
+      "tiers": {
+        "core": 1,
+        "archival": 0,
+        "recall": 0
+      }
+    }
+  ]
+}

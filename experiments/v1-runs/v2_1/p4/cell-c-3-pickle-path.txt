@@ -1,0 +1,1 @@
+/private/tmp/openclaw-v2.1-verify/memgpt-data/agents/v1-cell-c-p4-t03/persistence_manager/2026-07-06_12_22_38_AM_.persistence.pickle

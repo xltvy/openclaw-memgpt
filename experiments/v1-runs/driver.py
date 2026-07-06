@@ -45,6 +45,30 @@ from extract import extract_v14_record
 
 HERE = Path(__file__).resolve().parent
 
+# --- V2.1 environment overrides ----------------------------------------------
+# The V1.4 slate ran against the operator's `openclaw --dev` profile
+# (`~/.openclaw-dev`). V2.1 re-runs pin a throwaway profile + a pinned
+# OpenClaw binary and write artefacts to a separate root so the V1.4
+# record stays untouched:
+#   V1_PROFILE_DIR — OPENCLAW_STATE_DIR profile root; when set, invocations
+#                    drop `--dev` and export OPENCLAW_STATE_DIR instead.
+#   OPENCLAW_BIN   — openclaw binary (default `openclaw` on PATH; V2.1 uses
+#                    a pinned 2026.6.8 npm install).
+#   V1_RUNS_DIR    — artefact root for p<N>/ trial dirs (default: HERE).
+#   V1_OBSERVABILITY — plugin observability level pinned at slate start
+#                    (default `default`, the V1.4 value; V2.1 uses verbose).
+PROFILE_DIR = (
+    Path(os.environ["V1_PROFILE_DIR"]).expanduser().resolve()
+    if os.environ.get("V1_PROFILE_DIR")
+    else None
+)
+OPENCLAW_BIN = os.environ.get("OPENCLAW_BIN", "openclaw")
+RUNS_DIR = (
+    Path(os.environ["V1_RUNS_DIR"]).expanduser().resolve()
+    if os.environ.get("V1_RUNS_DIR")
+    else HERE
+)
+
 
 # --- Probe set --------------------------------------------------------------
 # Hardcoded from `docs/v1-probes.md` §3. The doc is the authoritative
@@ -178,7 +202,7 @@ def health_checks(cell: str) -> list[HealthCheckResult]:
     if cell == "C":
         try:
             r = subprocess.run(
-                ["openclaw", "--help"], capture_output=True, text=True, timeout=10
+                [OPENCLAW_BIN, "--help"], capture_output=True, text=True, timeout=10
             )
             ok = r.returncode == 0
             detail = (r.stdout or r.stderr).splitlines()[0] if (r.stdout or r.stderr) else ""
@@ -205,7 +229,7 @@ def assert_healthy(cell: str) -> None:
 
 
 def _probe_dir(probe_id: str) -> Path:
-    p = HERE / probe_id
+    p = RUNS_DIR / probe_id
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -322,9 +346,10 @@ async def _run_cell_a_trial(probe: Probe, trial_id: int) -> None:
 
 # --- Cell C trial execution -------------------------------------------------
 
-CONFIG_PATH = Path.home() / ".openclaw-dev" / "openclaw.json"
-SIDECAR_DATA_DIR = Path.home() / ".openclaw-dev" / "memgpt-data"
-OPENCLAW_SESSIONS_DIR = Path.home() / ".openclaw-dev" / "agents" / "main" / "sessions"
+_PROFILE_ROOT = PROFILE_DIR if PROFILE_DIR is not None else Path.home() / ".openclaw-dev"
+CONFIG_PATH = _PROFILE_ROOT / "openclaw.json"
+SIDECAR_DATA_DIR = _PROFILE_ROOT / "memgpt-data"
+OPENCLAW_SESSIONS_DIR = _PROFILE_ROOT / "agents" / "main" / "sessions"
 
 # Controlled variables — `docs/v1-cells.md` §3. The driver pins these into the
 # plugin config at slate start rather than trusting whatever the operator's
@@ -379,7 +404,7 @@ def _apply_v1_overrides(snapshot: dict) -> None:
     plugin_cfg = _plugin_config(cfg)
     plugin_cfg.update(snapshot)  # start from operator's prior state
     plugin_cfg.pop("sidecarUrl", None)  # force spawn mode
-    plugin_cfg["observability"] = "default"
+    plugin_cfg["observability"] = os.environ.get("V1_OBSERVABILITY", "default")
     # Pin the §3 controlled variables (methodology-bank #23) — Cell A reads
     # these via its own CLI config; Cell C must match byte-for-byte.
     plugin_cfg["persona"] = V1_PERSONA
@@ -525,13 +550,17 @@ def _invoke_openclaw_turn(
     `trial_log_path` for post-hoc inspection (the V1 PROTOCOL warns that
     the JSON envelope's success fields are unreliable; the log is
     auxiliary diagnostic, not acceptance signal)."""
-    cmd = ["openclaw", "--dev", "agent", "--local", "--agent", "main", "--message", message, "--json"]
+    profile_args = ["--dev"] if PROFILE_DIR is None else []
+    cmd = [OPENCLAW_BIN, *profile_args, "agent", "--local", "--agent", "main", "--message", message, "--json"]
     if session_id is not None:
         cmd += ["--session-id", session_id]
+    env = dict(os.environ)
+    if PROFILE_DIR is not None:
+        env["OPENCLAW_STATE_DIR"] = str(PROFILE_DIR)
     with open(trial_log_path, "a") as log:
         log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} :: {' '.join(cmd)}\n")
         log.flush()
-        r = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
+        r = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, timeout=timeout, env=env)
     if r.returncode != 0:
         raise RuntimeError(
             f"openclaw exited with returncode {r.returncode}; see {trial_log_path}"
