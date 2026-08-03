@@ -15,9 +15,11 @@ import * as clack from "@clack/prompts";
 
 import type {
   CredentialRef,
+  EmbeddingProviderId,
   ObservabilityLevel,
   ProviderId,
 } from "../config.ts";
+import { probeEmbeddingDim } from "./embedderProbe.ts";
 import {
   PROVIDER_ORDER,
   PROVIDER_PRESETS,
@@ -94,8 +96,20 @@ export interface WizardAnswers {
   pastedKey?: string;
   /** True when switching file→env: the old secret file should be removed. */
   removeOldSecretFile: boolean;
+  /** Embedder for vector memory. The remaining embedding* fields are set only
+   *  for `openai-compatible` (built-in bge needs no parameters). */
+  embeddingProvider: EmbeddingProviderId;
+  embeddingModel?: string;
+  embeddingEndpointUrl?: string;
+  embeddingDim?: number;
   observability: ObservabilityLevel;
   sidecarUrl?: string;
+}
+
+/** Injectable IO for `collectAnswers` (tests script it; production defaults). */
+export interface CollectDeps {
+  /** Embedding-dimension probe (embedderProbe.ts). Injected in tests. */
+  probeDim?: (endpointUrl: string, model: string) => Promise<number | undefined>;
 }
 
 const OBSERVABILITY_OPTIONS: SelectOption<ObservabilityLevel>[] = [
@@ -124,6 +138,7 @@ const OBSERVABILITY_OPTIONS: SelectOption<ObservabilityLevel>[] = [
 export async function collectAnswers(
   p: Prompter,
   existing: Record<string, unknown> = {},
+  deps: CollectDeps = {},
 ): Promise<WizardAnswers | null> {
   const existingProvider = existing.provider as ProviderId | undefined;
   const existingCred = existing.credential as CredentialRef | undefined;
@@ -131,6 +146,17 @@ export async function collectAnswers(
     typeof existing.model === "string" ? existing.model : undefined;
   const existingBaseUrl =
     typeof existing.baseUrl === "string" ? existing.baseUrl : undefined;
+  const existingEmbProvider = existing.embeddingProvider as
+    | EmbeddingProviderId
+    | undefined;
+  const existingEmbModel =
+    typeof existing.embeddingModel === "string"
+      ? existing.embeddingModel
+      : undefined;
+  const existingEmbEndpoint =
+    typeof existing.embeddingEndpointUrl === "string"
+      ? existing.embeddingEndpointUrl
+      : undefined;
   const existingObs =
     typeof existing.observability === "string"
       ? (existing.observability as ObservabilityLevel)
@@ -184,6 +210,83 @@ export async function collectAnswers(
   });
   if (p.isCancel(model)) return cancelled(p);
 
+  // ── Required: embedder ────────────────────────────────────────────────────
+  // First-class install-time choice (the sidecar's vector memory). Built-in
+  // bge is zero-config; the openai-compatible path needs endpoint + model, and
+  // the dim is MEASURED via a live probe where possible — a wrong dim is
+  // silent until the vector store misbehaves, so we don't ask users to know it.
+  const embeddingProvider = await p.select<EmbeddingProviderId>({
+    message: "Which embedding model should memory search use?",
+    options: [
+      {
+        value: "huggingface",
+        label: "Built-in (bge-small, runs in-process)",
+        hint: "no extra server; ~60–90s one-time download",
+      },
+      {
+        value: "openai-compatible",
+        label: "OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, LiteLLM)",
+        hint: "no download; the server must host the model",
+      },
+    ],
+    initialValue: existingEmbProvider ?? "huggingface",
+  });
+  if (p.isCancel(embeddingProvider)) return cancelled(p);
+
+  let embeddingModel: string | undefined;
+  let embeddingEndpointUrl: string | undefined;
+  let embeddingDim: number | undefined;
+  if (embeddingProvider === "openai-compatible") {
+    const endpointEntered = await p.text({
+      message: "Base URL of the embedding endpoint",
+      placeholder: "http://127.0.0.1:11434/v1",
+      initialValue: existingEmbEndpoint ?? "http://127.0.0.1:11434/v1",
+      validate: (v) => validateUrl(v),
+    });
+    if (p.isCancel(endpointEntered)) return cancelled(p);
+    embeddingEndpointUrl = asText(endpointEntered).trim();
+
+    const embModelEntered = await p.text({
+      message: "Embedding model name (as the endpoint knows it)",
+      placeholder: "nomic-embed-text",
+      initialValue: existingEmbModel,
+      validate: (v) =>
+        (v ?? "").trim().length === 0
+          ? "Embedding model name is required"
+          : undefined,
+    });
+    if (p.isCancel(embModelEntered)) return cancelled(p);
+    embeddingModel = asText(embModelEntered).trim();
+
+    const probe = deps.probeDim ?? probeEmbeddingDim;
+    p.note(
+      `Measuring the embedding dimension against ${embeddingEndpointUrl} …`,
+      "Probing endpoint",
+    );
+    embeddingDim = await probe(embeddingEndpointUrl, embeddingModel);
+    if (embeddingDim !== undefined) {
+      p.note(
+        `${embeddingModel} returns ${embeddingDim}-dimensional vectors.`,
+        "Detected",
+      );
+    } else {
+      p.note(
+        `Couldn't probe ${embeddingEndpointUrl} (endpoint down, model not hosted, or auth-gated). Enter the dimension manually — it must match the vector length the model returns; the sidecar verifies it at startup.`,
+        "Probe failed",
+      );
+      const dimEntered = await p.text({
+        message: `Embedding dimension of ${embeddingModel}`,
+        placeholder: "e.g. 768 for nomic-embed-text",
+        validate: (v) =>
+          /^[1-9][0-9]*$/.test((v ?? "").trim())
+            ? undefined
+            : "Must be a positive integer (the model's vector length)",
+      });
+      if (p.isCancel(dimEntered)) return cancelled(p);
+      embeddingDim = Number(asText(dimEntered).trim());
+    }
+  }
+
   // ── Optional: observability (default off) ────────────────────────────────
   const observability = await p.select<ObservabilityLevel>({
     message: "Observability level (optional)",
@@ -210,6 +313,10 @@ export async function collectAnswers(
     credential: credResult.credential,
     pastedKey: credResult.pastedKey,
     removeOldSecretFile: credResult.removeOldSecretFile,
+    embeddingProvider: embeddingProvider as EmbeddingProviderId,
+    embeddingModel,
+    embeddingEndpointUrl,
+    embeddingDim,
     observability: observability as ObservabilityLevel,
     sidecarUrl,
   };
@@ -371,11 +478,16 @@ function summarise(answers: WizardAnswers, defaultBaseUrl?: string): string {
       : `environment variable ${answers.credential.var}`;
   const base = answers.baseUrl ?? defaultBaseUrl ?? "(provider default)";
   const sidecar = answers.sidecarUrl ?? "spawned (default)";
+  const embedder =
+    answers.embeddingProvider === "openai-compatible"
+      ? `${answers.embeddingModel} @ ${answers.embeddingEndpointUrl} (${answers.embeddingDim}-dim)`
+      : "built-in (HuggingFace bge-small)";
   return [
     `Provider:       ${PROVIDER_PRESETS[answers.provider].label}`,
     `Base URL:       ${base}`,
     `Model:          ${answers.model}`,
     `Credential:     ${cred}`,
+    `Embedder:       ${embedder}`,
     `Observability:  ${answers.observability}`,
     `Sidecar:        ${sidecar}`,
   ].join("\n");

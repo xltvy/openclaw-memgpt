@@ -17,6 +17,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { embeddingEnv, type PluginConfig } from "../config.ts";
 import { findSidecarDir } from "../lifecycle/lifecycleManager.ts";
 import { isEndpointReachable, isLocalUrl } from "../reachability.ts";
 import {
@@ -64,12 +65,22 @@ export interface RunWizardDeps {
    */
   reachable?: (url: string) => Promise<boolean>;
   /**
+   * Embedding-dimension probe forwarded to `collectAnswers` (openai-compatible
+   * embedder flow). Defaults to the real `probeEmbeddingDim`. Injected in tests.
+   */
+  probeDim?: (endpointUrl: string, model: string) => Promise<number | undefined>;
+  /**
    * Pre-warm the embedder cache by running the sidecar's `--prewarm` mode
    * (downloads + caches the model, then exits). Resolves true on success.
-   * Defaults to a real `uv run python main.py --prewarm`. Injected in tests so
-   * the wizard suite never spawns a subprocess.
+   * Defaults to a real `uv run python main.py --prewarm`; `extraEnv` carries
+   * the OPENCLAW_MEMGPT_EMBEDDING_* pins so a custom huggingface model warms
+   * the right cache. Injected in tests so the wizard suite never spawns a
+   * subprocess.
    */
-  prewarmEmbedder?: (stateDir: string) => Promise<boolean>;
+  prewarmEmbedder?: (
+    stateDir: string,
+    extraEnv?: Record<string, string>,
+  ) => Promise<boolean>;
 }
 
 export interface RunWizardResult {
@@ -103,7 +114,9 @@ export async function runWizard(
   const stateDir = deps.stateDir ?? (await defaultStateDir());
 
   const existing = await readPluginConfigBlock(configIO);
-  const answers = await collectAnswers(prompter, existing);
+  const answers = await collectAnswers(prompter, existing, {
+    probeDim: deps.probeDim,
+  });
   if (answers === null) return { status: "cancelled" };
 
   const preset = PROVIDER_PRESETS[answers.provider];
@@ -128,6 +141,9 @@ export async function runWizard(
   );
 
   // 2. Config block (also sets hooks.allowConversationAccess — see mergePluginConfig).
+  //    The embedding* fields are undefined for the built-in embedder, which
+  //    mergePluginConfig DELETES — so switching openai-compatible → built-in
+  //    clears the stale endpoint/model/dim instead of leaving them behind.
   await mergePluginConfig(
     {
       provider: answers.provider,
@@ -136,6 +152,10 @@ export async function runWizard(
       credential: answers.credential,
       observability: answers.observability,
       sidecarUrl: answers.sidecarUrl,
+      embeddingProvider: answers.embeddingProvider,
+      embeddingModel: answers.embeddingModel,
+      embeddingEndpointUrl: answers.embeddingEndpointUrl,
+      embeddingDim: answers.embeddingDim,
     },
     configIO,
   );
@@ -174,6 +194,7 @@ export async function runWizard(
   // the `uv` prerequisite and the embedder cold-start at setup time rather than
   // letting them bite at the first turn.
   if (answers.sidecarUrl === undefined) {
+    const remoteEmbedder = answers.embeddingProvider === "openai-compatible";
     const uvOk = await (deps.checkUv ?? defaultCheckUv)();
     if (!uvOk) {
       // Without uv we can't run the sidecar (or pre-warm); just flag the
@@ -182,9 +203,18 @@ export async function runWizard(
         "`uv` was not found on your PATH. The plugin runs the memory sidecar via `uv run uvicorn`, so install uv before starting an agent:\n  https://docs.astral.sh/uv/  (e.g. `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)\nThis wizard does not install it for you.",
         "Prerequisite missing",
       );
+      if (!remoteEmbedder) {
+        prompter.note(
+          "The first agent turn downloads the embedding model (~60–90s) before memory is ready; subsequent runs are fast.",
+          "Heads-up",
+        );
+      }
+    } else if (remoteEmbedder) {
+      // Nothing to download for a remote embedder — the endpoint hosts the
+      // model. Just remind the user the server has to be running.
       prompter.note(
-        "The first agent turn downloads the embedding model (~60–90s) before memory is ready; subsequent runs are fast.",
-        "Heads-up",
+        `No embedding model download needed — ${answers.embeddingEndpointUrl} hosts it. Make sure that server is running before starting an agent; the plugin does not launch it.`,
+        "Embedder",
       );
     } else {
       // Offer to pre-warm the embedder cache now. A cold (uncached) load is a
@@ -202,7 +232,10 @@ export async function runWizard(
           "Downloading the embedding model — runs once, may take up to ~60s …",
           "Pre-warming",
         );
-        const ok = await (deps.prewarmEmbedder ?? defaultPrewarmEmbedder)(stateDir);
+        const ok = await (deps.prewarmEmbedder ?? defaultPrewarmEmbedder)(
+          stateDir,
+          embeddingEnv(answers),
+        );
         prompter.note(
           ok
             ? "Embedder cached — the first agent turn will be fast."
@@ -226,8 +259,12 @@ export async function runWizard(
 export interface RunPrewarmDeps {
   logger?: Logger;
   stateDir?: string;
+  configIO?: ConfigIO;
   checkUv?: () => Promise<boolean>;
-  prewarmEmbedder?: (stateDir: string) => Promise<boolean>;
+  prewarmEmbedder?: (
+    stateDir: string,
+    extraEnv?: Record<string, string>,
+  ) => Promise<boolean>;
 }
 
 /**
@@ -236,10 +273,21 @@ export interface RunPrewarmDeps {
  * (e.g. after the HF cache is evicted and the runtime sidecar reports the cache
  * unavailable). Downloads + caches the model and writes the warm-marker so
  * subsequent cold-starts are offline-fast. Returns true on success.
+ *
+ * No-op success for a remote (openai-compatible) embedder: nothing is
+ * downloaded on that path, so there is no cache to warm.
  */
 export async function runPrewarm(deps: RunPrewarmDeps = {}): Promise<boolean> {
   const logger = deps.logger ?? console;
   const stateDir = deps.stateDir ?? (await defaultStateDir());
+
+  const existing = await readPluginConfigBlock(deps.configIO ?? sdkConfigIO);
+  if (existing.embeddingProvider === "openai-compatible") {
+    logger.info(
+      "openclaw-memgpt: a remote (openai-compatible) embedder is configured — nothing to pre-warm. Make sure the embedding endpoint is running instead.",
+    );
+    return true;
+  }
 
   const uvOk = await (deps.checkUv ?? defaultCheckUv)();
   if (!uvOk) {
@@ -249,10 +297,33 @@ export async function runPrewarm(deps: RunPrewarmDeps = {}): Promise<boolean> {
     return false;
   }
 
+  // Pass the embedder pins so a custom huggingface model warms ITS cache, not
+  // the default's.
+  const extraEnv = embeddingEnv({
+    embeddingProvider: existing.embeddingProvider as
+      | PluginConfig["embeddingProvider"]
+      | undefined,
+    embeddingModel:
+      typeof existing.embeddingModel === "string"
+        ? existing.embeddingModel
+        : undefined,
+    embeddingEndpointUrl:
+      typeof existing.embeddingEndpointUrl === "string"
+        ? existing.embeddingEndpointUrl
+        : undefined,
+    embeddingDim:
+      typeof existing.embeddingDim === "number"
+        ? existing.embeddingDim
+        : undefined,
+  });
+
   logger.info(
     "openclaw-memgpt: pre-warming the embedder — downloads once, up to ~60s …",
   );
-  const ok = await (deps.prewarmEmbedder ?? defaultPrewarmEmbedder)(stateDir);
+  const ok = await (deps.prewarmEmbedder ?? defaultPrewarmEmbedder)(
+    stateDir,
+    extraEnv,
+  );
   if (ok) {
     logger.info(
       "openclaw-memgpt: embedder cached — agent turns will be offline-fast.",
@@ -279,13 +350,17 @@ function defaultCheckUv(): Promise<boolean> {
  * manager resolves it (walk up to `sidecar/main.py`); the data/venv dirs mirror
  * the spawn env so the warmed cache is the one the runtime sidecar uses.
  */
-function defaultPrewarmEmbedder(stateDir: string): Promise<boolean> {
+function defaultPrewarmEmbedder(
+  stateDir: string,
+  extraEnv: Record<string, string> = {},
+): Promise<boolean> {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const sidecarDir = findSidecarDir(here);
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     OPENCLAW_MEMGPT_DATA_DIR: path.join(stateDir, "memgpt-data"),
     UV_PROJECT_ENVIRONMENT: path.join(stateDir, "memgpt-sidecar-venv"),
+    ...extraEnv,
   };
   return new Promise((resolve) => {
     execFile(

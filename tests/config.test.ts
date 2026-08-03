@@ -10,7 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseConfigValue, isConfigComplete } from "../src/config.ts";
+import { embeddingEnv, parseConfigValue, isConfigComplete } from "../src/config.ts";
 
 const VALID = {
   namespace: "test-agent",
@@ -135,4 +135,111 @@ test("isConfigComplete: requires provider AND credential", () => {
     ),
     true,
   );
+});
+
+// ── embedder configuration (embeddingProvider / Model / EndpointUrl / Dim) ──
+
+test("parseConfig: embedding fields absent — all undefined (built-in defaults)", () => {
+  const cfg = parseConfigValue(VALID);
+  assert.equal(cfg.embeddingProvider, undefined);
+  assert.equal(cfg.embeddingModel, undefined);
+  assert.equal(cfg.embeddingEndpointUrl, undefined);
+  assert.equal(cfg.embeddingDim, undefined);
+});
+
+test("parseConfig: openai-compatible embedder happy path", () => {
+  const cfg = parseConfigValue({
+    ...VALID,
+    embeddingProvider: "openai-compatible",
+    embeddingModel: "nomic-embed-text",
+    embeddingEndpointUrl: "http://127.0.0.1:11434/v1",
+    embeddingDim: 768,
+  });
+  assert.equal(cfg.embeddingProvider, "openai-compatible");
+  assert.equal(cfg.embeddingModel, "nomic-embed-text");
+  assert.equal(cfg.embeddingEndpointUrl, "http://127.0.0.1:11434/v1");
+  assert.equal(cfg.embeddingDim, 768);
+});
+
+test("parseConfig: invalid embeddingProvider throws with allowed values", () => {
+  assert.throws(
+    () => parseConfigValue({ ...VALID, embeddingProvider: "ollama" }),
+    /embeddingProvider.*huggingface.*openai-compatible.*ollama/i,
+  );
+});
+
+test("parseConfig: openai-compatible embedder without model throws", () => {
+  assert.throws(
+    () =>
+      parseConfigValue({
+        ...VALID,
+        embeddingProvider: "openai-compatible",
+        embeddingDim: 768,
+      }),
+    /embeddingModel.*required/i,
+  );
+});
+
+test("parseConfig: openai-compatible embedder without dim throws", () => {
+  assert.throws(
+    () =>
+      parseConfigValue({
+        ...VALID,
+        embeddingProvider: "openai-compatible",
+        embeddingModel: "nomic-embed-text",
+      }),
+    /embeddingDim.*required/i,
+  );
+});
+
+test("parseConfig: custom huggingface model without dim throws; default model ok", () => {
+  assert.throws(
+    () =>
+      parseConfigValue({ ...VALID, embeddingModel: "BAAI/bge-large-en-v1.5" }),
+    /embeddingDim.*required/i,
+  );
+  // The default bge-small model needs no dim (the sidecar knows it's 384).
+  const cfg = parseConfigValue({
+    ...VALID,
+    embeddingProvider: "huggingface",
+    embeddingModel: "BAAI/bge-small-en-v1.5",
+  });
+  assert.equal(cfg.embeddingDim, undefined);
+});
+
+test("parseConfig: embeddingDim must be a positive integer", () => {
+  for (const bad of [0, -5, 3.14, "768"]) {
+    assert.throws(
+      () =>
+        parseConfigValue({
+          ...VALID,
+          embeddingProvider: "openai-compatible",
+          embeddingModel: "nomic-embed-text",
+          embeddingDim: bad,
+        }),
+      /embeddingDim.*positive integer/i,
+    );
+  }
+});
+
+test("embeddingEnv: maps config to OPENCLAW_MEMGPT_EMBEDDING_* with underscore provider", () => {
+  const env = embeddingEnv(
+    parseConfigValue({
+      ...VALID,
+      embeddingProvider: "openai-compatible",
+      embeddingModel: "nomic-embed-text",
+      embeddingEndpointUrl: "http://127.0.0.1:11434/v1",
+      embeddingDim: 768,
+    }),
+  );
+  assert.deepEqual(env, {
+    OPENCLAW_MEMGPT_EMBEDDING_PROVIDER: "openai_compatible",
+    OPENCLAW_MEMGPT_EMBEDDING_MODEL: "nomic-embed-text",
+    OPENCLAW_MEMGPT_EMBEDDING_ENDPOINT_URL: "http://127.0.0.1:11434/v1",
+    OPENCLAW_MEMGPT_EMBEDDING_DIM: "768",
+  });
+});
+
+test("embeddingEnv: unconfigured embedder yields an empty object (sidecar defaults + no ini reconcile)", () => {
+  assert.deepEqual(embeddingEnv(parseConfigValue(VALID)), {});
 });

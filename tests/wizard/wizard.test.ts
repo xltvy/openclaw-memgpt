@@ -106,6 +106,7 @@ test("paste path: writes secret file BEFORE config; stores file credential", asy
     "paste",
     "sk-ant-secret",
     "claude-sonnet-4-5-20250929",
+    "huggingface", // embedder
     "off",
     "",
     true,
@@ -135,6 +136,7 @@ test("env path: no secret file written; stores env credential", async () => {
     "env",
     "OPENAI_API_KEY",
     "gpt-4o",
+    "huggingface", // embedder
     "off",
     "",
     true,
@@ -167,6 +169,7 @@ test("file→env switch: config written BEFORE secret removal", async () => {
     "switch",
     "NEW_KEY_VAR",
     "claude-x",
+    "huggingface", // embedder
     "off",
     "",
     true,
@@ -201,7 +204,7 @@ test("wizard grants conversation access + surfaces the note", async () => {
   const h = harness();
   // full apply, then decline the pre-warm offer (uv present)
   const prompter = scripted([
-    "anthropic", "paste", "sk-ant-x", "claude-x", "off", "", true, false,
+    "anthropic", "paste", "sk-ant-x", "claude-x", "huggingface", "off", "", true, false,
   ]);
   const res = await runWizard({
     prompter,
@@ -227,6 +230,7 @@ const SPAWN_PASTE_FLOW = [
   "paste",
   "sk-ant-key",
   "claude-x",
+  "huggingface", // embedder
   "off",
   "", // sidecar blank → spawn mode
   true,
@@ -347,6 +351,7 @@ test("attach mode (sidecarUrl set) → skips uv check + spawn guidance", async (
     "paste",
     "sk-ant-key",
     "claude-x",
+    "huggingface", // embedder
     "off",
     "http://127.0.0.1:9000", // sidecar override → attach mode
     true,
@@ -445,10 +450,12 @@ test("notifyIfUnconfigured: info (not warn) when non-interactive", () => {
 
 test("runPrewarm: success → returns true, runs prewarm with the state dir, notes ready", async () => {
   const logger = fakeLogger();
+  const h = harness();
   let calledWith: string | undefined;
   const ok = await runPrewarm({
     logger,
     stateDir: "/state",
+    configIO: h.configIO,
     checkUv: async () => true,
     prewarmEmbedder: async (sd) => {
       calledWith = sd;
@@ -462,10 +469,12 @@ test("runPrewarm: success → returns true, runs prewarm with the state dir, not
 
 test("runPrewarm: uv missing → returns false, does not run prewarm", async () => {
   const logger = fakeLogger();
+  const h = harness();
   let ran = false;
   const ok = await runPrewarm({
     logger,
     stateDir: "/state",
+    configIO: h.configIO,
     checkUv: async () => false,
     prewarmEmbedder: async () => {
       ran = true;
@@ -479,12 +488,179 @@ test("runPrewarm: uv missing → returns false, does not run prewarm", async () 
 
 test("runPrewarm: prewarm fails → returns false, notes harmless fallback", async () => {
   const logger = fakeLogger();
+  const h = harness();
   const ok = await runPrewarm({
     logger,
     stateDir: "/state",
+    configIO: h.configIO,
     checkUv: async () => true,
     prewarmEmbedder: async () => false,
   });
   assert.equal(ok, false);
   assert.ok(logger.calls.some((c) => c.level === "error" && /download the model/.test(c.msg)));
+});
+
+test("runPrewarm: remote embedder configured → no-op success, no uv check, no prewarm", async () => {
+  const logger = fakeLogger();
+  const h = harness({
+    plugins: {
+      entries: {
+        [PLUGIN_ID]: {
+          enabled: true,
+          config: {
+            embeddingProvider: "openai-compatible",
+            embeddingModel: "nomic-embed-text",
+            embeddingEndpointUrl: "http://127.0.0.1:11434/v1",
+            embeddingDim: 768,
+          },
+        },
+      },
+    },
+  });
+  let uvChecked = false;
+  let ran = false;
+  const ok = await runPrewarm({
+    logger,
+    stateDir: "/state",
+    configIO: h.configIO,
+    checkUv: async () => {
+      uvChecked = true;
+      return true;
+    },
+    prewarmEmbedder: async () => {
+      ran = true;
+      return true;
+    },
+  });
+  assert.equal(ok, true, "remote embedder → nothing to pre-warm counts as success");
+  assert.equal(uvChecked, false);
+  assert.equal(ran, false);
+  assert.ok(logger.calls.some((c) => /nothing to pre-warm/.test(c.msg)));
+});
+
+test("runPrewarm: custom huggingface model → embedder env pins passed to the subprocess", async () => {
+  const logger = fakeLogger();
+  const h = harness({
+    plugins: {
+      entries: {
+        [PLUGIN_ID]: {
+          enabled: true,
+          config: {
+            embeddingProvider: "huggingface",
+            embeddingModel: "BAAI/bge-large-en-v1.5",
+            embeddingDim: 1024,
+          },
+        },
+      },
+    },
+  });
+  let capturedEnv: Record<string, string> | undefined;
+  const ok = await runPrewarm({
+    logger,
+    stateDir: "/state",
+    configIO: h.configIO,
+    checkUv: async () => true,
+    prewarmEmbedder: async (_sd, extraEnv) => {
+      capturedEnv = extraEnv;
+      return true;
+    },
+  });
+  assert.equal(ok, true);
+  assert.equal(
+    capturedEnv?.OPENCLAW_MEMGPT_EMBEDDING_MODEL,
+    "BAAI/bge-large-en-v1.5",
+    "prewarm must warm the CONFIGURED model's cache, not the default's",
+  );
+  assert.equal(capturedEnv?.OPENCLAW_MEMGPT_EMBEDDING_DIM, "1024");
+});
+
+// ── embedder persistence + remote-embedder wizard guidance ──────────────────
+
+const COMPAT_EMBEDDER_FLOW = [
+  "anthropic",
+  "paste",
+  "sk-ant-key",
+  "claude-x",
+  "openai-compatible", // embedder
+  "http://127.0.0.1:11434/v1", // embedding endpoint
+  "nomic-embed-text", // embedding model
+  // dim supplied by the probe stub
+  "off",
+  "", // sidecar blank → spawn mode
+  true,
+];
+
+test("openai-compatible embedder: fields persisted; prewarm not offered; endpoint note shown", async () => {
+  const h = harness();
+  const prompter = scripted([...COMPAT_EMBEDDER_FLOW]);
+  let prewarmCalled = false;
+  const res = await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    reachable: async () => true,
+    checkUv: async () => true,
+    probeDim: async () => 768,
+    prewarmEmbedder: async () => {
+      prewarmCalled = true;
+      return true;
+    },
+  });
+  assert.equal(res.status, "applied");
+  const block = h.block();
+  assert.equal(block.embeddingProvider, "openai-compatible");
+  assert.equal(block.embeddingModel, "nomic-embed-text");
+  assert.equal(block.embeddingEndpointUrl, "http://127.0.0.1:11434/v1");
+  assert.equal(block.embeddingDim, 768);
+  assert.equal(prewarmCalled, false, "nothing to pre-warm for a remote embedder");
+  assert.ok(
+    prompter.notes.some((n) => /No embedding model download needed/.test(n)),
+    "remote-embedder note must replace the prewarm offer",
+  );
+});
+
+test("switching back to the built-in embedder clears the stale embedding fields", async () => {
+  const h = harness({
+    plugins: {
+      entries: {
+        [PLUGIN_ID]: {
+          enabled: true,
+          config: {
+            provider: "anthropic",
+            credential: { source: "env", var: "K" },
+            embeddingProvider: "openai-compatible",
+            embeddingModel: "nomic-embed-text",
+            embeddingEndpointUrl: "http://127.0.0.1:11434/v1",
+            embeddingDim: 768,
+          },
+        },
+      },
+    },
+  });
+  const prompter = scripted([
+    "anthropic",
+    "keep", // keep env credential
+    "claude-x",
+    "huggingface", // switch embedder back to built-in
+    "off",
+    "",
+    true,
+    false, // decline prewarm
+  ]);
+  const res = await runWizard({
+    prompter,
+    configIO: h.configIO,
+    secretIO: h.secretIO,
+    stateDir: "/state",
+    reachable: async () => true,
+    checkUv: async () => true,
+    prewarmEmbedder: async () => true,
+  });
+  assert.equal(res.status, "applied");
+  const block = h.block();
+  assert.equal(block.embeddingProvider, "huggingface");
+  assert.equal("embeddingModel" in block, false, "stale model must be deleted");
+  assert.equal("embeddingEndpointUrl" in block, false, "stale endpoint must be deleted");
+  assert.equal("embeddingDim" in block, false, "stale dim must be deleted");
 });
