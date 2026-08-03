@@ -2,7 +2,7 @@
   "id": "openclaw-memgpt",
   "name": "Memory (MemGPT)",
   "description": "MemGPT three-tier memory architecture for OpenClaw — core, archival, and recall memory via a Python FastAPI sidecar wrapping the pymemgpt fork.",
-  "version": "1.1.0",
+  "version": "1.2.1",
   "kind": "memory",
   "contracts": {
     "tools": [
@@ -67,6 +67,24 @@
           }
         },
         "required": ["source"]
+      },
+      "embeddingProvider": {
+        "type": "string",
+        "enum": ["huggingface", "openai-compatible"],
+        "description": "Embedder for vector memory. 'huggingface' = built-in in-process bge-small (default); 'openai-compatible' = any OpenAI-protocol /embeddings endpoint (Ollama, vLLM, LM Studio, LiteLLM)."
+      },
+      "embeddingModel": {
+        "type": "string",
+        "description": "Embedding model id (e.g. 'nomic-embed-text'). Required for openai-compatible."
+      },
+      "embeddingEndpointUrl": {
+        "type": "string",
+        "description": "OpenAI-protocol base URL for embeddings (independent of the LLM baseUrl). Defaults to Ollama's http://127.0.0.1:11434/v1."
+      },
+      "embeddingDim": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Vector length the embedding model returns (e.g. 768 for nomic-embed-text). The sidecar verifies this against a live probe at startup."
       }
     }
   }

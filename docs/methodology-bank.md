@@ -981,6 +981,30 @@ shape of the resolution. Listed in roughly the order they surfaced.
     pattern class as #29: a property is only verified for the region of behaviour the
     validation environment can actually express. Cross-ref #34, #30, #31, #29.
 
+36. **The 1.2.0 embedder release shipped with the config surface declared in two places,
+    and only one was updated — the wizard failed at its final write on every install.**
+    The plugin's config keys live in `src/config.ts` (`ALLOWED_KEYS` + validators, what
+    the plugin accepts) *and* in `openclaw.plugin.json` (`configSchema` with
+    `additionalProperties: false`, what the HOST enforces when anything writes the
+    plugin's config block). 1.2.0 added `embeddingProvider`/`embeddingModel`/
+    `embeddingEndpointUrl`/`embeddingDim` to the parser, tests, wizard, and README — and
+    not to the manifest. Result: the entire wizard flow ran correctly (including the live
+    dim probe) and then died at step "apply" with `Config validation failed … must not
+    have additional properties`. The full plugin test suite (350 green) could not catch
+    it: the wizard suite injects a fake `ConfigIO`, so the host's manifest-schema
+    enforcement is structurally outside everything the tests execute — the same
+    verified-region blindness as #29/#35, here in packaging rather than model behaviour.
+    Found within minutes of a real `openclaw plugins update` + `openclaw memgpt setup` on
+    the production profile (the #35 release-gate discipline, which this release skipped
+    for the wizard path). Fix (1.2.1): manifest schema updated, plus
+    `tests/manifestSchema.test.ts` pinning manifest-keys ↔ parser-keys parity in both
+    directions and manifest-version ↔ package-version equality, so the dual declaration
+    can no longer drift silently. Also surfaced: the manifest `version` field had been
+    stale at 1.1.0 through the 1.2.0 release. **Methodology lesson.** When a contract is
+    declared in two artefacts, a test must own their equality — review discipline alone
+    does not survive a fourth field added months later; and a fake-IO test suite verifies
+    the plugin's half of a handshake, never the host's. Cross-ref #29, #31, #35.
+
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy
 path) even when behaviour looks obviously wrong — "obvious bug" and "reference's
