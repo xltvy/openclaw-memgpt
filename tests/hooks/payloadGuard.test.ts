@@ -19,6 +19,7 @@ import {
 import {
   SEND_MESSAGE_V1_KEY,
   _resetSendMessageFlagsForTests,
+  clearSendMessageFired,
   markSendMessageFired,
 } from "../../src/tools/sendMessage.ts";
 import type { MemoryEvent, ToolDeps } from "../../src/tools/deps.ts";
@@ -329,4 +330,87 @@ test("guard exception: logs warn, passes through, delivery not broken", async ()
   assert.equal(result, undefined, "must pass through when guards throw");
   assert.equal(logger.warned.length, 1);
   assert.match(logger.warned[0]!, /guards threw/);
+});
+
+// ── duplicate-of-send_message pass-through (Telegram finding, 2026-08-03) ───
+
+test("free text duplicating this turn's send_message: passed through with monologue_passthrough event", async () => {
+  // On channels that stream free text but don't render tool results
+  // (CORE_MESSAGING_TOOLS gap), cancelling the duplicate deletes the only
+  // user-visible copy of the reply — observed on Telegram as the streamed
+  // draft vanishing at finalize.
+  const message = "Got it—your name's Altay! How can I help you today?";
+  markSendMessageFired(SEND_MESSAGE_V1_KEY, message);
+  const logger = makeLogger();
+  const deps = makeDeps(logger);
+  const handler = captureHandler(deps);
+
+  const result = await handler(makeEvent("final", { text: message }), {});
+  assert.equal(result, undefined, "duplicate must NOT be cancelled");
+
+  const evt = deps.emitted.find((e) => e.kind === "monologue_passthrough");
+  assert.ok(evt, "monologue_passthrough must be emitted");
+  assert.equal(evt?.meta?.reason, "duplicate_of_send_message");
+  assert.equal(evt?.meta?.payloadKind, "final");
+  assert.equal(evt?.content?.text, message);
+  assert.equal(
+    deps.emitted.some((e) => e.kind === "monologue_suppressed"),
+    false,
+    "a passed-through payload is not also recorded as suppressed",
+  );
+});
+
+test("duplicate check is whitespace-normalised (trailing newline / spacing variants match)", async () => {
+  markSendMessageFired(SEND_MESSAGE_V1_KEY, "Your name's Altay — nice to meet you!");
+  const logger = makeLogger();
+  const deps = makeDeps(logger);
+  const handler = captureHandler(deps);
+
+  const result = await handler(
+    makeEvent("final", { text: "  Your name's Altay —\nnice to meet you!\n" }),
+    {},
+  );
+  assert.equal(result, undefined, "whitespace-variant duplicate must pass through");
+});
+
+test("genuinely different trailing text with a recorded send_message: still cancelled", async () => {
+  // The exception is duplicates ONLY — real monologue after a legitimate
+  // send_message stays suppressed (native fidelity).
+  markSendMessageFired(SEND_MESSAGE_V1_KEY, "Your name's Altay!");
+  const logger = makeLogger();
+  const deps = makeDeps(logger);
+  const handler = captureHandler(deps);
+
+  const result = (await handler(
+    makeEvent("final", { text: "Got it! How can I help with your dissertation today?" }),
+    {},
+  )) as { cancel: boolean };
+  assert.equal(result?.cancel, true);
+});
+
+test("duplicate matches ANY send_message of the turn (multi-call turns)", async () => {
+  markSendMessageFired(SEND_MESSAGE_V1_KEY, "First reply.");
+  markSendMessageFired(SEND_MESSAGE_V1_KEY, "Second reply.");
+  const logger = makeLogger();
+  const deps = makeDeps(logger);
+  const handler = captureHandler(deps);
+
+  assert.equal(
+    await handler(makeEvent("final", { text: "First reply." }), {}),
+    undefined,
+  );
+});
+
+test("turn-boundary clear also clears recorded texts — stale duplicates don't pass next turn", async () => {
+  markSendMessageFired(SEND_MESSAGE_V1_KEY, "Reply from the previous turn.");
+  clearSendMessageFired(SEND_MESSAGE_V1_KEY);
+  const logger = makeLogger();
+  const deps = makeDeps(logger);
+  const handler = captureHandler(deps);
+
+  const result = (await handler(
+    makeEvent("final", { text: "Reply from the previous turn." }),
+    {},
+  )) as { cancel: boolean };
+  assert.equal(result?.cancel, true, "previous turn's text is monologue this turn");
 });

@@ -2,7 +2,7 @@
   "id": "openclaw-memgpt",
   "name": "Memory (MemGPT)",
   "description": "MemGPT three-tier memory architecture for OpenClaw — core, archival, and recall memory via a Python FastAPI sidecar wrapping the pymemgpt fork.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "kind": "memory",
   "contracts": {
     "tools": [

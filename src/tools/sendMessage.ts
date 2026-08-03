@@ -41,10 +41,28 @@ import type { ToolDeps, ToolHandler } from "./deps.ts";
 export const SEND_MESSAGE_V1_KEY = "__v1_single_session__";
 
 const firedFlags = new Map<string, boolean>();
+/**
+ * The turn's send_message TEXTS (not just the fired bit). payloadGuard's
+ * duplicate-pass-through rule compares outbound free-text payloads against
+ * these: a model that re-emits its send_message content as free text is
+ * repeating the user-facing message, not producing monologue (Telegram
+ * finding, 2026-08-03 — see payloadGuard.ts header).
+ */
+const sentTexts = new Map<string, string[]>();
 
 /** Write side — the sendMessage handler calls this on every invocation. */
-export function markSendMessageFired(sessionKey: string): void {
+export function markSendMessageFired(sessionKey: string, message?: string): void {
   firedFlags.set(sessionKey, true);
+  if (message !== undefined) {
+    const list = sentTexts.get(sessionKey) ?? [];
+    list.push(message);
+    sentTexts.set(sessionKey, list);
+  }
+}
+
+/** Read side — payloadGuard's duplicate check. Non-consuming, like the flag. */
+export function peekSendMessageTexts(sessionKey: string): readonly string[] {
+  return sentTexts.get(sessionKey) ?? [];
 }
 
 /**
@@ -65,11 +83,13 @@ export function peekSendMessageFired(sessionKey: string): boolean {
  */
 export function clearSendMessageFired(sessionKey: string): void {
   firedFlags.delete(sessionKey);
+  sentTexts.delete(sessionKey);
 }
 
 /** Test-only — reset the registry between cases so they don't bleed state. */
 export function _resetSendMessageFlagsForTests(): void {
   firedFlags.clear();
+  sentTexts.clear();
 }
 
 // ── handler ────────────────────────────────────────────────────────────────
@@ -78,7 +98,7 @@ export const sendMessage =
   (deps: ToolDeps): ToolHandler =>
   async (_toolCallId, params) => {
     const message = String(params.message ?? "");
-    markSendMessageFired(SEND_MESSAGE_V1_KEY);
+    markSendMessageFired(SEND_MESSAGE_V1_KEY, message);
     deps.emit({
       kind: "send_message",
       namespace: deps.namespace,
