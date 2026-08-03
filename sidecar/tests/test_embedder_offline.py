@@ -103,7 +103,8 @@ def test_load_embedder_writes_marker_on_success(tmp_path, monkeypatch):
 
     class _FakeEmbedder:
         def get_text_embedding(self, _text):
-            return [0.0]
+            # Must match the configured dim — load_embedder asserts it.
+            return [0.0] * bootstrap.EMBEDDING_DIM
 
     monkeypatch.setattr("memgpt.embeddings.embedding_model", lambda: _FakeEmbedder())
 
