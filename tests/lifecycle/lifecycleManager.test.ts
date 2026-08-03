@@ -358,6 +358,62 @@ test("spawn-mode env: explicit OPENCLAW_MEMGPT_* set; process.env keys flow thro
   );
 });
 
+// Q3 extension — embedder env pins (config → OPENCLAW_MEMGPT_EMBEDDING_*)
+test("spawn-mode env: configured embedder pinned as OPENCLAW_MEMGPT_EMBEDDING_*; absent when unconfigured", async () => {
+  async function spawnAndCaptureEnv(
+    config: PluginConfig,
+  ): Promise<NodeJS.ProcessEnv | undefined> {
+    const fakeChild = new FakeChild();
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const lc = new LifecycleManager(config, makeLogger(), {
+      spawnTimeoutMs: 200,
+      pollIntervalMs: 10,
+      stateDirOverride: "/tmp/oc-state",
+      fetch: fetchReturning(async () => ({ ok: true, status: 200 })),
+      spawn: ((_cmd: string, _args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
+        capturedEnv = opts.env;
+        return fakeChild as never;
+      }) as never,
+    });
+    await lc.start({});
+    return capturedEnv;
+  }
+
+  const configured = await spawnAndCaptureEnv(
+    makeConfig({
+      embeddingProvider: "openai-compatible",
+      embeddingModel: "nomic-embed-text",
+      embeddingEndpointUrl: "http://127.0.0.1:11434/v1",
+      embeddingDim: 768,
+    }),
+  );
+  assert.equal(
+    configured?.OPENCLAW_MEMGPT_EMBEDDING_PROVIDER,
+    "openai_compatible",
+    "provider must be pinned in the sidecar's underscore form",
+  );
+  assert.equal(configured?.OPENCLAW_MEMGPT_EMBEDDING_MODEL, "nomic-embed-text");
+  assert.equal(
+    configured?.OPENCLAW_MEMGPT_EMBEDDING_ENDPOINT_URL,
+    "http://127.0.0.1:11434/v1",
+  );
+  assert.equal(configured?.OPENCLAW_MEMGPT_EMBEDDING_DIM, "768");
+
+  const unconfigured = await spawnAndCaptureEnv(makeConfig());
+  for (const key of [
+    "OPENCLAW_MEMGPT_EMBEDDING_PROVIDER",
+    "OPENCLAW_MEMGPT_EMBEDDING_MODEL",
+    "OPENCLAW_MEMGPT_EMBEDDING_ENDPOINT_URL",
+    "OPENCLAW_MEMGPT_EMBEDDING_DIM",
+  ]) {
+    assert.equal(
+      unconfigured?.[key],
+      undefined,
+      `${key} must be absent when the embedder is unconfigured — its presence flips the sidecar's EMBEDDING_EXPLICIT ini-reconcile semantics`,
+    );
+  }
+});
+
 // Q2 — healthz timeout
 test("spawn-mode healthz timeout — start throws; isDead set; child terminated", async () => {
   const fakeChild = new FakeChild();
