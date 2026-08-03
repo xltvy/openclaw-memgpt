@@ -75,13 +75,16 @@ openclaw agent --message "When is my thesis due?"
 2. **Base URL** — only for the OpenAI-compatible option.
 3. **API key** — paste it (stored in a private mode-`0600` file) or point the plugin at an **environment variable** you already have set (e.g `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`). Keys are never written into `openclaw.json`.
 4. **Model** — the model the sidecar should use.
-5. **Observability** — `off` (default), `default`, or `verbose` (see below).
-6. **Sidecar URL** — leave blank to let the plugin spawn and manage the sidecar itself; set it only if you run the sidecar yourself.
+5. **Embedder** — the embedding model behind memory search. Either the **built-in** one (bge-small, runs in-process, one-time ~60 s download — the default) or any **OpenAI-compatible embedding endpoint** (Ollama, vLLM, LM Studio, LiteLLM). For the endpoint option the wizard asks for the endpoint URL and model name, then measures the embedding dimension with a live probe (falling back to a manual prompt if the endpoint isn't reachable yet).
+6. **Observability** — `off` (default), `default`, or `verbose` (see below).
+7. **Sidecar URL** — leave blank to let the plugin spawn and manage the sidecar itself; set it only if you run the sidecar yourself.
 
 A few notes:
 
 - **Conversation access.** Storing memory means reading the conversation, so the plugin needs OpenClaw's conversation-access permission. In gateway mode OpenClaw requires you to grant this explicitly; the setup wizard does it for you and tells you so.
 - **Manual sidecar (advanced).** Set `OPENCLAW_MEMGPT_SIDECAR_URL` (or the `sidecarUrl` config field) to attach to a sidecar you started yourself instead of having the plugin spawn one.
+- **Embedder by hand (advanced).** The wizard's embedder step maps to four config fields you can also set directly on the plugin entry: `embeddingProvider` (`"huggingface"` | `"openai-compatible"`), `embeddingModel`, `embeddingEndpointUrl`, and `embeddingDim`. For `openai-compatible`, `embeddingModel` and `embeddingDim` are required (`embeddingEndpointUrl` defaults to Ollama's `http://127.0.0.1:11434/v1`); the sidecar verifies `embeddingDim` against a live probe at startup and refuses to start on a mismatch. In attach mode, set the equivalent `OPENCLAW_MEMGPT_EMBEDDING_PROVIDER` / `_MODEL` / `_ENDPOINT_URL` / `_DIM` env vars on the sidecar you run yourself (provider in underscore form: `openai_compatible`).
+- **Changing embedders on an existing profile.** Vectors already stored were embedded by the old model and are incompatible with the new one — memory search over them will misbehave. The sidecar rewrites its config and warns loudly at startup; clear the profile's `memgpt-data/agents` directory (or start a fresh namespace) after switching.
 
 ## Memory tools
 
@@ -127,7 +130,7 @@ memoryEvents.on(MEMORY_EVENT_CHANNEL, (e) => {
 ## Known behaviour
 
 - **The agent replies through `send_message`, like native MemGPT.** As of 1.1.0 the plugin enforces MemGPT's I/O discipline structurally: a turn that would end in free-form text without a `send_message` call is re-prompted (up to 3 attempts, using MemGPT's own base-prompt wording), and on channel deliveries any remaining free-form assistant text is treated as inner monologue — suppressed from the chat and recorded in the observability log as `monologue_suppressed` events (with the text at `verbose`). Memory storage and recall are unaffected.
-- **First-run cold start (~60 s).** The first time the embedding model is needed it is downloaded and cached. Run `openclaw memgpt prewarm` (or accept the wizard's offer) to get this out of the way; every run after that is fast.
+- **First-run cold start (~60 s, built-in embedder only).** The first time the built-in embedding model is needed it is downloaded and cached. Run `openclaw memgpt prewarm` (or accept the wizard's offer) to get this out of the way; every run after that is fast. With an OpenAI-compatible embedding endpoint there is no download and no cold start — but that server must be running before the agent starts.
 - **One-shot `--local` mode.** Either run `openclaw memgpt prewarm` first, or accept the one-time cold-start cost on the first turn — it works normally afterwards.
 
 ### Host version compatibility

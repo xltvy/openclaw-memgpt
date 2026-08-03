@@ -70,6 +70,7 @@ test("fresh anthropic + paste → file credential with pasted key", async () => 
     "paste", // credential method
     "sk-ant-key123", // pasted key
     "claude-sonnet-4-5-20250929", // model
+    "huggingface", // embedder (built-in)
     "off", // observability
     "", // sidecar (blank)
     true, // apply
@@ -93,6 +94,7 @@ test("fresh openai + env → env credential, no pasted key", async () => {
     "env",
     "MY_OPENAI_KEY",
     "gpt-4o",
+    "huggingface", // embedder
     "default",
     "",
     true,
@@ -111,6 +113,7 @@ test("openai-compatible requires + captures a base URL", async () => {
     "paste",
     "sk-local",
     "my-local-model",
+    "huggingface", // embedder
     "off",
     "http://127.0.0.1:9000", // sidecar override
     true,
@@ -135,6 +138,7 @@ test("declining the summary confirm aborts", async () => {
     "paste",
     "sk-ant-k",
     "claude-x",
+    "huggingface", // embedder
     "off",
     "",
     false, // decline apply
@@ -147,6 +151,7 @@ test("re-entry: existing file credential, keep → no new key", async () => {
     "anthropic", // provider (prefilled)
     "keep", // credential choice
     "claude-x",
+    "huggingface", // embedder
     "off",
     "",
     true,
@@ -168,6 +173,7 @@ test("re-entry: existing file credential, switch → env + remove flag", async (
     "switch", // file → env
     "NEW_ENV_VAR", // env var name
     "claude-x",
+    "huggingface", // embedder
     "off",
     "",
     true,
@@ -188,6 +194,7 @@ test("re-entry: existing env credential, switch → paste a key", async () => {
     "switch", // env → paste
     "sk-new-pasted",
     "gpt-4o",
+    "huggingface", // embedder
     "off",
     "",
     true,
@@ -257,4 +264,85 @@ test("blank optional sidecar returned as undefined → sidecarUrl undefined (no 
   const a = await collectAnswers(p);
   assert.ok(a);
   assert.equal(a!.sidecarUrl, undefined);
+});
+
+// ── embedder flow (openai-compatible + dim probe) ───────────────────────────
+
+test("openai-compatible embedder: probe success → dim measured, no manual prompt", async () => {
+  const { p, notes } = scripted([
+    "anthropic",
+    "paste",
+    "sk-ant-key123",
+    "claude-x",
+    "openai-compatible", // embedder
+    "http://127.0.0.1:11434/v1", // embedding endpoint
+    "nomic-embed-text", // embedding model
+    // NO dim entry — the probe supplies it
+    "off",
+    "",
+    true,
+  ]);
+  const probed: Array<[string, string]> = [];
+  const a = await collectAnswers(p, {}, {
+    probeDim: async (endpoint, model) => {
+      probed.push([endpoint, model]);
+      return 768;
+    },
+  });
+  assert.ok(a);
+  assert.equal(a!.embeddingProvider, "openai-compatible");
+  assert.equal(a!.embeddingModel, "nomic-embed-text");
+  assert.equal(a!.embeddingEndpointUrl, "http://127.0.0.1:11434/v1");
+  assert.equal(a!.embeddingDim, 768);
+  assert.deepEqual(probed, [["http://127.0.0.1:11434/v1", "nomic-embed-text"]]);
+  assert.ok(
+    notes.some((n) => n.includes("768-dimensional")),
+    "detected-dim note shown",
+  );
+  assert.ok(
+    notes.some((n) => n.includes("nomic-embed-text @ http://127.0.0.1:11434/v1 (768-dim)")),
+    "summary shows the embedder line",
+  );
+});
+
+test("openai-compatible embedder: probe failure → manual dim prompt", async () => {
+  const { p, notes } = scripted([
+    "anthropic",
+    "paste",
+    "sk-ant-key123",
+    "claude-x",
+    "openai-compatible",
+    "http://127.0.0.1:11434/v1",
+    "nomic-embed-text",
+    "768", // manual dim (probe failed)
+    "off",
+    "",
+    true,
+  ]);
+  const a = await collectAnswers(p, {}, { probeDim: async () => undefined });
+  assert.ok(a);
+  assert.equal(a!.embeddingDim, 768);
+  assert.ok(
+    notes.some((n) => n.includes("Couldn't probe")),
+    "probe-failure note shown",
+  );
+});
+
+test("built-in embedder leaves the embedding fields unset", async () => {
+  const { p } = scripted([
+    "anthropic",
+    "paste",
+    "sk-ant-key123",
+    "claude-x",
+    "huggingface",
+    "off",
+    "",
+    true,
+  ]);
+  const a = await collectAnswers(p);
+  assert.ok(a);
+  assert.equal(a!.embeddingProvider, "huggingface");
+  assert.equal(a!.embeddingModel, undefined);
+  assert.equal(a!.embeddingEndpointUrl, undefined);
+  assert.equal(a!.embeddingDim, undefined);
 });

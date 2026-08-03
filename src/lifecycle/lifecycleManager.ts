@@ -36,7 +36,7 @@ import { fileURLToPath } from "node:url";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
-import { isConfigComplete, type PluginConfig } from "../config.ts";
+import { embeddingEnv, isConfigComplete, type PluginConfig } from "../config.ts";
 import { isEndpointReachable, isLocalUrl } from "../reachability.ts";
 import type {
   ActivatableEventSink,
@@ -408,6 +408,11 @@ export class LifecycleManager {
       OPENCLAW_MEMGPT_HOST: "127.0.0.1",
       OPENCLAW_MEMGPT_PORT: String(port),
       UV_PROJECT_ENVIRONMENT: venvDir,
+      // Embedder selection (config → OPENCLAW_MEMGPT_EMBEDDING_*). Pinned over
+      // the inherited env like the knobs above — plugin config is the source
+      // of truth for the sidecar we own. Empty when unconfigured (built-in
+      // bge-small defaults).
+      ...embeddingEnv(this.config),
     };
 
     // Route the child's stdout/stderr to a LOG FILE, not a pipe. A pipe's read
@@ -811,8 +816,14 @@ export class LifecycleManager {
       const now = Date.now();
       if (modeLabel === "spawn" && now >= nextProgressLog) {
         const elapsedS = Math.round((now - start) / 1000);
+        // The cold-start hint only applies to the built-in HuggingFace
+        // embedder; a remote (openai-compatible) embedder downloads nothing.
+        const hint =
+          this.config.embeddingProvider === "openai-compatible"
+            ? "is the embedding endpoint up?"
+            : "embedder cold-start takes ~60–90s on first run";
         this.logger.info(
-          `openclaw-memgpt: still waiting for sidecar healthz (${elapsedS}s elapsed; embedder cold-start takes ~60–90s on first run)`,
+          `openclaw-memgpt: still waiting for sidecar healthz (${elapsedS}s elapsed; ${hint})`,
         );
         nextProgressLog = now + this.opts.progressLogIntervalMs;
       }

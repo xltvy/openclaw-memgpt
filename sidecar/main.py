@@ -47,10 +47,12 @@ async def lifespan(app: FastAPI):
 
     logger.info("Sidecar starting — data_dir=%s", settings.data_dir)
 
-    # Ensure MemGPT ini config exists with bge-small embedding settings.
+    # Ensure MemGPT ini config exists with the configured embedding settings
+    # (env-driven; defaults to HuggingFace bge-small — see settings.py).
     ensure_memgpt_config()
 
-    # Eagerly load embedder — fails loudly if bge-small cannot be loaded.
+    # Eagerly load embedder — fails loudly if the model cannot be loaded /
+    # the embedding endpoint is unreachable / the configured dim is wrong.
     _embedder = load_embedder()
 
     logger.info(

@@ -1794,7 +1794,7 @@ wheels = [
 
 [[package]]
 name = "openclaw-memgpt-sidecar"
-version = "1.0.0"
+version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "datasets" },
@@ -1820,9 +1820,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typer", extra = ["all"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c6/10/bb5887660272bd9afb65444d24e33758e09660c8809f75f2682c2bd7295c/openclaw_memgpt_sidecar-1.0.0.tar.gz", hash = "sha256:ffc2d1025b10e75c2d66438b1f0e823ebea43e5261d284ee95fb49a9928a72bb", size = 101151, upload-time = "2026-06-19T01:01:05.097Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fe/f1/f9aa8b3a07dd94ff39c761908b185b2d44759cab66ef54fb08f563dde1d8/openclaw_memgpt_sidecar-1.1.0.tar.gz", hash = "sha256:db65ee0f62a2cbdfc0d0f3c829c6f418d3a7bb0646157a1728755c6c1bf4d17b", size = 102330, upload-time = "2026-08-03T14:22:17.007Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/bf/4e50ac98435d661b42064438f49a578ead7960e031c0949ddb543595eaa2/openclaw_memgpt_sidecar-1.0.0-py3-none-any.whl", hash = "sha256:cfd0b3b1da21371c934f87b5089fd5011e18be91e6b21b941ef7d4060fdd217d", size = 139292, upload-time = "2026-06-19T01:01:03.641Z" },
+    { url = "https://files.pythonhosted.org/packages/51/2f/d56e092b65636f1d1d9867f86edb7b503ca9e04992d591a88eb5eab87f81/openclaw_memgpt_sidecar-1.1.0-py3-none-any.whl", hash = "sha256:e4dcb4777446ade61cf4c4c17dd708dda2631b0df77b69f2801c88b739a80973", size = 140671, upload-time = "2026-08-03T14:22:15.778Z" },
 ]
 
 [[package]]
@@ -1843,7 +1843,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "openclaw-memgpt-sidecar", specifier = "==1.0.0" },
+    { name = "openclaw-memgpt-sidecar", specifier = "==1.1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 
