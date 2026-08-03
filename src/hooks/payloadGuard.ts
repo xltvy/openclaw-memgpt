@@ -9,11 +9,26 @@
  * delivery path (gateway/channels), and cancelling a `final`/`block` payload
  * routes that text to the inner-monologue record instead of the user.
  *
- * Cancellation applies to free-text payloads *unconditionally* — whether or
- * not `send_message` fired this turn — because in the native architecture
- * assistant content is always monologue; trailing text after a legitimate
- * `send_message` call is monologue too. The turn flag is recorded as
- * provenance on the observability event, not used as a bypass.
+ * Cancellation applies to free-text payloads whether or not `send_message`
+ * fired this turn — in the native architecture assistant content is always
+ * monologue; trailing text after a legitimate `send_message` call is
+ * monologue too. The turn flag is recorded as provenance on the
+ * observability event, not used as a bypass.
+ *
+ * ONE exception (Telegram finding, 2026-08-03): a free-text payload whose
+ * text is a whitespace-normalised duplicate of a `send_message` text from
+ * this turn is passed through, not cancelled. Some models re-emit their
+ * send_message content verbatim as the final free text; on channels that
+ * stream free text but do not render tool results as messages (send_message
+ * is not in the host's CORE_MESSAGING_TOOLS), cancelling that duplicate
+ * deletes the only user-visible copy — observed on Telegram as the reply
+ * appearing (streamed draft) then vanishing (final delivery cancelled →
+ * draft cleanup), leaving the user with nothing. Identical text is by
+ * definition not monologue: it IS the message the agent already elected to
+ * send. Genuinely different trailing text remains monologue and is still
+ * cancelled; the comparison is exact equality after whitespace collapse
+ * (fuzzier matching risks reclassifying real monologue as the message).
+ * Passed-through duplicates emit `monologue_passthrough`.
  *
  * What is never cancelled (the payload must actually be assistant free text):
  *   - `tool` payloads — `send_message`'s own text rides a tool result;
@@ -43,6 +58,7 @@ import type { ToolDeps } from "../tools/deps.ts";
 import {
   SEND_MESSAGE_V1_KEY,
   peekSendMessageFired,
+  peekSendMessageTexts,
 } from "../tools/sendMessage.ts";
 import { isNonInteractiveTrigger, isSubagentSession } from "./triggers.ts";
 
@@ -101,6 +117,34 @@ export function registerPayloadGuardHook(
       return;
     }
 
+    // Duplicate-of-send_message pass-through — see the header's "ONE
+    // exception" paragraph. Checked against every send_message text recorded
+    // this turn (models can call the tool more than once per turn).
+    if (
+      peekSendMessageTexts(SEND_MESSAGE_V1_KEY).some(
+        (sent) => normaliseForCompare(sent) === normaliseForCompare(text),
+      )
+    ) {
+      try {
+        deps.emit({
+          kind: "monologue_passthrough",
+          namespace: deps.namespace,
+          ts: new Date().toISOString(),
+          meta: {
+            payloadKind: event.kind as string,
+            length: text.length,
+            reason: "duplicate_of_send_message",
+          },
+          content: { text },
+        });
+      } catch (err) {
+        deps.logger.warn(
+          `openclaw-memgpt: monologue_passthrough emit failed: ${stringifyError(err)}`,
+        );
+      }
+      return;
+    }
+
     // Best-effort observability — the suppressed text is the monologue record.
     try {
       deps.emit({
@@ -128,4 +172,13 @@ export function registerPayloadGuardHook(
 function stringifyError(err: unknown): string {
   if (err instanceof Error) return `${err.name}: ${err.message}`;
   return String(err);
+}
+
+/**
+ * Whitespace-collapsed equality basis for the duplicate check: channels and
+ * models disagree on trailing newlines / spacing around the same content, but
+ * anything beyond whitespace is treated as a real difference (= monologue).
+ */
+function normaliseForCompare(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
 }

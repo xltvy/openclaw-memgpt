@@ -82,6 +82,7 @@ export type MemoryEventKind =
   // V2.1 send_message discipline (finalizeGuard bouncer / payloadGuard suspenders)
   | "finalize_revision_requested"
   | "monologue_suppressed"
+  | "monologue_passthrough"
   // process lifecycle (§6.1)
   | "sidecar_spawned"
   | "sidecar_restarted"
