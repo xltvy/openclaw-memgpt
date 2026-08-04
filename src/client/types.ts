@@ -24,7 +24,14 @@
  * the client just relays.
  */
 export interface PyMemGptMessage {
-  role: "system" | "user" | "assistant" | "function";
+  /**
+   * v0 roles plus `toolResult` — the §2.10 Scenario A carve-out. The
+   * `send_message` tool result keeps its pi-ai `toolResult` role on
+   * normalisation so `DummyRecallMemory.text_search`/`date_search` (which
+   * filter out `system` + `function`) can still reach the agent's
+   * user-facing reply text. All other tool results map to v0 `function`.
+   */
+  role: "system" | "user" | "assistant" | "function" | "toolResult";
   content: string | null;
   name?: string | null;
   function_call?: {

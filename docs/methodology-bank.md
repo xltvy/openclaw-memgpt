@@ -357,7 +357,9 @@ shape of the resolution. Listed in roughly the order they surfaced.
     **What 6c.9 actually verified.** The vertical-slice work in 6c.9 verified specific user-facing properties
     — cross-session recall returned marker text (6c.9.3); send_message text appeared in recall search
     (6c.9.4 Scenario A). These properties are *real* and remain verified — the marker text *was* retrievable
-    across sessions, send_message text *was* in the recall corpus. What was *not* verified, and could not
+    across sessions, send_message text *was* in the recall corpus. (**Correction, 2026-08-04:** the second
+    half of this sentence conflated corpus-presence with searchability — this very fix's blanket
+    `toolResult → function` translation broke Scenario A's search path. See #37.) What was *not* verified, and could not
     have been with 6c.9's probe set, was whether the broader conversational context (tool calls, arguments,
     monologue prose) also survived. The 6c.9 probes only required send_message-text survival, which happens
     to be the one thing that does survive the defective normalise path (via `flattenContent`'s text extraction).
@@ -1004,6 +1006,63 @@ shape of the resolution. Listed in roughly the order they surfaced.
     declared in two artefacts, a test must own their equality — review discipline alone
     does not survive a fourth field added months later; and a fake-IO test suite verifies
     the plugin's half of a handshake, never the host's. Cross-ref #29, #31, #35.
+
+37. **(fixed 2026-08-04) — The #20 normalise fix silently broke Scenario A: agent replies
+    vanished from `conversation_search`, and #20's own write-up asserted the property
+    "remains verified" while the fix it documents was un-verifying it.**
+
+    **Discovery.** Interactive testing (2026-08-04): `conversation_search` returned the
+    user's questions but never the agent's answers. A user asks about a value in a
+    document, the agent answers correctly via `send_message`, and on later search the
+    answer is unreachable — "practically not in memory" — although pickle inspection
+    shows it stored.
+
+    **Root cause.** Two shapes hold the reply after mirroring, and post-#20 neither was
+    searchable. (a) The assistant entry's `content` is inner monologue only; the reply
+    text lives in `function_call.arguments`, which `DummyRecallMemory.text_search`
+    (`memory.py:517`) never matches — exactly the exclusion the Stage-0 hedge predicted.
+    (b) The `send_message` tool result — whose `content` *is* the verbatim reply — had
+    carried role `toolResult` and survived `text_search`'s `role not in
+    ["system","function"]` filter; that was Scenario A's entire mechanism (6c.9.4), and
+    it held *by accident*: the pre-#20 normaliser simply had no `toolResult` clause, so
+    the role passed through the catch-all untranslated. The #20 fix (`053efb2`) added the
+    blanket `toolResult → function` translation for v0 pickle parity — correct for every
+    other tool, but for `send_message` it moved the only searchable copy of the reply
+    behind the filter. `API_DESIGN.md §2.10/§4.3` (which document the no-clause mechanism)
+    were not updated, so spec and code stood in contradiction for six weeks.
+
+    **The methodology point — a verified property is only as durable as the mechanism it
+    rides on.** 6c.9.4 verified the *property* (reply searchable) but the property's
+    *mechanism* (role passes through because no clause exists) was an absence, not an
+    assertion. Nothing owned it: no test pinned "send_message result role survives the
+    text_search filter", so the #20 rewrite — whose test suite grew 26 → 46 cases —
+    changed the mechanism without tripping anything. Worse, #20's write-up reasoned
+    "send_message text *was* in the recall corpus, property remains verified" — true of
+    the corpus (the bytes are in the pickle), false of the property (searchability),
+    because the property depends on role, not presence. Presence-level and
+    retrieval-level verification are different claims; #20 conflated them in the same
+    sentence that banked the finding.
+
+    **Fix (applied).** Deliberate carve-out at the §3.7 boundary (`normalise.ts`):
+    `send_message` tool results keep role `toolResult` (the 6c.9.4-verified shape, from
+    both the pi-ai `toolResult` and legacy `tool` input clauses); all other tool results
+    keep the native-faithful `function` mapping (native MemGPT excludes function results
+    from recall search; only `send_message` warrants the deviation because in Shape B
+    recall search is the sole cross-session path to what the agent told the user — native
+    MemGPT never makes reply text searchable at all, its send_message function result
+    being `"None"`). Pinning tests added at the exact seam that broke (carve-out shape +
+    idempotency + legacy-role variant); `API_DESIGN.md §2.10/§4.3` reconciled to the
+    now-deliberate mechanism per WHEN SPEC AND REALITY DISAGREE. The V1.4 extractor is
+    unaffected (it reads send_message payloads from assistant `function_call` entries and
+    skips unknown roles in `_group_steps`).
+
+    **Lesson.** When an empirically-verified property turns out to rest on an accidental
+    mechanism, the verification must be converted into an owned assertion (a pinning test
+    naming the property) at the moment of discovery — otherwise the next correct fix in
+    the same file deletes the accident and the property with it, invisibly. Cross-ref #20
+    (the fix that broke it), #29/#35/#36 (verified-region blindness: the 46-case suite
+    verified role translation exhaustively, but no case encoded *why* one role must not
+    translate).
 
 **Pattern.** Faithful reproduction of an undocumented system requires baseline
 source checks (and probing the actual failure mode rather than assuming the happy

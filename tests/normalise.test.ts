@@ -502,13 +502,13 @@ test("toolResult role with string content → function role with string content"
   // to plain string we accept it.
   const input: OpenClawMessage = {
     role: "toolResult",
-    toolName: "send_message",
+    toolName: "archival_memory_insert",
     content: "Got it!",
   } as OpenClawMessage;
   assert.deepEqual(normalise(input), {
     role: "function",
     content: "Got it!",
-    name: "send_message",
+    name: "archival_memory_insert",
   });
 });
 
@@ -555,6 +555,65 @@ test("idempotency: toolResult role — second pass is no-op", () => {
     role: "toolResult",
     toolName: "f",
     content: [{ type: "text", text: "r" }],
+  } as OpenClawMessage;
+  const first = normalise(input);
+  const second = normalise(first as OpenClawMessage);
+  assert.deepEqual(second, first);
+});
+
+// ── 9c-bis. send_message Scenario A carve-out (§2.10 / §4.3) ────────────────
+// The send_message tool result carries the verbatim user-facing reply as its
+// content; DummyRecallMemory.text_search/date_search filter out role
+// "function", so mapping it to v0 function makes the agent's replies
+// unreachable from conversation_search. It keeps role "toolResult" instead
+// (the 6c.9.4-verified shape). All other tool results keep the
+// native-faithful function mapping (asserted by the 9c cases above).
+
+test("send_message toolResult keeps role toolResult (recall-searchable)", () => {
+  const input: OpenClawMessage = {
+    role: "toolResult",
+    toolName: "send_message",
+    content: [{ type: "text", text: "The reported energy consumption is 45 kWh." }],
+  } as OpenClawMessage;
+  assert.deepEqual(normalise(input), {
+    role: "toolResult",
+    content: "The reported energy consumption is 45 kWh.",
+    name: "send_message",
+  });
+});
+
+test("send_message carve-out applies via `name` fallback too", () => {
+  const input: OpenClawMessage = {
+    role: "toolResult",
+    name: "send_message",
+    content: [{ type: "text", text: "Hello!" }],
+  } as OpenClawMessage;
+  assert.deepEqual(normalise(input), {
+    role: "toolResult",
+    content: "Hello!",
+    name: "send_message",
+  });
+});
+
+test("send_message carve-out applies to legacy tool role", () => {
+  const input: OpenClawMessage = {
+    role: "tool",
+    name: "send_message",
+    tool_call_id: "call_1",
+    content: "Hello!",
+  };
+  assert.deepEqual(normalise(input), {
+    role: "toolResult",
+    content: "Hello!",
+    name: "send_message",
+  });
+});
+
+test("idempotency: send_message carve-out — second pass is no-op", () => {
+  const input: OpenClawMessage = {
+    role: "toolResult",
+    toolName: "send_message",
+    content: [{ type: "text", text: "Done." }],
   } as OpenClawMessage;
   const first = normalise(input);
   const second = normalise(first as OpenClawMessage);
@@ -644,7 +703,9 @@ test("real-world V1.3 cell-c trial shape round-trips correctly", () => {
   const v0 = normaliseMessages(turn);
 
   // Five entries; the assistant turns now carry function_call; the tool
-  // results land as function-role with name set.
+  // results land as function-role with name set — except the send_message
+  // result, which keeps role toolResult (§2.10 Scenario A carve-out) so the
+  // reply text stays recall-searchable.
   assert.equal(v0.length, 5);
   assert.equal(v0[0].role, "user");
   assert.equal(v0[1].role, "assistant");
@@ -656,8 +717,9 @@ test("real-world V1.3 cell-c trial shape round-trips correctly", () => {
   assert.equal(v0[2].name, "conversation_search");
   assert.equal(v0[3].role, "assistant");
   assert.equal(v0[3].function_call!.name, "send_message");
-  assert.equal(v0[4].role, "function");
+  assert.equal(v0[4].role, "toolResult");
   assert.equal(v0[4].name, "send_message");
+  assert.equal(v0[4].content, "The project code you mentioned was BLUEBIRD_5402.");
 });
 
 // ── 9e. array-level multi-toolCall split (Sonnet 4.5 emission pattern) ─────
@@ -722,7 +784,8 @@ test("normaliseMessages: multi-toolCall assistant splits into N (assistant, func
   assert.equal(out[5].function_call!.name, "send_message");
   // send_message argument JSON is preserved
   assert.equal(out[5].function_call!.arguments, '{"message":"Done!"}');
-  assert.equal(out[6].role, "function");
+  // send_message result keeps role toolResult (§2.10 Scenario A carve-out).
+  assert.equal(out[6].role, "toolResult");
   assert.equal(out[6].name, "send_message");
   assert.equal(out[6].content, "Got it.");
 });
