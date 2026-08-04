@@ -40,6 +40,26 @@
  * normalise — written for shape (b) only — silently dropped all toolCall
  * structure from the persisted pickle when an assistant message carried
  * multiple tool calls.
+ *
+ * §2.10 Scenario A carve-out: the `send_message` tool result keeps role
+ * `toolResult` instead of mapping to v0 `function`. Its content is the
+ * verbatim user-facing reply (sendMessage.ts returns `params.message` as the
+ * tool-result text), and `DummyRecallMemory.text_search`/`date_search`
+ * (fork `memory.py:517`) filter out `role in ["system","function"]` — so a
+ * `function`-role mapping makes the agent's replies unreachable from
+ * `conversation_search`. The assistant entry can't carry the reply either:
+ * its `content` is monologue only; the reply text lives in
+ * `function_call.arguments`, which text_search never matches. Scenario A
+ * (verified 6c.9.4, spec §2.10/§4.3) originally held by accident — the
+ * pre-content-blocks normalise had no `toolResult` clause, so the role
+ * passed through the catch-all unchanged. The content-blocks fix
+ * (`053efb2`) added the blanket `toolResult → function` translation and
+ * silently broke it. This carve-out restores the verified, spec-documented
+ * shape deliberately, while every *other* tool result keeps the
+ * native-MemGPT-faithful `function` mapping (native excludes function
+ * results from recall search; only `send_message` warrants the deviation
+ * because in Shape B recall search is the sole cross-session path to what
+ * the agent told the user).
  */
 
 import type { PyMemGptMessage } from "./client/types.ts";
@@ -172,13 +192,15 @@ function stringifyToolCallArguments(args: unknown): string {
 export function normalise(message: OpenClawMessage): PyMemGptMessage {
   // pi-ai toolResult role → v0 function role. Prefer `toolName` (canonical
   // pi-ai field); fall back to `name` (legacy / drift). Content blocks are
-  // flattened to a string per the v0 contract.
+  // flattened to a string per the v0 contract. Exception: `send_message`
+  // results keep role `toolResult` (§2.10 Scenario A carve-out — see module
+  // docstring) so recall text_search can reach the user-facing reply.
   if (message.role === "toolResult") {
+    const nm = message.toolName ?? message.name;
     const out: PyMemGptMessage = {
-      role: "function",
+      role: nm === "send_message" ? "toolResult" : "function",
       content: flattenContent(message.content),
     };
-    const nm = message.toolName ?? message.name;
     if (nm !== undefined && nm !== null) {
       out.name = nm;
     }
@@ -186,10 +208,11 @@ export function normalise(message: OpenClawMessage): PyMemGptMessage {
   }
 
   // Legacy OpenAI-tools-API tool role → v0 function role; drop tool_call_id
-  // (v0 pairs by adjacency).
+  // (v0 pairs by adjacency). Same `send_message` carve-out as the toolResult
+  // clause so both input shapes land on the identical v0-out entry.
   if (message.role === "tool") {
     const out: PyMemGptMessage = {
-      role: "function",
+      role: message.name === "send_message" ? "toolResult" : "function",
       content: flattenContent(message.content),
     };
     if (message.name !== undefined && message.name !== null) {
