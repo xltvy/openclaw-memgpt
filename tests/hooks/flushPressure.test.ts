@@ -1,13 +1,19 @@
 /**
  * Unit tests for the §4.4 flush-pressure check.
  *
- * Trigger refactor (6d provider-independence fix): the two-hook form
- * (`llm_output` usage capture → `agent_end` threshold check) is gone. The
- * trigger now estimates tokens locally by summing a per-message estimator
- * over `event.messages` inside `agent_end`, and compares against
- * `ctx.contextTokenBudget * flushRatio` (fallback: the absolute
- * MESSAGE_SUMMARY_WARNING_TOKENS = 6000 when no budget is supplied).
+ * Two-trigger form (1.3.1 compaction-anchored fix): `before_compaction` is
+ * the PRIMARY trigger — no threshold, fires when the host is about to
+ * discard the buffer; messages come from the event (harness path) or the
+ * agent_end buffer snapshot (embedded path, whose event carries counts
+ * only). `agent_end` stays as the SECONDARY threshold trigger for sessions
+ * that never compact, its budget sourced from `ctx.contextTokenBudget` when
+ * present (empirically never on agent_end) else
+ * `SessionEntry.contextBudgetStatus.contextTokenBudget`, else the absolute
+ * MESSAGE_SUMMARY_WARNING_TOKENS = 6000 fallback (logged as degraded).
  * Provider-reported `usage` is never consulted.
+ *
+ * `_resetFlushStateForTests()` clears the cross-trigger module state (buffer
+ * snapshots + double-fire markers) that would otherwise leak between tests.
  *
  * Estimator control: `_setTokenEstimatorForTests(fn)` injects a
  * deterministic per-message estimator. Calling it with no argument resets to
@@ -29,6 +35,7 @@ import {
   fallbackEstimateTokens,
   registerFlushPressureHook,
   _setTokenEstimatorForTests,
+  _resetFlushStateForTests,
 } from "../../src/hooks/flushPressure.ts";
 import {
   hasAlreadyFlushedForCurrentCompaction,
@@ -98,6 +105,7 @@ function makeMockApi(
   loadSessionStore: ReturnType<typeof mock.fn>;
   saveSessionStore: ReturnType<typeof mock.fn>;
   capturedAgentEndHandler: () => Handler;
+  capturedBeforeCompactionHandler: () => Handler;
 } {
   const resolveStorePath = mock.fn(
     (_store?: string, _opts?: { agentId?: string }) => "/test/store/path",
@@ -139,6 +147,11 @@ function makeMockApi(
     capturedAgentEndHandler: () => {
       const h = capturedHandlers["agent_end"];
       if (!h) throw new Error("agent_end hook not registered");
+      return h;
+    },
+    capturedBeforeCompactionHandler: () => {
+      const h = capturedHandlers["before_compaction"];
+      if (!h) throw new Error("before_compaction hook not registered");
       return h;
     },
   };
@@ -221,7 +234,7 @@ function makeHappyClient() {
 
 // ── 1. registration ────────────────────────────────────────────────────────
 
-test("registerFlushPressureHook: registers a single agent_end handler (llm_output is gone)", () => {
+test("registerFlushPressureHook: registers before_compaction (primary) + agent_end (fallback); llm_output stays gone", () => {
   const capturedNames: string[] = [];
   const api = {
     on: (event: string, _h: Handler) => {
@@ -229,7 +242,7 @@ test("registerFlushPressureHook: registers a single agent_end handler (llm_outpu
     },
   } as unknown as OpenClawPluginApi;
   registerFlushPressureHook(api, makeDeps(makeLogger()));
-  assert.deepEqual(capturedNames, ["agent_end"]);
+  assert.deepEqual(capturedNames, ["before_compaction", "agent_end"]);
 });
 
 // ── 2. provider-independence (W7 a/b) ──────────────────────────────────────
@@ -954,4 +967,328 @@ test("6c.6.3: session store write fails → warn + emit_failed; recall mirror st
     emitted.some((e) => e.kind === "flush_applied"),
     "flush_applied should fire when mirror succeeded",
   );
+});
+
+// ── 9. before_compaction — primary trigger (1.3.1) ─────────────────────────
+
+/**
+ * The embedded compaction path's ctx: no `trigger` field (confirmed by dist
+ * read — runBeforeCompactionHooks passes {sessionId, agentId, sessionKey,
+ * workspaceDir, messageProvider} only). The guard must not skip on its absence.
+ */
+const BEFORE_COMPACTION_CTX = {
+  sessionKey: "agent:main:main",
+  agentId: "main",
+  sessionId: "sess-1",
+  workspaceDir: "/tmp/ws",
+};
+
+/** Standard harness-path before_compaction event (messages present). */
+function makeBeforeCompactionEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    messageCount: 5,
+    messages: makeAgentEndEvent().messages,
+    sessionFile: "/tmp/session.jsonl",
+    ...overrides,
+  };
+}
+
+test("before_compaction: fires with NO threshold — a small buffer still flushes; host tokenCount preferred (tokenSource=event.tokenCount)", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(500); // ≪ 6000 — proves no threshold applies
+  const client = makeHappyClient();
+  const { api, capturedBeforeCompactionHandler } =
+    makeMockApi(ABOVE_THRESHOLD_STORE);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  await capturedBeforeCompactionHandler()(
+    makeBeforeCompactionEvent({ tokenCount: 480 }),
+    BEFORE_COMPACTION_CTX,
+  );
+
+  assert.equal(
+    client.summarize.mock.callCount(),
+    1,
+    "before_compaction must flush regardless of any token threshold",
+  );
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  const evalMsg = debugMsgs.find((m) => /trigger=before_compaction/.test(m));
+  assert.ok(evalMsg, `expected before_compaction evaluation line; got: ${debugMsgs.join(" | ")}`);
+  assert.match(evalMsg!, /estTokens=480/);
+  assert.match(evalMsg!, /tokenSource=event\.tokenCount/);
+  assert.match(evalMsg!, /messageSource=event/);
+  assert.match(evalMsg!, /outcome=FLUSH/);
+  const infoMsgs = logger.info.mock.calls.map((c) => String(c.arguments[0]));
+  assert.ok(infoMsgs.some((m) => /flush triggered by host compaction/i.test(m)));
+});
+
+test("before_compaction: tokenCount absent → local estimate over event.messages (tokenSource=local-estimate); provider usage never consulted", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(10_000);
+  const client = makeHappyClient();
+  const { api, capturedBeforeCompactionHandler } =
+    makeMockApi(ABOVE_THRESHOLD_STORE);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  await capturedBeforeCompactionHandler()(
+    makeBeforeCompactionEvent(), // no tokenCount
+    BEFORE_COMPACTION_CTX,
+  );
+
+  assert.equal(client.summarize.mock.callCount(), 1);
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  const evalMsg = debugMsgs.find((m) => /trigger=before_compaction/.test(m));
+  assert.ok(evalMsg);
+  assert.match(evalMsg!, /estTokens=10000/);
+  assert.match(evalMsg!, /tokenSource=local-estimate/);
+});
+
+test("before_compaction: no event.messages (embedded path) → flushes from the agent_end buffer snapshot", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(500); // below the agent_end threshold: no flush there
+  const client = makeHappyClient();
+  const {
+    api,
+    capturedAgentEndHandler,
+    capturedBeforeCompactionHandler,
+  } = makeMockApi(ABOVE_THRESHOLD_STORE);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  // Turn N−1 ends: snapshot captured, threshold not tripped.
+  await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
+  assert.equal(client.summarize.mock.callCount(), 0, "agent_end below threshold must not flush");
+
+  // Embedded-path compaction: counts only, no messages.
+  await capturedBeforeCompactionHandler()(
+    { messageCount: 5, tokenCount: 45_000 },
+    BEFORE_COMPACTION_CTX,
+  );
+
+  assert.equal(
+    client.summarize.mock.callCount(),
+    1,
+    "snapshot must feed the flush when the event has no messages",
+  );
+  const [passedMessages] = client.summarize.mock.calls[0]
+    .arguments as unknown as [unknown[]];
+  assert.equal(passedMessages.length, 5, "all snapshot messages reach :summarize");
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  assert.ok(
+    debugMsgs.some((m) => /messageSource=agent_end-snapshot/.test(m)),
+    `expected snapshot message source; got: ${debugMsgs.join(" | ")}`,
+  );
+});
+
+test("before_compaction: no messages anywhere → explicit DEGRADED warn + skip (never silent)", async () => {
+  _resetFlushStateForTests();
+  const client = makeHappyClient();
+  const { api, capturedBeforeCompactionHandler } =
+    makeMockApi(ABOVE_THRESHOLD_STORE);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  await capturedBeforeCompactionHandler()(
+    { messageCount: 12, tokenCount: 45_000 }, // embedded shape, no prior agent_end
+    BEFORE_COMPACTION_CTX,
+  );
+
+  assert.equal(client.summarize.mock.callCount(), 0);
+  const warnMsgs = logger.warn.mock.calls.map((c) => String(c.arguments[0]));
+  const degraded = warnMsgs.find((m) => /DEGRADED/.test(m));
+  assert.ok(degraded, `expected DEGRADED warn; got: ${warnMsgs.join(" | ")}`);
+  assert.match(degraded!, /no-message-source/);
+});
+
+test("before_compaction: already flushed for current compaction cycle → skip (guard preserved)", async () => {
+  _resetFlushStateForTests();
+  const store: Record<string, SessionEntry> = {
+    "agent:main:main": { compactionCount: 3, memoryFlushCompactionCount: 3 },
+  };
+  const client = makeHappyClient();
+  const { api, capturedBeforeCompactionHandler } = makeMockApi(store);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  await capturedBeforeCompactionHandler()(
+    makeBeforeCompactionEvent(),
+    BEFORE_COMPACTION_CTX,
+  );
+
+  assert.equal(client.summarize.mock.callCount(), 0);
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  assert.ok(debugMsgs.some((m) => /already-flushed-for-cycle/.test(m)));
+});
+
+test("before_compaction: subagent session guard applies (ctx without trigger field does NOT skip interactive sessions)", async () => {
+  _resetFlushStateForTests();
+  const client = makeHappyClient();
+  const { api, loadSessionStore, capturedBeforeCompactionHandler } =
+    makeMockApi(ABOVE_THRESHOLD_STORE);
+  registerFlushPressureHook(api, makeDeps(makeLogger(), client));
+
+  await capturedBeforeCompactionHandler()(makeBeforeCompactionEvent(), {
+    ...BEFORE_COMPACTION_CTX,
+    sessionKey: "agent:main:subagent:abc-123",
+  });
+
+  assert.equal(client.summarize.mock.callCount(), 0);
+  assert.equal(loadSessionStore.mock.callCount(), 0, "guarded before session-store read");
+});
+
+// ── 10. double-fire guard (acceptance 5) ───────────────────────────────────
+
+test("double-fire guard: before_compaction flush → same-turn agent_end skips once; next turn evaluates normally", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(10_000); // agent_end would trip on its own
+  const client = makeHappyClient();
+  const {
+    api,
+    capturedAgentEndHandler,
+    capturedBeforeCompactionHandler,
+  } = makeMockApi(ABOVE_THRESHOLD_STORE);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  // Turn N: host compaction fires mid-turn → primary trigger flushes.
+  await capturedBeforeCompactionHandler()(
+    makeBeforeCompactionEvent(),
+    BEFORE_COMPACTION_CTX,
+  );
+  assert.equal(client.summarize.mock.callCount(), 1);
+
+  // End of turn N: agent_end must NOT flush again (the mock store is not
+  // mutated by save, so without the marker the cycle check would re-fire).
+  await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
+  assert.equal(
+    client.summarize.mock.callCount(),
+    1,
+    "agent_end in the same turn must not double-flush",
+  );
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  assert.ok(
+    debugMsgs.some((m) => /before_compaction-already-flushed-this-turn/.test(m)),
+    `expected double-fire skip log; got: ${debugMsgs.join(" | ")}`,
+  );
+
+  // Turn N+1: the marker was consumed — agent_end evaluates and fires again.
+  await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
+  assert.equal(
+    client.summarize.mock.callCount(),
+    2,
+    "the marker must be consumed by exactly one agent_end",
+  );
+});
+
+test("double-fire guard: failed before_compaction flush sets no marker — agent_end retries normally", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(10_000);
+  const summarize = mock.fn(async (): Promise<SummarizeResult> => {
+    throw new Error("sidecar 500");
+  });
+  const getStats = mock.fn(
+    async (): Promise<StatsResponse> => ({ totalMessageCount: 5 }),
+  );
+  const {
+    api,
+    capturedAgentEndHandler,
+    capturedBeforeCompactionHandler,
+  } = makeMockApi(ABOVE_THRESHOLD_STORE);
+  registerFlushPressureHook(api, makeDeps(makeLogger(), { getStats, summarize }));
+
+  await capturedBeforeCompactionHandler()(
+    makeBeforeCompactionEvent(),
+    BEFORE_COMPACTION_CTX,
+  );
+  assert.equal(summarize.mock.callCount(), 1);
+
+  // agent_end must still evaluate (and re-attempt) — self-heal path.
+  await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
+  assert.equal(
+    summarize.mock.callCount(),
+    2,
+    "a failed compaction flush must not suppress the agent_end retry",
+  );
+});
+
+// ── 11. agent_end budget sourcing (Defect 2) ───────────────────────────────
+
+test("agent_end: budget sourced from SessionEntry.contextBudgetStatus when ctx has no contextTokenBudget", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(800);
+  const store: Record<string, SessionEntry> = {
+    "agent:main:main": {
+      compactionCount: 0,
+      contextBudgetStatus: { contextTokenBudget: 1000 },
+    },
+  };
+  const client = makeHappyClient();
+  const { api, capturedAgentEndHandler } = makeMockApi(store);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  // ctx carries NO budget — the empirical agent_end shape.
+  await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
+
+  assert.equal(
+    client.summarize.mock.callCount(),
+    1,
+    "800 >= floor(1000 * 0.75) must trip via the session-entry budget",
+  );
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  const evalMsg = debugMsgs.find((m) => /trigger=agent_end.*TRIPPED/.test(m));
+  assert.ok(evalMsg, `expected TRIPPED eval; got: ${debugMsgs.join(" | ")}`);
+  assert.match(evalMsg!, /budget=1000/);
+  assert.match(evalMsg!, /budgetSource=sessionEntry/);
+  assert.match(evalMsg!, /threshold=750/);
+});
+
+test("agent_end: ctx budget wins over the session-entry budget when both exist", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(800);
+  const store: Record<string, SessionEntry> = {
+    "agent:main:main": {
+      compactionCount: 0,
+      contextBudgetStatus: { contextTokenBudget: 1000 },
+    },
+  };
+  const client = makeHappyClient();
+  const { api, capturedAgentEndHandler } = makeMockApi(store);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  await capturedAgentEndHandler()(makeAgentEndEvent(), {
+    ...INTERACTIVE_CTX,
+    contextTokenBudget: 65_536,
+  });
+
+  assert.equal(client.summarize.mock.callCount(), 0, "800 < 49152 — no trip under ctx budget");
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  const evalMsg = debugMsgs.find((m) => /trigger=agent_end/.test(m));
+  assert.match(evalMsg!, /budgetSource=ctx/);
+  assert.match(evalMsg!, /budget=65536/);
+});
+
+test("agent_end: no budget anywhere → DEGRADED stated in the evaluation log + absolute fallback; ctx survey logged once", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(500);
+  const { api, capturedAgentEndHandler } = makeMockApi(ABOVE_THRESHOLD_STORE);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger));
+
+  await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
+  await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
+
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  const evalMsg = debugMsgs.find((m) => /trigger=agent_end/.test(m));
+  assert.ok(evalMsg);
+  assert.match(evalMsg!, /budgetSource=absent/);
+  assert.match(evalMsg!, /DEGRADED/);
+  assert.match(evalMsg!, /threshold=6000/);
+
+  const surveys = debugMsgs.filter((m) => /agent_end ctx survey/.test(m));
+  assert.equal(surveys.length, 1, "ctx survey must log exactly once per process");
+  assert.match(surveys[0], /contextTokenBudget=unset/);
 });

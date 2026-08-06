@@ -10,6 +10,13 @@
  * and `openclaw memgpt setup` failed at the final write with
  * "must not have additional properties". These tests pin the two declarations
  * together so they cannot drift again.
+ *
+ * 1.3.1 hardening: the key-parity check now derives the parser's inventory
+ * from the exported `ALLOWED_KEYS` itself, not from a hand-maintained list in
+ * this file — v1.3.0 added `flushRatio` to ALLOWED_KEYS but not the manifest,
+ * and the hand-maintained list (also missing it) let the drift through: any
+ * gateway config that set flushRatio was refused at startup by
+ * additionalProperties:false.
  */
 
 import { test } from "node:test";
@@ -18,7 +25,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseConfigValue } from "../src/config.ts";
+import { ALLOWED_KEYS, parseConfigValue } from "../src/config.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const manifest = JSON.parse(
@@ -34,9 +41,7 @@ const manifest = JSON.parse(
 const manifestKeys = Object.keys(manifest.configSchema.properties).sort();
 
 test("manifest configSchema declares exactly the keys parseConfigValue accepts", () => {
-  // Derive the parser's allowed keys behaviourally: every manifest key must
-  // parse (with a valid value), and any extra key must throw — so the two
-  // sources agree in both directions.
+  // A valid sample value per key — used to prove every declared key parses.
   const validValueFor: Record<string, unknown> = {
     namespace: "n",
     model: "m",
@@ -44,6 +49,7 @@ test("manifest configSchema declares exactly the keys parseConfigValue accepts",
     human: "h",
     sidecarUrl: "http://127.0.0.1:1",
     observability: "off",
+    flushRatio: 0.75,
     provider: "openai",
     baseUrl: "http://127.0.0.1:2",
     credential: { source: "file" },
@@ -53,10 +59,18 @@ test("manifest configSchema declares exactly the keys parseConfigValue accepts",
     embeddingDim: 768,
   };
 
+  // The authoritative parity check: manifest ↔ the parser's OWN key list.
+  assert.deepEqual(
+    manifestKeys,
+    [...ALLOWED_KEYS].sort(),
+    "openclaw.plugin.json configSchema.properties must declare exactly config.ts ALLOWED_KEYS — a key in ALLOWED_KEYS but not the manifest makes the gateway refuse to start when it is set (additionalProperties:false)",
+  );
+
+  // …and this file's sample-value table must cover every key.
   assert.deepEqual(
     manifestKeys,
     Object.keys(validValueFor).sort(),
-    "openclaw.plugin.json configSchema.properties and this test's key inventory must move together — update BOTH when adding a config field",
+    "add a sample value for the new config key to validValueFor",
   );
 
   // Every manifest-declared key is accepted by the parser…

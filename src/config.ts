@@ -115,7 +115,7 @@ export interface PluginConfig {
 // Validation
 // ============================================================================
 
-const ALLOWED_KEYS = [
+export const ALLOWED_KEYS = [
   "namespace",
   "model",
   "persona",
