@@ -203,10 +203,11 @@ test(
     const { api, capturedHandlers } = buildMockApi(mockStore);
 
     // Inject a deterministic per-message estimator that puts the 7-message
-    // buffer above the absolute fallback threshold (no contextTokenBudget in
-    // ctx below → threshold = MESSAGE_SUMMARY_WARNING_TOKENS). The real
-    // messages here are short; production reaches this via the SDK's
-    // estimateTokens over a genuinely large buffer.
+    // buffer above the threshold. The agent_end ctx below carries a
+    // CLI-shaped contextTokenBudget of 8000 → threshold floor(8000 × 0.75)
+    // = MESSAGE_SUMMARY_WARNING_TOKENS (1.3.2: no budget → decline, so the
+    // budget must be explicit). The real messages here are short; production
+    // reaches this via the SDK's estimateTokens over a genuinely large buffer.
     _setTokenEstimatorForTests(
       () => Math.ceil(MESSAGE_SUMMARY_WARNING_TOKENS / 7) + 100,
     );
@@ -294,7 +295,12 @@ test(
 
     await agentEndHandler(
       { success: true, messages: eventMessages },
-      { trigger: "user", sessionKey: SESSION_KEY, agentId: namespace },
+      {
+        trigger: "user",
+        sessionKey: SESSION_KEY,
+        agentId: namespace,
+        contextTokenBudget: 8000,
+      },
     );
 
     // ── 5. Assert pipeline completed: events + session store metadata ─────────

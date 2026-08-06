@@ -39,11 +39,21 @@ export interface SessionEntry {
   totalTokens?: number;
   totalTokensFresh?: boolean;
   /**
+   * OpenClaw's persisted effective post-cap context budget for the session's
+   * model. The 1.3.2 flush hook reads this as the TERTIARY budget source
+   * (after `ctx.contextTokenBudget` and the `model_call_started` per-run
+   * cache): it is stale by one turn and absent on a session's first turn,
+   * but unlike `contextBudgetStatus.contextTokenBudget` it is the real
+   * resolved budget, not a transient estimate.
+   */
+  contextTokens?: number;
+  /**
    * OpenClaw's persisted pre-prompt budget snapshot (upstream
-   * `SessionContextBudgetStatus`, source `"pre-prompt-estimate"`). The flush
-   * hook reads `contextTokenBudget` from here when the hook ctx doesn't carry
-   * one — empirically `agent_end`'s ctx never does (the 1.3.1 Defect-2 read
-   * of `selection-*.js`: the agent_end ctx is built without it).
+   * `SessionContextBudgetStatus`, source `"pre-prompt-estimate"`).
+   * Deliberately NOT a budget source since 1.3.2: it is cleared in 7+
+   * upstream places (model change, compaction, reset) and is a pre-prompt
+   * estimate, not the effective post-cap budget — use `contextTokens`
+   * instead. Kept typed as documentation of that rejection.
    */
   contextBudgetStatus?: {
     estimatedPromptTokens?: number;

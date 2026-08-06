@@ -67,9 +67,10 @@ export interface PluginConfig {
   /**
    * Flush-pressure trigger ratio (§4.4): summarisation fires when the
    * locally-estimated buffer token count reaches
-   * `contextTokenBudget * flushRatio`. Defaults to 0.75 (MemGPT's own warning
-   * fraction). When the SDK supplies no budget, the absolute fallback
-   * threshold (6000 tokens) applies and this ratio is unused.
+   * `contextTokenBudget * flushRatio` on the agent_end fallback trigger.
+   * Defaults to 0.75 (MemGPT's own warning fraction). When no budget is
+   * resolvable (1.3.2), agent_end declines — no absolute fallback — and the
+   * before_compaction trigger (which needs no budget) carries the flush.
    */
   flushRatio?: number;
   /**
