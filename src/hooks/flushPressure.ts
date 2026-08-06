@@ -14,8 +14,9 @@
  *   `agent_end` (SECONDARY, end of turn N−1): the 1.3.0 threshold path,
  *   kept for sessions that end before ever compacting — without it short
  *   sessions never flush at all. Estimates the buffer's token load locally
- *   (per-message `estimateTokens` summed over `event.messages`), checks
- *   `budget × flushRatio` (absolute 6000 fallback), and flushes on trip.
+ *   (per-message `estimateTokens` summed over `event.messages`) and checks
+ *   `budget × flushRatio`. When no budget is resolvable it DECLINES —
+ *   never guesses (see "Budget resolution" below).
  *
  *   `ContextEngine.assemble()` (start of turn N): reads the flush metadata
  *   and returns `[packagedMessage, ...messages.slice(cutoff)]`. After a
@@ -38,14 +39,34 @@
  * process), the flush skips with an explicit degraded-mode log — never
  * silently.
  *
- * **Budget source on `agent_end`** (the 1.3.1 Defect-2 fix): OpenClaw does
- * NOT populate `ctx.contextTokenBudget` on agent_end — the ctx built at the
- * agent-end dispatch site (`selection-*.js`, runAgentEndSideEffects) carries
- * only ids/trigger/config. The ratio path therefore reads the budget from
- * `SessionEntry.contextBudgetStatus.contextTokenBudget` (OpenClaw's
- * persisted pre-prompt estimate) when the ctx lacks one, and logs which
- * source supplied it. When both are absent the absolute fallback applies —
- * logged explicitly as degraded, never silently.
+ * **Budget resolution on `agent_end`** (the 1.3.2 fix): on OpenClaw's
+ * embedded harness (the default) the agent_end dispatch literal
+ * (`selection-*.js:14709`) simply omits `ctx.contextTokenBudget` — not a
+ * race, an omission (the CLI and Codex harnesses do populate it). The 1.3.1
+ * session-entry fallback read `contextBudgetStatus.contextTokenBudget`, a
+ * pre-prompt estimate cleared in 7+ places, so in practice the budget was
+ * never resolved and the absolute-6000 fallback decided everything: it
+ * tripped long before any configured compaction point, pre-empting both the
+ * ratio path and the before_compaction path. 1.3.2 resolves the budget
+ * through a chain, logging which source supplied it:
+ *   1. `ctx.contextTokenBudget` — CLI + Codex harnesses;
+ *   2. a per-run cache filled by the `model_call_started` hook, whose event
+ *      DOES carry the resolved budget on every harness (guaranteed positive
+ *      by resolveContextWindowInfo; always fires before agent_end; consumed
+ *      at agent_end so entries never leak across runs). NEVER cached from
+ *      `llm_output` — on the embedded harness it dispatches AFTER agent_end
+ *      in the same function, so it would silently apply the previous turn's
+ *      budget;
+ *   3. `SessionEntry.contextTokens` — the effective post-cap budget OpenClaw
+ *      persists on the session entry; stale by one turn and absent on a
+ *      session's first turn, so tertiary only. (NOT
+ *      `contextBudgetStatus.contextTokenBudget` — see above.)
+ * When the chain resolves nothing, agent_end DECLINES rather than guessing:
+ * the evaluation is logged (outcome=DECLINED, once-per-session warn) and
+ * before_compaction — which needs no budget at all; the host has already
+ * decided the buffer is too large — carries the flush. The old absolute
+ * fallback (MESSAGE_SUMMARY_WARNING_TOKENS = 6000) is documentation-only
+ * and decides nothing.
  *
  * **Why local estimation, not provider `usage`** (the 6d fix — do not
  * regress): the pre-1.3.0 two-hook form captured `llm_output.event.usage`
@@ -107,12 +128,16 @@ import {
 import { isNonInteractiveTrigger, isSubagentSession } from "./triggers.ts";
 
 /**
- * Absolute fallback threshold, used only when no `contextTokenBudget` is
- * available from ctx or the session entry. MemGPT's flush threshold per
- * `memgpt/constants.py:22`:
+ * MemGPT's absolute flush threshold per `memgpt/constants.py:22`:
  *   MESSAGE_SUMMARY_WARNING_TOKENS = int(0.75 * LLM_MAX_TOKENS)   # LLM_MAX_TOKENS = 8000
- * Verbatim derived value; literal rather than imported so it stays MemGPT-
- * faithful even if a future fork tweak rebases LLM_MAX_TOKENS.
+ *
+ * DOCUMENTATION-ONLY since 1.3.2 — nothing on the decision path reads it.
+ * Through 1.3.1 it was the fallback threshold when no budget was resolvable;
+ * because the budget was in fact never delivered on agent_end (embedded-
+ * harness dispatch omission), this 6000 silently decided every session —
+ * tripping long before any configured compaction point and masking both the
+ * ratio path and the before_compaction path. When no budget resolves,
+ * agent_end now declines and before_compaction carries the flush.
  */
 export const MESSAGE_SUMMARY_WARNING_TOKENS = 6000;
 
@@ -207,6 +232,18 @@ const BUFFER_SNAPSHOT_MAX_SESSIONS = 64;
  */
 const flushedViaCompaction = new Set<string>();
 
+/**
+ * Per-run budget cache, filled by `model_call_started` (whose event carries
+ * the resolved `contextTokenBudget` on every harness) and consumed by the
+ * same run's `agent_end`. Bounded FIFO as a backstop for runs whose
+ * agent_end never consumes the entry (guarded turns, crashed runs).
+ */
+const budgetByRun = new Map<string, number>();
+const BUDGET_CACHE_MAX_RUNS = 64;
+
+/** Sessions already warned about an unresolvable budget (decline mode). */
+const budgetDeclineWarned = new Set<string>();
+
 /** One-time agent_end ctx dump gate (Defect-2 empirical record). */
 let agentEndCtxLogged = false;
 
@@ -214,7 +251,26 @@ let agentEndCtxLogged = false;
 export function _resetFlushStateForTests(): void {
   bufferSnapshots.clear();
   flushedViaCompaction.clear();
+  budgetByRun.clear();
+  budgetDeclineWarned.clear();
   agentEndCtxLogged = false;
+}
+
+function cacheRunBudget(runId: string, budget: number): void {
+  budgetByRun.delete(runId); // refresh FIFO position; last write wins
+  budgetByRun.set(runId, budget);
+  if (budgetByRun.size > BUDGET_CACHE_MAX_RUNS) {
+    const oldest = budgetByRun.keys().next().value;
+    if (oldest !== undefined) budgetByRun.delete(oldest);
+  }
+}
+
+/** Read AND clear the run's cached budget — agent_end is its only consumer. */
+function takeRunBudget(runId: string | undefined): number | undefined {
+  if (!runId) return undefined;
+  const budget = budgetByRun.get(runId);
+  budgetByRun.delete(runId);
+  return budget;
 }
 
 function captureBufferSnapshot(
@@ -239,6 +295,12 @@ interface AgentEndEvent {
   success?: boolean;
   error?: string;
   durationMs?: number;
+  [key: string]: unknown;
+}
+
+interface ModelCallStartedEvent {
+  runId?: string;
+  contextTokenBudget?: number;
   [key: string]: unknown;
 }
 
@@ -274,6 +336,27 @@ export function registerFlushPressureHook(
     if (isSubagentSession(ctx.sessionKey)) return false;
     return true;
   };
+
+  // ── Budget feed: model_call_started → per-run cache (1.3.2) ──────────────
+  //
+  // The embedded harness omits contextTokenBudget from the agent_end ctx;
+  // model_call_started carries it on every harness, always fires before
+  // agent_end, and is not a conversation hook (no allowConversationAccess
+  // needed). NEVER cache from llm_output — on the embedded harness it
+  // dispatches after agent_end in the same function, so its value would be
+  // one turn stale by the time agent_end read it.
+  api.on("model_call_started", (eventRaw: unknown, ctxRaw: unknown) => {
+    const event = (eventRaw ?? {}) as ModelCallStartedEvent;
+    const ctx = (ctxRaw ?? {}) as AgentContext & {
+      contextTokenBudget?: number;
+      runId?: string;
+    };
+    const budget = event.contextTokenBudget ?? ctx.contextTokenBudget;
+    const runId = event.runId ?? ctx.runId;
+    if (typeof budget === "number" && budget > 0 && typeof runId === "string" && runId) {
+      cacheRunBudget(runId, budget);
+    }
+  });
 
   // ── PRIMARY: before_compaction — flush before the host discards the buffer
   api.on(
@@ -371,8 +454,13 @@ export function registerFlushPressureHook(
     async (eventRaw: unknown, ctxRaw: unknown) => {
       const ctx = (ctxRaw ?? {}) as AgentContext & {
         contextTokenBudget?: number;
+        runId?: string;
       };
       const event = (eventRaw ?? {}) as AgentEndEvent;
+
+      // Consume the run's cached budget unconditionally — before the guards,
+      // so even guarded turns clear their map entry (no cross-run leaks).
+      const cachedRunBudget = takeRunBudget(ctx.runId);
 
       if (!guardsPass(ctx)) return;
 
@@ -411,41 +499,66 @@ export function registerFlushPressureHook(
       if (!agentEndCtxLogged) {
         agentEndCtxLogged = true;
         deps.logger.debug(
-          `openclaw-memgpt: agent_end ctx survey (once): keys=[${Object.keys(ctx).join(",")}] contextTokenBudget=${ctx.contextTokenBudget ?? "unset"} entry.contextBudgetStatus.contextTokenBudget=${entry?.contextBudgetStatus?.contextTokenBudget ?? "unset"}`,
+          `openclaw-memgpt: agent_end ctx survey (once): keys=[${Object.keys(ctx).join(",")}] contextTokenBudget=${ctx.contextTokenBudget ?? "unset"} runId=${ctx.runId ?? "unset"} cachedRunBudget=${cachedRunBudget ?? "unset"} entry.contextTokens=${entry?.contextTokens ?? "unset"}`,
         );
       }
 
-      // ── Budget source resolution (Defect 2) ─────────────────────────────
+      // ── Budget resolution chain (1.3.2) ─────────────────────────────────
+      // ctx (CLI/Codex harnesses) → model_call_started cache (embedded
+      // harness) → SessionEntry.contextTokens (stale by one turn; absent on
+      // a session's first turn — tertiary only). NOT
+      // contextBudgetStatus.contextTokenBudget: that is a pre-prompt
+      // estimate cleared in 7+ places, not the effective post-cap budget.
       let budget: number | undefined;
-      let budgetSource: "ctx" | "sessionEntry" | "absent";
+      let budgetSource:
+        | "ctx"
+        | "model_call_started"
+        | "sessionEntry.contextTokens"
+        | undefined;
       if (
         typeof ctx.contextTokenBudget === "number" &&
         ctx.contextTokenBudget > 0
       ) {
         budget = ctx.contextTokenBudget;
         budgetSource = "ctx";
+      } else if (typeof cachedRunBudget === "number" && cachedRunBudget > 0) {
+        budget = cachedRunBudget;
+        budgetSource = "model_call_started";
       } else if (
-        typeof entry?.contextBudgetStatus?.contextTokenBudget === "number" &&
-        entry.contextBudgetStatus.contextTokenBudget > 0
+        typeof entry?.contextTokens === "number" &&
+        entry.contextTokens > 0
       ) {
-        budget = entry.contextBudgetStatus.contextTokenBudget;
-        budgetSource = "sessionEntry";
-      } else {
-        budget = undefined;
-        budgetSource = "absent";
+        budget = entry.contextTokens;
+        budgetSource = "sessionEntry.contextTokens";
       }
 
-      const threshold =
-        budget !== undefined
-          ? Math.floor(budget * flushRatio)
-          : MESSAGE_SUMMARY_WARNING_TOKENS;
+      // No resolvable budget → DECLINE, never guess (the load-bearing 1.3.2
+      // change). Through 1.3.1 this fell back to the absolute 6000, which
+      // tripped long before any configured compaction point and pre-empted
+      // the before_compaction path entirely. before_compaction needs no
+      // budget — the host has already decided the buffer is too large — so
+      // it carries the flush for sessions in this mode.
+      if (budget === undefined) {
+        deps.logger.debug(
+          `openclaw-memgpt: flush evaluation: trigger=agent_end estTokens=${tokens} budget=unresolvable budgetSource=none ratio=${flushRatio} threshold=n/a outcome=DECLINED (no contextTokenBudget from ctx, model_call_started cache, or SessionEntry.contextTokens — before_compaction is the flush trigger for this session) (sessionKey=${ctx.sessionKey})`,
+        );
+        if (ctx.sessionKey && !budgetDeclineWarned.has(ctx.sessionKey)) {
+          budgetDeclineWarned.add(ctx.sessionKey);
+          deps.logger.warn(
+            `openclaw-memgpt: agent_end flush DEGRADED (sessionKey=${ctx.sessionKey}): no resolvable context budget — agent_end will not threshold-flush this session; the before_compaction trigger covers it`,
+          );
+        }
+        return;
+      }
+
+      const threshold = Math.floor(budget * flushRatio);
       const tripped = tokens >= threshold;
 
       // Every evaluation is observable, negative outcomes included — a
       // silent early return here is how the provider-usage defect survived
-      // undetected. A missing budget is a DEGRADED mode, stated as such.
+      // undetected.
       deps.logger.debug(
-        `openclaw-memgpt: flush evaluation: trigger=agent_end estTokens=${tokens} budget=${budget ?? "unset"} budgetSource=${budgetSource}${budgetSource === "absent" ? " (DEGRADED: no contextTokenBudget on ctx or session entry; absolute fallback threshold in effect)" : ""} ratio=${flushRatio} threshold=${threshold} ${tripped ? "TRIPPED" : "did not trip"} (sessionKey=${ctx.sessionKey})`,
+        `openclaw-memgpt: flush evaluation: trigger=agent_end estTokens=${tokens} budget=${budget} budgetSource=${budgetSource} ratio=${flushRatio} threshold=${threshold} ${tripped ? "TRIPPED" : "did not trip"} (sessionKey=${ctx.sessionKey})`,
       );
       if (!tripped) return;
 
@@ -463,7 +576,7 @@ export function registerFlushPressureHook(
 
       // Threshold tripped + guarded. Log + proceed to :summarize.
       deps.logger.info(
-        `openclaw-memgpt: flush threshold tripped (sessionKey=${ctx.sessionKey}, trigger=agent_end, totalTokens=${tokens} >= ${threshold}${budget !== undefined ? ` = ${budget} * ${flushRatio} [budgetSource=${budgetSource}]` : " [absolute fallback]"})`,
+        `openclaw-memgpt: flush threshold tripped (sessionKey=${ctx.sessionKey}, trigger=agent_end, totalTokens=${tokens} >= ${threshold} = ${budget} * ${flushRatio} [budgetSource=${budgetSource}])`,
       );
 
       if (!messages.length) {
