@@ -2,7 +2,7 @@
   "id": "openclaw-memgpt",
   "name": "Memory (MemGPT)",
   "description": "MemGPT three-tier memory architecture for OpenClaw — core, archival, and recall memory via a Python FastAPI sidecar wrapping the pymemgpt fork.",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "kind": "memory",
   "contracts": {
     "tools": [
@@ -45,6 +45,13 @@
         "enum": ["off", "default", "verbose"],
         "default": "off",
         "description": "Observability event detail level."
+      },
+      "flushRatio": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.75,
+        "description": "Flush-pressure ratio for the agent_end fallback trigger: summarisation fires when the locally-estimated buffer reaches contextTokenBudget * flushRatio. The plugin rejects 0 at load; the primary trigger is before_compaction and needs no ratio."
       },
       "provider": {
         "type": "string",
