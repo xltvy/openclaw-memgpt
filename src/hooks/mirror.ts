@@ -48,10 +48,14 @@ import { normaliseMessages, type OpenClawMessage } from "../normalise.ts";
 import type { ToolDeps } from "../tools/deps.ts";
 import { isNonInteractiveTrigger, isSubagentSession } from "./triggers.ts";
 
-/** Untyped event/ctx shapes — OpenClaw SDK exposes `any` on api.on. */
+/**
+ * Local view of the SDK's PluginHookAgentEndEvent. `messages` stays
+ * `unknown[]` (the SDK's own type); normaliseMessages owns the shape cast at
+ * the §3.7 boundary.
+ */
 interface AgentEndEvent {
   success?: boolean;
-  messages?: OpenClawMessage[];
+  messages?: unknown[];
   [key: string]: unknown;
 }
 
@@ -98,7 +102,7 @@ export function registerAgentEndHook(
     // exactly here, exactly once.
     let v0Messages;
     try {
-      v0Messages = normaliseMessages(event.messages!);
+      v0Messages = normaliseMessages(event.messages as OpenClawMessage[]);
       await deps.client.messagesAppend(v0Messages);
       deps.emit({
         kind: "messages_mirrored",
