@@ -39,6 +39,21 @@ export interface SessionEntry {
   totalTokens?: number;
   totalTokensFresh?: boolean;
   /**
+   * OpenClaw's persisted pre-prompt budget snapshot (upstream
+   * `SessionContextBudgetStatus`, source `"pre-prompt-estimate"`). The flush
+   * hook reads `contextTokenBudget` from here when the hook ctx doesn't carry
+   * one — empirically `agent_end`'s ctx never does (the 1.3.1 Defect-2 read
+   * of `selection-*.js`: the agent_end ctx is built without it).
+   */
+  contextBudgetStatus?: {
+    estimatedPromptTokens?: number;
+    contextTokenBudget?: number;
+    remainingPromptBudgetTokens?: number;
+    reserveTokens?: number;
+    shouldCompact?: boolean;
+    [key: string]: unknown;
+  };
+  /**
    * OpenClaw's compaction cycle counter — increments after each full context
    * engine compaction run. Used by `hasAlreadyFlushedForCurrentCompaction` to
    * detect whether our MemGPT flush already fired in the current cycle.
