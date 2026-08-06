@@ -1,11 +1,12 @@
 /**
  * Session-store access helpers for the flush-pressure hook (§4.4 / 6c.6).
  *
- * The flush handler reads token state off OpenClaw's `SessionEntry`
- * (populated by prior turns' `llm_output.usage`; see API_DESIGN.md §4.7 +
- * the 6c.6.0 SDK read). Token counts aren't on the `before_prompt_build`
- * event itself — they live on `SessionEntry.totalTokens`, gated by
- * `SessionEntry.totalTokensFresh` (a snapshot freshness flag).
+ * The flush handler reads compaction/flush state off OpenClaw's
+ * `SessionEntry` (see API_DESIGN.md §4.7 + the 6c.6.0 SDK read). Token
+ * pressure itself is no longer read from here — the 6d provider-independence
+ * fix estimates it locally from `agent_end`'s message buffer (see
+ * flushPressure.ts); `totalTokens`/`totalTokensFresh` remain typed for
+ * completeness of the upstream shape.
  *
  * These helpers exist so the 6c.6.1 hook + the 6c.6.2 summariser glue
  * share one access surface, and so the load-store-and-pluck-entry sequence
