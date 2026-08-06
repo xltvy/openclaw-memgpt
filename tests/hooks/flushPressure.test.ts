@@ -6,10 +6,12 @@
  * discard the buffer; messages come from the event (harness path) or the
  * agent_end buffer snapshot (embedded path, whose event carries counts
  * only). `agent_end` stays as the SECONDARY threshold trigger for sessions
- * that never compact, its budget sourced from `ctx.contextTokenBudget` when
- * present (empirically never on agent_end) else
- * `SessionEntry.contextBudgetStatus.contextTokenBudget`, else the absolute
- * MESSAGE_SUMMARY_WARNING_TOKENS = 6000 fallback (logged as degraded).
+ * that never compact. Its budget (1.3.2) resolves through a chain —
+ * `ctx.contextTokenBudget` (CLI/Codex harnesses) → the `model_call_started`
+ * per-run cache (embedded harness, consumed at agent_end) →
+ * `SessionEntry.contextTokens` (tertiary; stale by one turn) — and when the
+ * chain resolves nothing, agent_end DECLINES rather than guessing (the old
+ * absolute-6000 fallback is documentation-only and decides nothing).
  * Provider-reported `usage` is never consulted.
  *
  * `_resetFlushStateForTests()` clears the cross-trigger module state (buffer
@@ -106,6 +108,7 @@ function makeMockApi(
   saveSessionStore: ReturnType<typeof mock.fn>;
   capturedAgentEndHandler: () => Handler;
   capturedBeforeCompactionHandler: () => Handler;
+  capturedModelCallStartedHandler: () => Handler;
 } {
   const resolveStorePath = mock.fn(
     (_store?: string, _opts?: { agentId?: string }) => "/test/store/path",
@@ -152,6 +155,11 @@ function makeMockApi(
     capturedBeforeCompactionHandler: () => {
       const h = capturedHandlers["before_compaction"];
       if (!h) throw new Error("before_compaction hook not registered");
+      return h;
+    },
+    capturedModelCallStartedHandler: () => {
+      const h = capturedHandlers["model_call_started"];
+      if (!h) throw new Error("model_call_started hook not registered");
       return h;
     },
   };
@@ -207,14 +215,19 @@ function makeSummarizeResult(
   };
 }
 
-/** Store entry with no prior flush recorded. */
+/**
+ * Store entry with no prior flush recorded. `contextTokens: 8000` supplies
+ * the tertiary budget source (1.3.2 — agent_end declines without a budget);
+ * with the default 0.75 ratio the threshold lands at 6000, preserving the
+ * pre-1.3.2 arithmetic every glue test below was written against.
+ */
 const ABOVE_THRESHOLD_STORE: Record<string, SessionEntry> = {
-  "agent:main:main": { compactionCount: 0 },
+  "agent:main:main": { compactionCount: 0, contextTokens: 8000 },
 };
 
 /** Store with a specific compactionCount for 6c.6.3 write-path tests. */
 const STORE_WITH_COMPACTION_COUNT: Record<string, SessionEntry> = {
-  "agent:main:main": { compactionCount: 2 },
+  "agent:main:main": { compactionCount: 2, contextTokens: 8000 },
 };
 
 /** Full happy-path client stub. */
@@ -234,7 +247,7 @@ function makeHappyClient() {
 
 // ── 1. registration ────────────────────────────────────────────────────────
 
-test("registerFlushPressureHook: registers before_compaction (primary) + agent_end (fallback); llm_output stays gone", () => {
+test("registerFlushPressureHook: registers model_call_started (budget feed) + before_compaction (primary) + agent_end (fallback); llm_output stays gone", () => {
   const capturedNames: string[] = [];
   const api = {
     on: (event: string, _h: Handler) => {
@@ -242,7 +255,15 @@ test("registerFlushPressureHook: registers before_compaction (primary) + agent_e
     },
   } as unknown as OpenClawPluginApi;
   registerFlushPressureHook(api, makeDeps(makeLogger()));
-  assert.deepEqual(capturedNames, ["before_compaction", "agent_end"]);
+  assert.deepEqual(capturedNames, [
+    "model_call_started",
+    "before_compaction",
+    "agent_end",
+  ]);
+  assert.ok(
+    !capturedNames.includes("llm_output"),
+    "llm_output must never be re-registered — on the embedded harness it dispatches after agent_end and would cache a stale budget",
+  );
 });
 
 // ── 2. provider-independence (W7 a/b) ──────────────────────────────────────
@@ -317,7 +338,7 @@ test("small buffer → does not fire, regardless of what usage claims", async ()
 
 // ── 3. threshold arithmetic (W7 d + proportional) ──────────────────────────
 
-test("missing contextTokenBudget → absolute fallback threshold 6000 (>= trips, boundary pinned)", async () => {
+test("ctx budget missing → tertiary SessionEntry.contextTokens budget; floor(8000*0.75)=6000 boundary (>= trips)", async () => {
   // 5999 < 6000: no trip.
   injectEstimatorTotalling(MESSAGE_SUMMARY_WARNING_TOKENS - 1);
   let client = makeHappyClient();
@@ -510,6 +531,7 @@ test("already flushed for current cycle → debug + skip; no summarize call", as
     "agent:main:main": {
       compactionCount: 3,
       memoryFlushCompactionCount: 3, // already flushed for cycle 3
+      contextTokens: 8000, // budget resolvable — the cycle check must be the skip reason
     },
   };
   const client = makeHappyClient();
@@ -837,6 +859,7 @@ test("6c.6.3: session entry vanished between read and write → skip save; no th
       return {
         "agent:main:main": {
           compactionCount: 1,
+          contextTokens: 8000,
         } satisfies SessionEntry,
       };
     }
@@ -1213,11 +1236,81 @@ test("double-fire guard: failed before_compaction flush sets no marker — agent
   );
 });
 
-// ── 11. agent_end budget sourcing (Defect 2) ───────────────────────────────
+// ── 11. agent_end budget resolution chain (1.3.2) ──────────────────────────
 
-test("agent_end: budget sourced from SessionEntry.contextBudgetStatus when ctx has no contextTokenBudget", async () => {
+test("agent_end: budget from the model_call_started cache when ctx has none (embedded harness shape)", async () => {
   _resetFlushStateForTests();
   injectEstimatorTotalling(800);
+  // No contextTokens on the entry: the cache must be the ONLY source.
+  const store: Record<string, SessionEntry> = {
+    "agent:main:main": { compactionCount: 0 },
+  };
+  const client = makeHappyClient();
+  const { api, capturedAgentEndHandler, capturedModelCallStartedHandler } =
+    makeMockApi(store);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  // model_call_started fires mid-turn with the resolved budget on the event.
+  await capturedModelCallStartedHandler()(
+    { runId: "run-1", callId: "c1", contextTokenBudget: 1000 },
+    { ...INTERACTIVE_CTX, runId: "run-1" },
+  );
+  // agent_end: the embedded-harness shape — runId present, no budget on ctx.
+  await capturedAgentEndHandler()(makeAgentEndEvent(), {
+    ...INTERACTIVE_CTX,
+    runId: "run-1",
+  });
+
+  assert.equal(
+    client.summarize.mock.callCount(),
+    1,
+    "800 >= floor(1000 * 0.75) must trip via the model_call_started cache",
+  );
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  const evalMsg = debugMsgs.find((m) => /trigger=agent_end.*TRIPPED/.test(m));
+  assert.ok(evalMsg, `expected TRIPPED eval; got: ${debugMsgs.join(" | ")}`);
+  assert.match(evalMsg!, /budget=1000/);
+  assert.match(evalMsg!, /budgetSource=model_call_started/);
+  assert.match(evalMsg!, /threshold=750/);
+});
+
+test("agent_end: budget from SessionEntry.contextTokens (tertiary); contextBudgetStatus is never consulted", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(800);
+  const store: Record<string, SessionEntry> = {
+    "agent:main:main": {
+      compactionCount: 0,
+      contextTokens: 1000,
+      // A pre-prompt estimate that would NOT trip (0.75 × 999999 ≫ 800) —
+      // proving it is ignored in favour of contextTokens.
+      contextBudgetStatus: { contextTokenBudget: 999_999 },
+    },
+  };
+  const client = makeHappyClient();
+  const { api, capturedAgentEndHandler } = makeMockApi(store);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  // ctx carries NO budget and no cache entry exists.
+  await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
+
+  assert.equal(
+    client.summarize.mock.callCount(),
+    1,
+    "800 >= floor(1000 * 0.75) must trip via SessionEntry.contextTokens",
+  );
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  const evalMsg = debugMsgs.find((m) => /trigger=agent_end.*TRIPPED/.test(m));
+  assert.ok(evalMsg, `expected TRIPPED eval; got: ${debugMsgs.join(" | ")}`);
+  assert.match(evalMsg!, /budget=1000/);
+  assert.match(evalMsg!, /budgetSource=sessionEntry\.contextTokens/);
+  assert.match(evalMsg!, /threshold=750/);
+});
+
+test("agent_end: contextBudgetStatus.contextTokenBudget alone resolves NOTHING → declines", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(10_000);
   const store: Record<string, SessionEntry> = {
     "agent:main:main": {
       compactionCount: 0,
@@ -1229,29 +1322,131 @@ test("agent_end: budget sourced from SessionEntry.contextBudgetStatus when ctx h
   const logger = makeLogger();
   registerFlushPressureHook(api, makeDeps(logger, client));
 
-  // ctx carries NO budget — the empirical agent_end shape.
   await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
 
   assert.equal(
     client.summarize.mock.callCount(),
-    1,
-    "800 >= floor(1000 * 0.75) must trip via the session-entry budget",
+    0,
+    "the 1.3.1 pre-prompt-estimate source must be gone — decline, don't trip",
   );
   const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
-  const evalMsg = debugMsgs.find((m) => /trigger=agent_end.*TRIPPED/.test(m));
-  assert.ok(evalMsg, `expected TRIPPED eval; got: ${debugMsgs.join(" | ")}`);
-  assert.match(evalMsg!, /budget=1000/);
-  assert.match(evalMsg!, /budgetSource=sessionEntry/);
-  assert.match(evalMsg!, /threshold=750/);
+  assert.ok(debugMsgs.some((m) => /outcome=DECLINED/.test(m)));
 });
 
-test("agent_end: ctx budget wins over the session-entry budget when both exist", async () => {
+test("agent_end: precedence — ctx beats cache, cache beats SessionEntry.contextTokens", async () => {
+  _resetFlushStateForTests();
+  // Cache 1000 (threshold 750) vs entry 65536 (threshold 49152): an
+  // 800-token buffer trips only if the cache wins over the entry.
+  injectEstimatorTotalling(800);
+  const store: Record<string, SessionEntry> = {
+    "agent:main:main": { compactionCount: 0, contextTokens: 65_536 },
+  };
+  const client = makeHappyClient();
+  const { api, capturedAgentEndHandler, capturedModelCallStartedHandler } =
+    makeMockApi(store);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  await capturedModelCallStartedHandler()(
+    { runId: "run-1", contextTokenBudget: 1000 },
+    { ...INTERACTIVE_CTX, runId: "run-1" },
+  );
+  await capturedAgentEndHandler()(makeAgentEndEvent(), {
+    ...INTERACTIVE_CTX,
+    runId: "run-1",
+  });
+  assert.equal(client.summarize.mock.callCount(), 1, "cache must beat the session entry");
+  let debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  assert.ok(debugMsgs.some((m) => /budgetSource=model_call_started/.test(m)));
+
+  // ctx beats cache: re-cache 1000, but ctx carries 65536 → no trip.
+  await capturedModelCallStartedHandler()(
+    { runId: "run-2", contextTokenBudget: 1000 },
+    { ...INTERACTIVE_CTX, runId: "run-2" },
+  );
+  await capturedAgentEndHandler()(makeAgentEndEvent(), {
+    ...INTERACTIVE_CTX,
+    runId: "run-2",
+    contextTokenBudget: 65_536,
+  });
+  assert.equal(client.summarize.mock.callCount(), 1, "ctx budget (65536) must beat the cached 1000 — no second trip");
+  debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  assert.ok(debugMsgs.some((m) => /budgetSource=ctx.*did not trip/.test(m)));
+});
+
+test("agent_end: cache entry is consumed at agent_end — a later turn of the same run declines (map cleared)", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(800);
+  const store: Record<string, SessionEntry> = {
+    "agent:main:main": { compactionCount: 0 },
+  };
+  const client = makeHappyClient();
+  const { api, capturedAgentEndHandler, capturedModelCallStartedHandler } =
+    makeMockApi(store);
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  await capturedModelCallStartedHandler()(
+    { runId: "run-1", contextTokenBudget: 1000 },
+    { ...INTERACTIVE_CTX, runId: "run-1" },
+  );
+  await capturedAgentEndHandler()(makeAgentEndEvent(), {
+    ...INTERACTIVE_CTX,
+    runId: "run-1",
+  });
+  assert.equal(client.summarize.mock.callCount(), 1, "first agent_end flushes from the cache");
+
+  // Same runId again, no fresh model_call_started: the entry was consumed.
+  await capturedAgentEndHandler()(makeAgentEndEvent(), {
+    ...INTERACTIVE_CTX,
+    runId: "run-1",
+  });
+  assert.equal(
+    client.summarize.mock.callCount(),
+    1,
+    "consumed cache entry must not supply a budget twice",
+  );
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  assert.ok(debugMsgs.some((m) => /outcome=DECLINED/.test(m)));
+});
+
+test("agent_end: guarded turns still clear their cache entry (consume-before-guards)", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(800);
+  const client = makeHappyClient();
+  const { api, capturedAgentEndHandler, capturedModelCallStartedHandler } =
+    makeMockApi({ "agent:main:main": { compactionCount: 0 } });
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  await capturedModelCallStartedHandler()(
+    { runId: "run-1", contextTokenBudget: 1000 },
+    { ...INTERACTIVE_CTX, runId: "run-1" },
+  );
+  // A guarded (cron) agent_end for the same run consumes the entry silently.
+  await capturedAgentEndHandler()(makeAgentEndEvent(), {
+    trigger: "cron",
+    sessionKey: "agent:main:main",
+    agentId: "main",
+    runId: "run-1",
+  });
+  // An interactive agent_end for the same runId now has no budget → declines.
+  await capturedAgentEndHandler()(makeAgentEndEvent(), {
+    ...INTERACTIVE_CTX,
+    runId: "run-1",
+  });
+  assert.equal(client.summarize.mock.callCount(), 0);
+  const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
+  assert.ok(debugMsgs.some((m) => /outcome=DECLINED/.test(m)));
+});
+
+test("agent_end: ctx budget wins over the session-entry budget when both exist (CLI-shaped ctx)", async () => {
   _resetFlushStateForTests();
   injectEstimatorTotalling(800);
   const store: Record<string, SessionEntry> = {
     "agent:main:main": {
       compactionCount: 0,
-      contextBudgetStatus: { contextTokenBudget: 1000 },
+      contextTokens: 1000,
     },
   };
   const client = makeHappyClient();
@@ -1271,24 +1466,70 @@ test("agent_end: ctx budget wins over the session-entry budget when both exist",
   assert.match(evalMsg!, /budget=65536/);
 });
 
-test("agent_end: no budget anywhere → DEGRADED stated in the evaluation log + absolute fallback; ctx survey logged once", async () => {
+test("agent_end: no budget anywhere → DECLINES (no absolute fallback) + once-per-session DEGRADED warn; ctx survey logged once", async () => {
   _resetFlushStateForTests();
-  injectEstimatorTotalling(500);
-  const { api, capturedAgentEndHandler } = makeMockApi(ABOVE_THRESHOLD_STORE);
+  // 10,000 tokens would have tripped the old absolute-6000 fallback — the
+  // load-bearing 1.3.2 assertion is that it now does NOT flush.
+  injectEstimatorTotalling(10_000);
+  const client = makeHappyClient();
+  const { api, capturedAgentEndHandler } = makeMockApi({
+    "agent:main:main": { compactionCount: 0 }, // no contextTokens
+  });
   const logger = makeLogger();
-  registerFlushPressureHook(api, makeDeps(logger));
+  registerFlushPressureHook(api, makeDeps(logger, client));
 
   await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
   await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
+
+  assert.equal(
+    client.summarize.mock.callCount(),
+    0,
+    "an unresolvable budget must DECLINE, never guess a threshold",
+  );
 
   const debugMsgs = logger.debug.mock.calls.map((c) => String(c.arguments[0]));
   const evalMsg = debugMsgs.find((m) => /trigger=agent_end/.test(m));
   assert.ok(evalMsg);
-  assert.match(evalMsg!, /budgetSource=absent/);
-  assert.match(evalMsg!, /DEGRADED/);
-  assert.match(evalMsg!, /threshold=6000/);
+  assert.match(evalMsg!, /budget=unresolvable/);
+  assert.match(evalMsg!, /budgetSource=none/);
+  assert.match(evalMsg!, /outcome=DECLINED/);
+  assert.match(evalMsg!, /estTokens=10000/);
+
+  const warns = logger.warn.mock.calls
+    .map((c) => String(c.arguments[0]))
+    .filter((m) => /DEGRADED/.test(m));
+  assert.equal(warns.length, 1, "degraded warn fires once per session, not per turn");
+  assert.match(warns[0], /before_compaction trigger covers it/);
 
   const surveys = debugMsgs.filter((m) => /agent_end ctx survey/.test(m));
   assert.equal(surveys.length, 1, "ctx survey must log exactly once per process");
   assert.match(surveys[0], /contextTokenBudget=unset/);
+});
+
+test("acceptance 2: no budget → agent_end declines AND before_compaction still flushes from the snapshot", async () => {
+  _resetFlushStateForTests();
+  injectEstimatorTotalling(10_000);
+  const client = makeHappyClient();
+  const {
+    api,
+    capturedAgentEndHandler,
+    capturedBeforeCompactionHandler,
+  } = makeMockApi({ "agent:main:main": { compactionCount: 0 } });
+  const logger = makeLogger();
+  registerFlushPressureHook(api, makeDeps(logger, client));
+
+  // agent_end declines (no budget) but still captures the buffer snapshot.
+  await capturedAgentEndHandler()(makeAgentEndEvent(), INTERACTIVE_CTX);
+  assert.equal(client.summarize.mock.callCount(), 0, "agent_end must decline");
+
+  // Embedded-path compaction event (counts only): the snapshot carries it.
+  await capturedBeforeCompactionHandler()(
+    { messageCount: 5, tokenCount: 45_000 },
+    BEFORE_COMPACTION_CTX,
+  );
+  assert.equal(
+    client.summarize.mock.callCount(),
+    1,
+    "before_compaction is the flush path when the budget is unresolvable",
+  );
 });
