@@ -46,6 +46,22 @@ test("parseConfig: missing namespace defaults to 'default'", () => {
   assert.equal(cfg.namespace, "default");
 });
 
+test("parseConfig: flushRatio — unset stays undefined (hook defaults to 0.75); valid value accepted", () => {
+  assert.equal(parseConfigValue(VALID).flushRatio, undefined);
+  assert.equal(parseConfigValue({ ...VALID, flushRatio: 0.5 }).flushRatio, 0.5);
+  assert.equal(parseConfigValue({ ...VALID, flushRatio: 1 }).flushRatio, 1);
+});
+
+test("parseConfig: flushRatio outside (0, 1] or non-numeric throws", () => {
+  for (const bad of [0, -0.5, 1.5, "0.75", NaN, Infinity]) {
+    assert.throws(
+      () => parseConfigValue({ ...VALID, flushRatio: bad }),
+      /flushRatio.*\(0, 1\]/,
+      `flushRatio=${String(bad)} should be rejected`,
+    );
+  }
+});
+
 test("parseConfig: invalid observability throws with the rejected value in the message", () => {
   assert.throws(
     () => parseConfigValue({ ...VALID, observability: "loud" }),

@@ -3,13 +3,14 @@
  *
  * Exercises the full pipeline against a live sidecar:
  *
- *   1. llm_output handler captures token count into module-level Map
- *   2. agent_end handler reads captured token, calls :summarize against the
- *      live sidecar, writes flush metadata to the in-memory session store,
- *      and mirrors the packaged summary to recall (messagesAppend).
- *   3. ContextEngine.assemble() reads the metadata and returns the virtually-
+ *   1. agent_end handler estimates the buffer's tokens locally (injected
+ *      per-message estimator — provider usage is never consulted), trips the
+ *      threshold, calls :summarize against the live sidecar, writes flush
+ *      metadata to the in-memory session store, and mirrors the packaged
+ *      summary to recall (messagesAppend).
+ *   2. ContextEngine.assemble() reads the metadata and returns the virtually-
  *      trimmed system-less buffer: [packagedMessage, ...messages.slice(cutoff - 1)].
- *   4. Recall search finds the packaged summary text.
+ *   3. Recall search finds the packaged summary text.
  *
  * Requirements:
  *   - The sidecar must be running (started by before() below).
@@ -32,7 +33,7 @@ import { randomBytes } from "node:crypto";
 import {
   registerFlushPressureHook,
   MESSAGE_SUMMARY_WARNING_TOKENS,
-  _resetCapturedTokensForTests,
+  _setTokenEstimatorForTests,
 } from "../../src/hooks/flushPressure.ts";
 import {
   hasAlreadyFlushedForCurrentCompaction,
@@ -114,7 +115,7 @@ function buildMockApi(mockStore: Record<string, SessionEntry>): {
 }
 
 test(
-  "flush pipeline end-to-end: llm_output captures → agent_end summarises + writes metadata → assemble() returns trimmed buffer → recall finds summary",
+  "flush pipeline end-to-end: agent_end estimates locally + summarises + writes metadata → assemble() returns trimmed buffer → recall finds summary",
   { timeout: 180_000 }, // generous timeout: sidecar startup + LLM call can take 2-3 min combined
   async (t) => {
     // ── LLM preflight: skip if the model can't actually complete ────────────
@@ -201,13 +202,17 @@ test(
 
     const { api, capturedHandlers } = buildMockApi(mockStore);
 
-    // Reset module-level token map between tests (same pattern as unit tests).
-    _resetCapturedTokensForTests();
+    // Inject a deterministic per-message estimator that puts the 7-message
+    // buffer above the absolute fallback threshold (no contextTokenBudget in
+    // ctx below → threshold = MESSAGE_SUMMARY_WARNING_TOKENS). The real
+    // messages here are short; production reaches this via the SDK's
+    // estimateTokens over a genuinely large buffer.
+    _setTokenEstimatorForTests(
+      () => Math.ceil(MESSAGE_SUMMARY_WARNING_TOKENS / 7) + 100,
+    );
     registerFlushPressureHook(api, deps);
 
-    const llmOutputHandler = capturedHandlers["llm_output"];
     const agentEndHandler = capturedHandlers["agent_end"];
-    assert.ok(llmOutputHandler, "llm_output handler should be registered");
     assert.ok(agentEndHandler, "agent_end handler should be registered");
 
     // ── 1. Ensure agent in sidecar ───────────────────────────────────────────
@@ -283,22 +288,16 @@ test(
       },
     ];
 
-    // ── 4. Fire llm_output — capture token count ─────────────────────────────
-
-    // Synchronous; just sets capturedTokens[sessionKey] in the Map.
-    llmOutputHandler(
-      { usage: { total: MESSAGE_SUMMARY_WARNING_TOKENS + 2000 } },
-      { trigger: "user", sessionKey: SESSION_KEY, agentId: namespace },
-    );
-
-    // ── 5. Fire agent_end — triggers summarise + metadata write + recall mirror
+    // ── 4. Fire agent_end — local estimate trips → summarise + metadata write
+    //      + recall mirror. No usage anywhere on the event: the trigger is
+    //      provider-independent.
 
     await agentEndHandler(
       { success: true, messages: eventMessages },
       { trigger: "user", sessionKey: SESSION_KEY, agentId: namespace },
     );
 
-    // ── 6. Assert pipeline completed: events + session store metadata ─────────
+    // ── 5. Assert pipeline completed: events + session store metadata ─────────
 
     const emittedKinds = emitted.map((e) => e.kind);
     assert.ok(
@@ -331,7 +330,7 @@ test(
 
     const cutoff = entry.memoryFlushCutoff!;
 
-    // ── 7. assemble() returns the virtually-trimmed buffer ───────────────────
+    // ── 6. assemble() returns the virtually-trimmed buffer ───────────────────
 
     const engine = await makeMemgptContextEngine(deps, api)();
     const result = await engine.assemble({
@@ -376,7 +375,7 @@ test(
       "estimatedTokens should be positive",
     );
 
-    // ── 8. Recall search finds the packaged summary ──────────────────────────
+    // ── 7. Recall search finds the packaged summary ──────────────────────────
     //
     // The agent_end handler called messagesAppend([packagedMessage]) which put
     // the summary text into pm.all_messages with role="user". text_search

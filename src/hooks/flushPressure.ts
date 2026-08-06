@@ -1,36 +1,52 @@
 /**
- * §4.4 — flush-pressure check spanning two hooks:
+ * §4.4 — flush-pressure check, single-hook form (provider-independent):
  *
- *   `llm_output` (within turn N−1): captures `event.usage?.total` per
- *   sessionKey into a module-level Map<string, number>.  This is the only
- *   hook that carries the accurate current-turn token count before
- *   `persistRunSessionUsage` writes it to `SessionEntry`.
- *
- *   `agent_end` (end of turn N−1): reads the captured token, checks the
- *   threshold, and — if tripped and not already flushed for the current
- *   compaction cycle — calls `:summarize`, writes flush metadata to the
- *   session store, and mirrors the packagedMessage to recall.
+ *   `agent_end` (end of turn N−1): estimates the buffer's token load locally
+ *   (per-message `estimateTokens` from `openclaw/plugin-sdk/agent-core`,
+ *   summed over `event.messages`), checks the threshold, and — if tripped and
+ *   not already flushed for the current compaction cycle — calls `:summarize`,
+ *   writes flush metadata to the session store, and mirrors the
+ *   packagedMessage to recall.
  *
  *   `ContextEngine.assemble()` (start of turn N): reads the flush metadata
- *   and returns `[messages[0] (system anchor), packagedMessage, ...messages.slice(cutoff)]`.
- *   Faithful to MemGPT's native post-summarise buffer shape. The LLM on
- *   turn N sees the trimmed context.
+ *   and returns `[packagedMessage, ...messages.slice(cutoff)]`. Faithful to
+ *   MemGPT's native post-summarise buffer shape. The LLM on turn N sees the
+ *   trimmed context.
  *
- * Both `llm_output` and `agent_end` are fire-and-forget (.catch); the race
- * window (metadata write vs turn N's assemble()) is user-interaction-bounded
- * and practically never manifests. Self-healing: if the race fires, the
- * predicate re-trips on the next agent_end.
+ * **Why local estimation, not provider `usage`** (the 6d fix): the previous
+ * two-hook form captured `llm_output.event.usage.total` into a cross-hook Map
+ * and compared it against the threshold in `agent_end`. That made the
+ * plugin's entire memory-LLM path depend on provider honesty: against an
+ * endpoint that under-reports input tokens (observed: 3 tokens reported for a
+ * ~3,900-token prompt) the threshold was unreachable and `:summarize` never
+ * fired — silently, because nothing logged below the threshold. Token load is
+ * a decision this plugin can make locally from the buffer it already holds,
+ * so it does. The Map, the `llm_output` handler, and the session-keyed
+ * cleanup are gone with the constraint that motivated them.
  *
- * **Why this trigger, not `before_prompt_build`** (§4.4 investigation):
- *   Three SDK constraints block same-hook flush:
- *   1. `assemble()` fires BEFORE `before_prompt_build`; bpb cannot affect
- *      the message buffer (return value is prompt-text only).
- *   2. `llm_output` has `usage.total` but no message buffer; `agent_end`
- *      has the buffer but not the current-turn token count (persistRunSession-
- *      Usage runs AFTER agent_end).
- *   3. No hook fires between assemble() and the LLM call with both buffer
- *      and token count.
- *   `llm_output` + `agent_end` is the closest SDK-permitted approximation.
+ * NB: per-message `estimateTokens`, never `estimateContextTokens` — the
+ * latter anchors on the last assistant message's provider-reported usage and
+ * only estimates the tail after it, which would silently reimport the exact
+ * bug this design removes.
+ *
+ * **Threshold** (proportional, configurable): `ctx.contextTokenBudget ×
+ * flushRatio` (config `flushRatio`, default 0.75 — MemGPT's own warning
+ * fraction, fork `memgpt/constants.py:20-22`). When the SDK doesn't supply a
+ * budget, falls back to the absolute `MESSAGE_SUMMARY_WARNING_TOKENS = 6000`
+ * (= int(0.75 × 8000), the fork's derived literal) — which also means an
+ * 8k-budget session behaves exactly as every release before this one.
+ *
+ * **Why `agent_end`, not `before_prompt_build`** (deliberate — both carry
+ * `event.messages` now):
+ *   1. `assemble()` fires BEFORE `before_prompt_build`, so either hook's
+ *      flush can only take effect at the NEXT turn's assemble() — firing
+ *      earlier within the turn buys nothing.
+ *   2. `agent_end` runs after the reply is out: the `:summarize` LLM
+ *      round-trip stays off the user-visible critical path, where
+ *      `before_prompt_build` would insert it in front of every model call.
+ *   3. `agent_end` carries `success`, letting failed turns skip cleanly.
+ *   4. It keeps the existing placement, so the §4.4 race characterisation
+ *      and the metadata-write/mirror sequence are unchanged.
  *
  * **Fidelity at algorithm/data-shape level** (byte-identical to CLI):
  *   cutoff algorithm (F1 sidecar-side), summary text, packagedMessage
@@ -40,7 +56,14 @@
  *   Flush computation runs at end of turn N−1; turn N's user message is
  *   not in the cutoff candidates (negligible — preserve_last_N keeps recent
  *   content intact). Fire-and-forget race: eventual-consistency at one-turn
- *   granularity. See §4.4 for the full characterisation.
+ *   granularity. Token counts are estimates (chars/4 heuristic — OpenClaw's
+ *   own compactor uses the same estimator). See §4.4.
+ *
+ * **Observability** (the anti-silent-death rule): EVERY evaluation logs its
+ * numbers — estimated tokens, budget, ratio, threshold, outcome — at debug
+ * level, negative outcomes included. The prior form's silent early return is
+ * precisely why the dead trigger survived 20 long turns undetected; a
+ * "did not trip: 247/6000" line would have exposed it immediately.
  *
  * Error policy on `:summarize` (§2.8):
  *   - `BufferTooSmallError` (422): info-level no-op. False-alarm threshold
@@ -48,15 +71,16 @@
  *   - other errors: log + emit `emit_failed`, do NOT re-throw. Self-heals
  *     on the next agent_end (tokens stay above threshold; predicate re-trips).
  *
- * Threshold = `MESSAGE_SUMMARY_WARNING_TOKENS` (§4.4 + fork's
- * `memgpt/constants.py:20-22`). Verbatim derived value: `int(0.75 * 8000)`
- * = `6000`. Literal rather than imported so the threshold stays MemGPT-
- * faithful even if a future fork tweak rebases LLM_MAX_TOKENS.
- *
  * Guards (reuse triggers.ts from 6c.5): non-interactive trigger and subagent
  * session both skip (same telemetry / orphaned-namespace reasoning as the
- * mirror hook). Additionally: `event.success === false` on agent_end skips
- * flush (failed turn) while cleaning up the Map entry.
+ * mirror hook). Additionally: `event.success === false` skips flush.
+ *
+ * Estimator loading: `openclaw/plugin-sdk/agent-core` is a host-provided
+ * runtime module, so the import MUST stay dynamic (same rule as the wizard's
+ * SDK subpath imports — `node --test` has no `openclaw` to resolve). Under
+ * test, or if the host ever fails to expose the subpath, a local
+ * visible-chars/4 fallback keeps the trigger alive (slight overestimate —
+ * errs toward flushing early, never toward the silent-dead failure mode).
  */
 
 import { createHash } from "node:crypto";
@@ -65,7 +89,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import { BufferTooSmallError } from "../client/errors.ts";
 import { normaliseMessages, type OpenClawMessage } from "../normalise.ts";
-import type { ToolDeps } from "../tools/deps.ts";
+import type { ToolDeps, ToolLogger } from "../tools/deps.ts";
 import {
   getRuntimeSession,
   hasAlreadyFlushedForCurrentCompaction,
@@ -75,102 +99,147 @@ import {
 import { isNonInteractiveTrigger, isSubagentSession } from "./triggers.ts";
 
 /**
- * MemGPT's flush threshold per `memgpt/constants.py:22`:
+ * Absolute fallback threshold, used only when the SDK supplies no
+ * `contextTokenBudget`. MemGPT's flush threshold per `memgpt/constants.py:22`:
  *   MESSAGE_SUMMARY_WARNING_TOKENS = int(0.75 * LLM_MAX_TOKENS)   # LLM_MAX_TOKENS = 8000
- * Verbatim derived value. See module docstring for why this is a literal
- * here rather than imported.
+ * Verbatim derived value; literal rather than imported so it stays MemGPT-
+ * faithful even if a future fork tweak rebases LLM_MAX_TOKENS.
  */
 export const MESSAGE_SUMMARY_WARNING_TOKENS = 6000;
 
-interface LlmOutputEvent {
-  usage?: {
-    total?: number;
-    input?: number;
-    output?: number;
-    cacheRead?: number;
-    cacheWrite?: number;
+/**
+ * Default flush ratio — MemGPT's own 0.75 warning fraction, now applied to
+ * the session's real context budget instead of the fork's hardcoded 8k.
+ * Overridable via config `flushRatio`.
+ */
+export const DEFAULT_FLUSH_RATIO = 0.75;
+
+// ============================================================================
+// Token estimation — local, provider-independent
+// ============================================================================
+
+export type TokenEstimator = (message: unknown) => number;
+
+/**
+ * Cached SDK estimator. `undefined` = import not yet attempted;
+ * `null` = import failed (fall back permanently, warn once).
+ */
+let sdkEstimator: TokenEstimator | null | undefined;
+
+async function resolveEstimator(logger: ToolLogger): Promise<TokenEstimator> {
+  if (sdkEstimator === undefined) {
+    try {
+      const mod = await import("openclaw/plugin-sdk/agent-core");
+      sdkEstimator = mod.estimateTokens;
+    } catch (err) {
+      sdkEstimator = null;
+      logger.warn(
+        `openclaw-memgpt: openclaw/plugin-sdk/agent-core unavailable (${stringifyError(err)}); using local chars/4 token estimate for flush pressure`,
+      );
+    }
+  }
+  return sdkEstimator ?? fallbackEstimateTokens;
+}
+
+/**
+ * @internal Override the estimator between tests. Call with no argument to
+ * reset to "not yet attempted" (the next evaluation re-attempts the dynamic
+ * import — which under `node --test` lands on the fallback).
+ */
+export function _setTokenEstimatorForTests(fn?: TokenEstimator): void {
+  sdkEstimator = fn;
+}
+
+/**
+ * Local stand-in for the SDK's `estimateTokens` chars/4 heuristic: sums every
+ * string leaf in the message (content strings, block text, tool-call
+ * arguments) and divides by 4. Slightly overestimates relative to the SDK
+ * (role/name strings are counted too) — the safe direction: flushing a little
+ * early is recoverable, a dead trigger is not.
+ */
+export function fallbackEstimateTokens(message: unknown): number {
+  let chars = 0;
+  const visit = (value: unknown): void => {
+    if (typeof value === "string") {
+      chars += value.length;
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const v of value) visit(v);
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      for (const v of Object.values(value)) visit(v);
+    }
   };
-  [key: string]: unknown;
+  visit(message);
+  return Math.ceil(chars / 4);
 }
 
 interface AgentEndEvent {
-  messages?: OpenClawMessage[];
+  messages?: unknown[];
   success?: boolean;
   error?: string;
   durationMs?: number;
   [key: string]: unknown;
 }
 
-/**
- * Per-sessionKey token capture: written by the `llm_output` handler,
- * consumed (and deleted) by the `agent_end` handler. Module-level so both
- * handlers share one Map without a closure — the same pattern as
- * sendMessage.ts's suppressionMap.
- */
-const capturedTokens = new Map<string, number>();
-
-/** @internal reset captured token state between tests */
-export function _resetCapturedTokensForTests(): void {
-  capturedTokens.clear();
-}
-
 export function registerFlushPressureHook(
   api: OpenClawPluginApi,
   deps: ToolDeps,
+  opts?: { flushRatio?: number },
 ): void {
-  // ── Handler 1: llm_output — capture current-turn token count ───────────
-  api.on("llm_output", (eventRaw: unknown, ctxRaw: unknown) => {
-    const ctx = (ctxRaw ?? {}) as AgentContext;
-    const event = (eventRaw ?? {}) as LlmOutputEvent;
+  const flushRatio = opts?.flushRatio ?? DEFAULT_FLUSH_RATIO;
 
-    if (!ctx.sessionKey) return;
-    if (isNonInteractiveTrigger(ctx.trigger, ctx.sessionKey)) return;
-    if (isSubagentSession(ctx.sessionKey)) return;
-
-    const total = event.usage?.total;
-    if (typeof total === "number") {
-      capturedTokens.set(ctx.sessionKey, total);
-    }
-  });
-
-  // ── Handler 2: agent_end — threshold check + :summarize sequence ────────
   api.on(
     "agent_end",
     async (eventRaw: unknown, ctxRaw: unknown) => {
-      const ctx = (ctxRaw ?? {}) as AgentContext;
+      const ctx = (ctxRaw ?? {}) as AgentContext & {
+        contextTokenBudget?: number;
+      };
       const event = (eventRaw ?? {}) as AgentEndEvent;
 
       // §6d.6 config gate — skip flush (silently) when unconfigured.
-      if (deps.lifecycle?.isConfigured === false) {
-        if (ctx.sessionKey) capturedTokens.delete(ctx.sessionKey);
-        return;
-      }
+      if (deps.lifecycle?.isConfigured === false) return;
       // §6.1 lifecycle — skip silently if the sidecar died (no point
       // attempting :summarize against an unreachable endpoint; the mirror
       // hook's same-turn skip means there's nothing to summarise into
       // anyway).
-      if (deps.lifecycle?.isDead) {
-        if (ctx.sessionKey) capturedTokens.delete(ctx.sessionKey);
-        return;
-      }
+      if (deps.lifecycle?.isDead) return;
 
       // Standard guards — same precedent as the mirror hook.
       if (isNonInteractiveTrigger(ctx.trigger, ctx.sessionKey)) return;
       if (isSubagentSession(ctx.sessionKey)) return;
 
-      // Read and consume the captured token (always delete to avoid stale
-      // state; the next turn's llm_output will repopulate if needed).
-      const tokens = ctx.sessionKey
-        ? capturedTokens.get(ctx.sessionKey)
-        : undefined;
-      if (ctx.sessionKey) capturedTokens.delete(ctx.sessionKey);
-
-      // Failed turn: skip flush, Map already cleaned up.
+      // Failed turn: skip flush.
       if (!event.success) return;
 
-      // No captured token (llm_output didn't fire / usage absent) or below threshold.
-      if (tokens === undefined || tokens < MESSAGE_SUMMARY_WARNING_TOKENS)
-        return;
+      // ── Local token estimate (never provider usage) ─────────────────────
+      const estimate = await resolveEstimator(deps.logger);
+      const messages = event.messages ?? [];
+      const tokens = messages.reduce<number>(
+        (sum, m) => sum + estimate(m),
+        0,
+      );
+
+      const budget =
+        typeof ctx.contextTokenBudget === "number" &&
+        ctx.contextTokenBudget > 0
+          ? ctx.contextTokenBudget
+          : undefined;
+      const threshold =
+        budget !== undefined
+          ? Math.floor(budget * flushRatio)
+          : MESSAGE_SUMMARY_WARNING_TOKENS;
+      const tripped = tokens >= threshold;
+
+      // Every evaluation is observable, negative outcomes included — a
+      // silent early return here is how the provider-usage defect survived
+      // undetected.
+      deps.logger.debug(
+        `openclaw-memgpt: flush evaluation: estTokens=${tokens} budget=${budget ?? "unset"} ratio=${flushRatio} threshold=${threshold} ${tripped ? "TRIPPED" : "did not trip"} (sessionKey=${ctx.sessionKey})`,
+      );
+      if (!tripped) return;
 
       // Read the session entry — encapsulates sessionKey / agentId presence
       // checks + missing-entry (first turn) case.
@@ -188,10 +257,10 @@ export function registerFlushPressureHook(
 
       // Threshold tripped + guarded. Log + proceed to :summarize.
       deps.logger.info(
-        `openclaw-memgpt: flush threshold tripped (sessionKey=${ctx.sessionKey}, totalTokens=${tokens} >= ${MESSAGE_SUMMARY_WARNING_TOKENS})`,
+        `openclaw-memgpt: flush threshold tripped (sessionKey=${ctx.sessionKey}, totalTokens=${tokens} >= ${threshold}${budget !== undefined ? ` = ${budget} * ${flushRatio}` : " [absolute fallback]"})`,
       );
 
-      if (!event.messages?.length) {
+      if (!messages.length) {
         deps.logger.debug(
           `openclaw-memgpt: summarise skipped — event.messages empty for sessionKey=${ctx.sessionKey}`,
         );
@@ -199,7 +268,7 @@ export function registerFlushPressureHook(
       }
 
       // §3.7 normalisation boundary — same as the 6c.5 mirror hook.
-      const v0Messages = normaliseMessages(event.messages);
+      const v0Messages = normaliseMessages(messages as OpenClawMessage[]);
 
       // total_message_count source: GET /agents/{id}/stats. Sidecar is the
       // source of truth; round-trip only fires when predicate has already passed.

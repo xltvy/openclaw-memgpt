@@ -128,7 +128,7 @@ const memgptPlugin = definePluginEntry({
 
     registerTools(api, deps);
     registerPromptSectionHook(api, deps);
-    registerFlushPressureHook(api, deps);
+    registerFlushPressureHook(api, deps, { flushRatio: config.flushRatio });
     registerAgentEndHook(api, deps);
     // V2.1 send_message discipline enforcement (INVESTIGATION_REPORT §7):
     // finalizeGuard = bouncer (before_agent_finalize revise + turn-flag reset

@@ -65,6 +65,14 @@ export interface PluginConfig {
   /** Observability emit level. Defaults to "off". (§6) */
   observability: ObservabilityLevel;
   /**
+   * Flush-pressure trigger ratio (§4.4): summarisation fires when the
+   * locally-estimated buffer token count reaches
+   * `contextTokenBudget * flushRatio`. Defaults to 0.75 (MemGPT's own warning
+   * fraction). When the SDK supplies no budget, the absolute fallback
+   * threshold (6000 tokens) applies and this ratio is unused.
+   */
+  flushRatio?: number;
+  /**
    * LLM provider for the sidecar (6d.6 wizard). Optional so the plugin still
    * loads pre-configuration; `isConfigComplete` treats its absence as
    * "needs setup". Determines key-env-var + base-url defaults.
@@ -114,6 +122,7 @@ const ALLOWED_KEYS = [
   "human",
   "sidecarUrl",
   "observability",
+  "flushRatio",
   "provider",
   "baseUrl",
   "credential",
@@ -225,6 +234,26 @@ function resolveEmbeddingProvider(
   return raw as EmbeddingProviderId;
 }
 
+/** A number in (0, 1] — the flush-pressure trigger fraction. */
+function optionalRatio(
+  value: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const raw = value[key];
+  if (raw === undefined) return undefined;
+  if (
+    typeof raw !== "number" ||
+    !Number.isFinite(raw) ||
+    raw <= 0 ||
+    raw > 1
+  ) {
+    throw new Error(
+      `openclaw-memgpt config: '${key}' must be a number in (0, 1] when set (got ${JSON.stringify(raw)})`,
+    );
+  }
+  return raw;
+}
+
 function optionalPositiveInteger(
   value: Record<string, unknown>,
   key: string,
@@ -334,6 +363,7 @@ export function parseConfigValue(value: unknown): PluginConfig {
     human: stringWithDefault(cfg, "human", "The user."),
     sidecarUrl: optionalString(cfg, "sidecarUrl"),
     observability: resolveObservability(cfg),
+    flushRatio: optionalRatio(cfg, "flushRatio"),
     provider: resolveProvider(cfg),
     baseUrl: optionalString(cfg, "baseUrl"),
     credential: resolveCredential(cfg),
